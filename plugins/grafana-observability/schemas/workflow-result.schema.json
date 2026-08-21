@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:workflow-result:1",
+  "title": "Production Monitoring workflow result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "runId",
+    "workflow",
+    "terminalState",
+    "investigationStatus",
+    "recoveryState",
+    "evidenceSummary",
+    "limitations",
+    "exitCode"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    "workflow": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Workflow" },
+    "terminalState": { "enum": ["SEALED", "BLOCKED", "PAUSED", "CANCELLED"] },
+    "investigationStatus": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/InvestigationStatus"
+    },
+    "recoveryState": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RecoveryState" },
+    "evidenceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["COMPLETE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR"],
+      "properties": {
+        "COMPLETE": { "type": "integer", "minimum": 0 },
+        "EMPTY": { "type": "integer", "minimum": 0 },
+        "STALE": { "type": "integer", "minimum": 0 },
+        "CONTRADICTORY": { "type": "integer", "minimum": 0 },
+        "ERROR": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "type": "string", "minLength": 1, "maxLength": 2048 }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundleId", "manifestSha256"],
+      "properties": {
+        "bundleId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/BundleId" },
+        "manifestSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+        "relativePath": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/PortableRelativePath"
+        }
+      }
+    },
+    "exitCode": { "enum": [0, 1, 2, 130, 143] }
+  }
+}

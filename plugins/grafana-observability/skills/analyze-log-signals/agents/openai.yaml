@@ -1,0 +1,5 @@
+interface:
+  display_name: "Analyze Log Signals"
+  short_description: "Analyze bounded log and security signals"
+  brand_color: "#7058E8"
+  default_prompt: "Use $analyze-log-signals to compare approved log events, error rates, and enrolled security markers for this window."

@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:monitoring-evidence-detail:1",
+  "title": "Bounded workbench evidence detail",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workspaceId",
+    "evidenceRef",
+    "title",
+    "domain",
+    "origin",
+    "authority",
+    "state",
+    "source",
+    "evaluatedAt",
+    "collectedAt",
+    "window",
+    "summary",
+    "values",
+    "limitations",
+    "linkRefs"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "workspaceId": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+    },
+    "evidenceRef": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+    },
+    "title": { "type": "string", "minLength": 1, "maxLength": 160 },
+    "domain": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain"
+    },
+    "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    "authority": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/Authority"
+    },
+    "state": {
+      "enum": ["COMPLETE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR"]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "sourceAlias"],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        "sourceAlias": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias"
+        }
+      }
+    },
+    "evaluatedAt": { "type": "string", "format": "date-time" },
+    "collectedAt": { "type": "string", "format": "date-time" },
+    "window": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow"
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "values": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/metric" },
+          { "$ref": "#/$defs/fact" },
+          { "$ref": "#/$defs/event" }
+        ]
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    },
+    "linkRefs": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef" }
+    }
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label", "value", "points"],
+      "properties": {
+        "kind": { "const": "METRIC" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "value": { "type": ["number", "null"] },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "points": {
+          "type": "array",
+          "maxItems": 60,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["at", "value"],
+            "properties": {
+              "at": { "type": "string", "format": "date-time" },
+              "value": { "type": ["number", "null"] }
+            }
+          }
+        }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "label", "value"],
+      "properties": {
+        "kind": { "const": "FACT" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "value": { "type": ["null", "boolean", "number", "string"], "maxLength": 256 }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "at", "summary"],
+      "properties": {
+        "kind": { "const": "EVENT" },
+        "at": { "type": "string", "format": "date-time" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    }
+  }
+}

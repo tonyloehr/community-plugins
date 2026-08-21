@@ -1,0 +1,3033 @@
+AD snapshot");
+  }
+  if (oid !== "(initial)" && !FULL_COMMIT_ID.test(oid)) {
+    throw new AdapterContractError("Git status returned an invalid HEAD identity");
+  }
+  return {
+    headState: oid === "(initial)" ? "UNBORN" : "COMMIT",
+    ...oid === "(initial)" ? {} : { headCommit: oid },
+    branch: safeOutputText(branch),
+    rows,
+    files: rows.length,
+    rawSha256: sha256(stdout)
+  };
+}
+function parseNulPaths(stdout, binding) {
+  if (Buffer.byteLength(stdout, "utf8") > binding.maxBytes) {
+    throw snapshotFailure("git.snapshot_byte_limit", "Git path inventory exceeded the reviewed byte bound");
+  }
+  const paths = stdout.split("\0").filter((path) => path.length > 0);
+  if (paths.length > binding.maxFiles) {
+    throw snapshotFailure("git.snapshot_file_limit", "Git path inventory exceeded the reviewed file bound");
+  }
+  for (const path of paths) assertEnumeratedPath(path, binding.allowedPaths);
+  if (new Set(paths).size !== paths.length) {
+    throw new AdapterContractError("Git path inventory contains duplicate paths");
+  }
+  return paths.sort((left, right) => left.localeCompare(right));
+}
+function validateIndexInventory(stdout, binding) {
+  if (Buffer.byteLength(stdout, "utf8") > binding.maxBytes) {
+    throw snapshotFailure("git.snapshot_byte_limit", "Git index inventory exceeded the reviewed byte bound");
+  }
+  const entries = stdout.split("\0").filter((entry) => entry.length > 0);
+  if (entries.length > binding.maxLines) {
+    throw snapshotFailure("git.snapshot_file_limit", "Git index inventory exceeded the reviewed row bound");
+  }
+  for (const entry of entries) {
+    const tab = entry.indexOf("	");
+    if (tab < 1 || tab === entry.length - 1) {
+      throw new AdapterContractError("Git index inventory is malformed");
+    }
+    assertEnumeratedPath(entry.slice(tab + 1), binding.allowedPaths);
+  }
+}
+function assertSecureSnapshotTarget(root, path) {
+  const candidate = (0, import_node_path4.resolve)(root, ...path.split("/"));
+  const fromRoot = (0, import_node_path4.relative)(root, candidate);
+  if (fromRoot === ".." || fromRoot.startsWith("..".concat(import_node_path4.sep)) || (0, import_node_path4.isAbsolute)(fromRoot)) {
+    throw snapshotFailure("git.snapshot_unsafe_path", "Git returned a path outside the pinned workspace");
+  }
+  let cursor = root;
+  for (const segment of path.split("/")) {
+    cursor = (0, import_node_path4.resolve)(cursor, segment);
+    if (!(0, import_node_fs4.existsSync)(cursor)) return void 0;
+    const stat = (0, import_node_fs4.lstatSync)(cursor);
+    if (stat.isSymbolicLink()) {
+      throw snapshotFailure("git.snapshot_unsafe_file", "Git snapshot refused a symbolic link");
+    }
+  }
+  return candidate;
+}
+function fileReceipt(root, path, remainingBytes) {
+  const target = assertSecureSnapshotTarget(root, path);
+  if (target === void 0) return { path, kind: "MISSING", size: 0, contentSha256: null };
+  const descriptor4 = (0, import_node_fs4.openSync)(target, import_node_fs4.constants.O_RDONLY | import_node_fs4.constants.O_NOFOLLOW);
+  try {
+    const before = (0, import_node_fs4.fstatSync)(descriptor4, { bigint: true });
+    if (!before.isFile() || before.nlink !== 1n) {
+      throw snapshotFailure("git.snapshot_unsafe_file", "Git snapshot accepts only non-linked regular files");
+    }
+    if (before.size > BigInt(remainingBytes)) {
+      throw snapshotFailure("git.snapshot_byte_limit", "Git snapshot exceeded the reviewed content byte bound");
+    }
+    const hash2 = (0, import_node_crypto4.createHash)("sha256");
+    const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, remainingBytes + 1)));
+    let position = 0;
+    while (true) {
+      const read = (0, import_node_fs4.readSync)(descriptor4, buffer, 0, buffer.length, position);
+      if (read === 0) break;
+      position += read;
+      if (position > remainingBytes) {
+        throw snapshotFailure("git.snapshot_byte_limit", "Git snapshot exceeded the reviewed content byte bound");
+      }
+      hash2.update(buffer.subarray(0, read));
+    }
+    const after = (0, import_node_fs4.fstatSync)(descriptor4, { bigint: true });
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(position) !== after.size) {
+      throw snapshotFailure("git.worktree_changed", "Git worktree changed during snapshot collection");
+    }
+    return { path, kind: "FILE", size: position, contentSha256: hash2.digest("hex") };
+  } finally {
+    (0, import_node_fs4.closeSync)(descriptor4);
+  }
+}
+async function collectWorktreeSnapshot(input) {
+  const { executor, executable, workspace, binding, context } = input;
+  const prefix = [...FIXED_GIT_PREFIX, "-C", workspace.root];
+  const statusArgs = [
+    ...prefix,
+    "status",
+    "--porcelain=v2",
+    "--branch",
+    "-z",
+    "--untracked-files=all",
+    "--ignore-submodules=all",
+    "--",
+    ...binding.allowedPaths
+  ];
+  const indexArgs = [
+    ...prefix,
+    "ls-files",
+    "--stage",
+    "-z",
+    "--",
+    ...binding.allowedPaths
+  ];
+  const inventoryArgs = [
+    ...prefix,
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    ...binding.allowedPaths
+  ];
+  const execute = async (args) => {
+    const result = await executor.execute({
+      executable,
+      args,
+      cwd: workspace.root,
+      env: GIT_FIXED_ENVIRONMENT,
+      maxBufferBytes: binding.maxBytes + 1,
+      timeoutMs: context.budget.limits.timeoutMs,
+      signal: context.signal
+    });
+    if (result.exitCode !== 0) {
+      throw new AdapterExecutionError({
+        code: "git.read_failed",
+        category: "INVALID_RESPONSE",
+        message: "The bounded Git read failed",
+        retryable: false
+      });
+    }
+    return result;
+  };
+  const statusBeforeResult = await execute(statusArgs);
+  const status = parseStatusSnapshot(statusBeforeResult.stdout, binding);
+  const indexBefore = await execute(indexArgs);
+  validateIndexInventory(indexBefore.stdout, binding);
+  const inventoryBefore = await execute(inventoryArgs);
+  const paths = parseNulPaths(inventoryBefore.stdout, binding);
+  let contentBytes = 0;
+  const fileReceipts = [];
+  for (const path of paths) {
+    context.budget.throwIfAborted();
+    const receipt = fileReceipt(workspace.root, path, binding.maxBytes - contentBytes);
+    contentBytes += receipt.size;
+    fileReceipts.push(receipt);
+  }
+  const inventoryAfter = await execute(inventoryArgs);
+  const indexAfter = await execute(indexArgs);
+  const statusAfterResult = await execute(statusArgs);
+  if (inventoryAfter.stdout !== inventoryBefore.stdout || indexAfter.stdout !== indexBefore.stdout || statusAfterResult.stdout !== statusBeforeResult.stdout) {
+    throw snapshotFailure("git.worktree_changed", "Git worktree changed during snapshot collection");
+  }
+  let verificationBytes = 0;
+  const verificationReceipts = [];
+  for (const path of paths) {
+    context.budget.throwIfAborted();
+    const receipt = fileReceipt(workspace.root, path, binding.maxBytes - verificationBytes);
+    verificationBytes += receipt.size;
+    verificationReceipts.push(receipt);
+  }
+  const inventoryFinal = await execute(inventoryArgs);
+  const indexFinal = await execute(indexArgs);
+  const statusFinalResult = await execute(statusArgs);
+  if (canonicalJson(verificationReceipts) !== canonicalJson(fileReceipts) || inventoryFinal.stdout !== inventoryBefore.stdout || indexFinal.stdout !== indexBefore.stdout || statusFinalResult.stdout !== statusBeforeResult.stdout) {
+    throw snapshotFailure("git.worktree_changed", "Git worktree changed during snapshot collection");
+  }
+  const commandBytes = [
+    statusBeforeResult.stdout,
+    indexBefore.stdout,
+    inventoryBefore.stdout,
+    inventoryAfter.stdout,
+    indexAfter.stdout,
+    statusAfterResult.stdout,
+    inventoryFinal.stdout,
+    indexFinal.stdout,
+    statusFinalResult.stdout
+  ].reduce((total, output) => total + Buffer.byteLength(output, "utf8"), 0);
+  if (commandBytes + contentBytes + verificationBytes > binding.maxBytes) {
+    throw snapshotFailure("git.snapshot_byte_limit", "Git snapshot exceeded the reviewed total byte bound");
+  }
+  context.budget.consumeBytes(commandBytes + contentBytes + verificationBytes);
+  context.budget.consumeRows(1 + status.rows.length);
+  const indexSha256 = sha256(indexBefore.stdout);
+  const worktreeSnapshotSha256 = sha256(canonicalJson({
+    version: "git-worktree-snapshot-v1",
+    headState: status.headState,
+    ...status.headCommit === void 0 ? {} : { headCommit: status.headCommit },
+    branch: status.branch,
+    allowedPaths: [...binding.allowedPaths].sort((left, right) => left.localeCompare(right)),
+    statusSha256: status.rawSha256,
+    indexSha256,
+    ignoredFiles: "EXCLUDED",
+    fileReceipts
+  }));
+  return {
+    status,
+    indexSha256,
+    worktreeSnapshotSha256,
+    fileReceipts,
+    contentBytes,
+    diagnostic: [
+      statusBeforeResult,
+      indexBefore,
+      inventoryBefore,
+      inventoryAfter,
+      indexAfter,
+      statusAfterResult,
+      inventoryFinal,
+      indexFinal,
+      statusFinalResult
+    ].some((result) => result.stderr.length > 0)
+  };
+}
+function tableFor(binding, output) {
+  if (binding.operation === "git.status") {
+    return {
+      kind: "TABLE",
+      name: "git.status",
+      columns: [
+        { name: "status", type: "STRING" },
+        { name: "path", type: "STRING" }
+      ],
+      rows: output.rows
+    };
+  }
+  return {
+    kind: "TABLE",
+    name: "git.diff",
+    columns: [
+      { name: "line.number", type: "NUMBER" },
+      { name: "content", type: "STRING" }
+    ],
+    rows: output.rows
+  };
+}
+function snapshotTables(snapshot) {
+  const metadata = {
+    kind: "TABLE",
+    name: "git.worktree-snapshot",
+    columns: [
+      { name: "head.state", type: "STRING" },
+      { name: "head.commit", type: "STRING" },
+      { name: "branch", type: "STRING" },
+      { name: "worktree.snapshot.sha256", type: "STRING" },
+      { name: "index.sha256", type: "STRING" },
+      { name: "status.sha256", type: "STRING" },
+      { name: "file.count", type: "NUMBER" },
+      { name: "content.bytes", type: "NUMBER" },
+      { name: "ignored.files", type: "STRING" },
+      { name: "complete", type: "BOOLEAN" }
+    ],
+    rows: [[
+      snapshot.status.headState,
+      snapshot.status.headCommit ?? "UNBORN",
+      snapshot.status.branch,
+      snapshot.worktreeSnapshotSha256,
+      snapshot.indexSha256,
+      snapshot.status.rawSha256,
+      snapshot.fileReceipts.length,
+      snapshot.contentBytes,
+      "EXCLUDED",
+      true
+    ]]
+  };
+  if (snapshot.status.rows.length === 0) return [metadata];
+  return [
+    metadata,
+    {
+      kind: "TABLE",
+      name: "git.status",
+      columns: [
+        { name: "status", type: "STRING" },
+        { name: "path", type: "STRING" }
+      ],
+      rows: snapshot.status.rows
+    }
+  ];
+}
+var GitAdapter = class {
+  descriptor = descriptor3;
+  #workspaces;
+  #catalog;
+  #executor;
+  #gitExecutable;
+  constructor(options) {
+    const workspaces = /* @__PURE__ */ new Map();
+    for (const binding of options.workspaces) {
+      const workspace = canonicalWorkspace(binding);
+      if (workspaces.has(workspace.workspaceId)) {
+        throw new AdapterContractError("Duplicate Git workspace: ".concat(workspace.workspaceId));
+      }
+      workspaces.set(workspace.workspaceId, workspace);
+    }
+    const catalog = /* @__PURE__ */ new Map();
+    for (const definition of options.catalog) {
+      const binding = cloneCatalogBinding(definition, workspaces);
+      if (catalog.has(binding.bindingId)) {
+        throw new AdapterContractError("Duplicate Git binding: ".concat(binding.bindingId));
+      }
+      catalog.set(binding.bindingId, binding);
+    }
+    this.#workspaces = workspaces;
+    this.#catalog = catalog;
+    this.#executor = options.executor ?? new ExecFileGitExecutor();
+    this.#gitExecutable = options.gitExecutable ?? "/usr/bin/git";
+    if (!(0, import_node_path4.isAbsolute)(this.#gitExecutable) || (0, import_node_path4.basename)(this.#gitExecutable) !== "git") {
+      throw new AdapterContractError("Git executable must be an absolute administrator path");
+    }
+  }
+  async doctor(context) {
+    context.signal.throwIfAborted();
+    for (const workspace of this.#workspaces.values()) assertPinnedWorkspace(workspace);
+    return {
+      status: this.#catalog.size > 0 ? "READY" : "BLOCKED",
+      checks: [
+        {
+          name: "pinned-workspaces",
+          status: this.#catalog.size > 0 ? "PASS" : "FAIL",
+          message: this.#catalog.size > 0 ? "".concat(this.#workspaces.size, " canonical workspace(s) and ").concat(this.#catalog.size, " binding(s) pinned") : "No reviewed Git bindings are configured"
+        }
+      ]
+    };
+  }
+  async compile(operation2, context) {
+    if (context.adapterPackage.packageId !== GIT_ADAPTER_PACKAGE_ID) {
+      throw new AdapterContractError("Git adapter package mismatch");
+    }
+    if (operation2.definition.adapterPackageId !== GIT_ADAPTER_PACKAGE_ID || operation2.definition.domain !== "CHANGES" || !descriptor3.operations.includes(operation2.definition.adapterOperation)) {
+      throw new AdapterContractError("Operation does not target a supported Git read");
+    }
+    if (computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new AdapterContractError("Git operation hash mismatch");
+    }
+    if (Buffer.byteLength(canonicalJson(operation2.definition), "utf8") > context.maxDefinitionBytes) {
+      throw new AdapterContractError("Git operation definition exceeds compile budget");
+    }
+    const providerDefinition = operation2.definition.sanitizedProviderDefinition;
+    if (Object.keys(providerDefinition).length !== 1 || typeof providerDefinition.bindingId !== "string") {
+      throw new AdapterContractError("Git operation must select exactly one compiled bindingId");
+    }
+    const catalogBinding = this.#catalog.get(providerDefinition.bindingId);
+    if (catalogBinding === void 0 || catalogBinding.operation !== operation2.definition.adapterOperation) {
+      throw new AdapterContractError("Git binding is unavailable or operation-mismatched");
+    }
+    const workspace = this.#workspaces.get(catalogBinding.workspaceId);
+    if (workspace === void 0) throw new AdapterContractError("Git workspace binding is unavailable");
+    assertPinnedWorkspace(workspace);
+    const paths = catalogBinding.allowedPaths.map((path) => validateConfiguredPath(workspace, path));
+    const binding = {
+      bindingId: catalogBinding.bindingId,
+      workspaceId: catalogBinding.workspaceId,
+      operation: catalogBinding.operation,
+      allowedPaths: paths,
+      maxBytes: Math.min(catalogBinding.maxBytes, operation2.definition.limits.maxBytes),
+      maxFiles: Math.min(catalogBinding.maxFiles, operation2.definition.limits.maxRows),
+      maxHunks: Math.min(catalogBinding.maxHunks, operation2.definition.limits.maxSeries),
+      maxLines: Math.min(catalogBinding.maxLines, operation2.definition.limits.maxRows),
+      ...catalogBinding.operation === "git.diff" ? {
+        baseCommit: catalogBinding.baseCommit,
+        targetCommit: catalogBinding.targetCommit
+      } : {}
+    };
+    return {
+      operationId: operation2.operationId,
+      operationDefinitionSha256: operation2.definitionSha256,
+      adapterPackageId: GIT_ADAPTER_PACKAGE_ID,
+      adapterOperation: catalogBinding.operation,
+      binding
+    };
+  }
+  async execute(context, operation2) {
+    context.budget.throwIfAborted();
+    const binding = operation2.binding;
+    const catalogBinding = this.#catalog.get(binding.bindingId);
+    const workspace = this.#workspaces.get(binding.workspaceId);
+    if (catalogBinding === void 0 || workspace === void 0 || catalogBinding.operation !== binding.operation) {
+      throw new AdapterContractError("Compiled Git binding is no longer trusted");
+    }
+    if (operation2.adapterPackageId !== GIT_ADAPTER_PACKAGE_ID || operation2.adapterOperation !== binding.operation || !Number.isSafeInteger(binding.maxBytes) || !Number.isSafeInteger(binding.maxFiles) || !Number.isSafeInteger(binding.maxHunks) || !Number.isSafeInteger(binding.maxLines) || binding.maxBytes <= 0 || binding.maxFiles <= 0 || binding.maxHunks <= 0 || binding.maxLines <= 0 || binding.maxBytes > catalogBinding.maxBytes || binding.maxFiles > catalogBinding.maxFiles || binding.maxHunks > catalogBinding.maxHunks || binding.maxLines > catalogBinding.maxLines) {
+      throw new AdapterContractError("Compiled Git authority exceeds its reviewed bounds");
+    }
+    if (catalogBinding.operation === "git.diff" && (binding.baseCommit !== catalogBinding.baseCommit || binding.targetCommit !== catalogBinding.targetCommit)) {
+      throw new AdapterContractError("Compiled Git revisions changed after authorization");
+    }
+    assertPinnedWorkspace(workspace);
+    const paths = catalogBinding.allowedPaths.map((path) => validateConfiguredPath(workspace, path));
+    if (canonicalJson(paths) !== canonicalJson(binding.allowedPaths)) {
+      throw new AdapterContractError("Compiled Git paths changed after authorization");
+    }
+    const effectiveRows = context.budget.limits.maxRows;
+    const effectiveBinding = {
+      ...binding,
+      maxBytes: Math.min(binding.maxBytes, context.budget.limits.maxBytes),
+      maxFiles: Math.min(
+        binding.maxFiles,
+        binding.operation === "git.status" ? Math.max(0, effectiveRows - 1) : effectiveRows
+      ),
+      maxHunks: Math.min(binding.maxHunks, context.budget.limits.maxSeries),
+      maxLines: Math.min(
+        binding.maxLines,
+        binding.operation === "git.status" ? Math.max(0, effectiveRows - 1) : effectiveRows
+      )
+    };
+    if (binding.operation === "git.status") {
+      const snapshot = await collectWorktreeSnapshot({
+        executor: this.#executor,
+        executable: this.#gitExecutable,
+        workspace,
+        binding: effectiveBinding,
+        context
+      });
+      const warnings2 = snapshot.diagnostic ? ["Git returned sanitized diagnostic output"] : [];
+      return {
+        schemaVersion: "1.0.0",
+        collectionState: "COMPLETE",
+        evaluatedAt: context.clock.now().toISOString(),
+        nativeResultType: "git.status.snapshot",
+        nativeDimensions: {
+          headState: snapshot.status.headState,
+          ...snapshot.status.headCommit === void 0 ? {} : { headCommit: snapshot.status.headCommit },
+          worktreeSnapshotSha256: snapshot.worktreeSnapshotSha256,
+          indexSha256: snapshot.indexSha256,
+          statusSha256: snapshot.status.rawSha256,
+          ignoredFiles: "EXCLUDED",
+          completeness: "COMPLETE"
+        },
+        records: snapshotTables(snapshot),
+        pagination: { complete: true, pages: 1 },
+        warnings: warnings2,
+        sanitizedReference: "git:".concat(binding.workspaceId, ":").concat(binding.bindingId, ":").concat(snapshot.worktreeSnapshotSha256),
+        providerScope: {
+          environment: context.scope.environment,
+          ...context.scope.service === void 0 ? {} : { service: context.scope.service }
+        }
+      };
+    }
+    const args = [...FIXED_GIT_PREFIX, "-C", workspace.root];
+    if (binding.baseCommit === void 0 || binding.targetCommit === void 0) {
+      throw new AdapterContractError("Compiled Git diff is missing pinned commits");
+    }
+    args.push(
+      "diff",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--ignore-submodules=all",
+      "--unified=3",
+      binding.baseCommit,
+      binding.targetCommit,
+      "--",
+      ...paths
+    );
+    const result = await this.#executor.execute({
+      executable: this.#gitExecutable,
+      args,
+      cwd: workspace.root,
+      env: GIT_FIXED_ENVIRONMENT,
+      maxBufferBytes: effectiveBinding.maxBytes + 1,
+      timeoutMs: context.budget.limits.timeoutMs,
+      signal: context.signal
+    });
+    if (result.exitCode !== 0) {
+      throw new AdapterExecutionError({
+        code: "git.read_failed",
+        category: "INVALID_RESPONSE",
+        message: "The bounded Git read failed",
+        retryable: false
+      });
+    }
+    context.budget.throwIfAborted();
+    const bytes = Buffer.byteLength(result.stdout, "utf8");
+    context.budget.consumeBytes(Math.min(bytes, effectiveBinding.maxBytes));
+    const output = boundedDiff(result.stdout, effectiveBinding);
+    context.budget.consumeRows(output.rows.length);
+    context.budget.consumeSeries(output.hunks);
+    const warnings = [];
+    if (output.truncated) {
+      warnings.push(
+        "Git output was truncated by the reviewed ".concat(output.reason === "BYTE_LIMIT" ? "byte" : "file, hunk, or line", " bound")
+      );
+    }
+    if (result.stderr.length > 0) warnings.push("Git returned sanitized diagnostic output");
+    const empty = output.rows.length === 0;
+    return {
+      schemaVersion: "1.0.0",
+      collectionState: empty ? "EMPTY" : "COMPLETE",
+      evaluatedAt: context.clock.now().toISOString(),
+      nativeResultType: "git.diff",
+      nativeDimensions: {},
+      records: empty ? [] : [tableFor(effectiveBinding, output)],
+      pagination: output.truncated ? { complete: false, pages: 1, truncatedReason: output.reason ?? "ROW_LIMIT" } : { complete: true, pages: 1 },
+      warnings,
+      sanitizedReference: "git:".concat(binding.workspaceId, ":").concat(binding.bindingId),
+      providerScope: {
+        environment: context.scope.environment,
+        ...context.scope.service === void 0 ? {} : { service: context.scope.service }
+      }
+    };
+  }
+};
+
+// adapters/grafana/src/query-validator.ts
+var import_pgsql_ast_parser = __toESM(require_pgsql_ast_parser(), 1);
+
+// adapters/grafana/src/types.ts
+var GRAFANA_POSTGRES_DATASOURCE_TYPES = [
+  "postgres",
+  "grafana-postgresql-datasource"
+];
+function isGrafanaPostgresDatasourceType(value2) {
+  return GRAFANA_POSTGRES_DATASOURCE_TYPES.includes(value2);
+}
+function canonicalGrafanaDatasourceType(value2) {
+  return isGrafanaPostgresDatasourceType(value2) ? "postgres" : value2;
+}
+function isGrafanaPostgresTarget(value2) {
+  return isGrafanaPostgresDatasourceType(value2.datasourceType);
+}
+var GrafanaTransportError = class extends Error {
+  kind;
+  constructor(kind) {
+    super("Grafana transport ".concat(kind.toLowerCase()));
+    this.name = "GrafanaTransportError";
+    this.kind = kind;
+  }
+};
+
+// adapters/grafana/src/query-validator.ts
+var SAFE_ID = /^[a-zA-Z][a-zA-Z0-9_.:-]{0,127}$/u;
+var SAFE_UID = /^[a-zA-Z0-9_-]{1,128}$/u;
+var SAFE_SCOPE_VALUE = /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/u;
+var SAFE_PROVIDER_SUBJECT_VALUE = /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/u;
+var SUBJECT_REF = /^pmsub_[A-Za-z0-9_-]{20,128}$/u;
+var SHA256 = /^[a-f0-9]{64}$/u;
+var QUERY_UNSAFE_MARKERS = ["$", ";", "--", "/*", "*/", "//", "#"];
+function isObject(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function assertExactKeys(value2, allowed, subject) {
+  const allowedKeys = new Set(allowed);
+  if (Object.keys(value2).some((key) => !allowedKeys.has(key))) {
+    throw new AdapterContractError("Grafana ".concat(subject, " contains an unsupported field"));
+  }
+}
+function validateText(value2, subject, maximum, allowNewlines = false) {
+  const unsafe = typeof value2 === "string" && [...value2].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 0 || code === 127 || code < 32 && !(allowNewlines && (code === 9 || code === 10 || code === 13));
+  });
+  if (typeof value2 !== "string" || value2.length === 0 || value2.length > maximum || unsafe) {
+    throw new AdapterContractError("Grafana ".concat(subject, " is invalid"));
+  }
+}
+function validatePositiveInteger(value2, subject, maximum) {
+  if (!Number.isSafeInteger(value2) || value2 < 1 || value2 > maximum) {
+    throw new AdapterContractError("Grafana ".concat(subject, " is invalid"));
+  }
+}
+function validateExpression(value2, subject) {
+  validateText(value2, subject, 16384, true);
+  if (QUERY_UNSAFE_MARKERS.some((marker) => value2.includes(marker))) {
+    throw new AdapterContractError("Grafana ".concat(subject, " contains a variable, statement separator, or comment"));
+  }
+}
+function sqlForValidation(rawSql) {
+  const expanded = rawSql.replace(/\$__timeFilter\(\s*[a-zA-Z_][a-zA-Z0-9_.]*\s*\)/gu, "(time_value >= TIMESTAMP '1970-01-01')").replace(/\$__timeFrom\(\)/gu, "TIMESTAMP '1970-01-01'").replace(/\$__timeTo\(\)/gu, "TIMESTAMP '1970-01-02'");
+  if (expanded.includes("$")) {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains an unsupported macro or parameter");
+  }
+  if (expanded.includes("--") || expanded.includes("/*") || expanded.includes("*/")) {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains a comment");
+  }
+  return expanded;
+}
+function auditPostgresAst(value2) {
+  if (Array.isArray(value2)) {
+    for (const child of value2) auditPostgresAst(child);
+    return;
+  }
+  if (!isObject(value2)) return;
+  const type = value2.type;
+  if (type === "insert" || type === "update" || type === "delete") {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains a writable statement or CTE");
+  }
+  if (type === "with recursive" || type === "union" || type === "union all" || type === "values") {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains an unsupported compound SELECT");
+  }
+  if (type === "select" && (value2.for !== void 0 || value2.skip !== void 0 || value2.into !== void 0)) {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains a locking or SELECT INTO clause");
+  }
+  if (type === "parameter") {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains an unsupported parameter");
+  }
+  if (type === "call") {
+    throw new AdapterContractError("Grafana PostgreSQL SQL contains a function call");
+  }
+  for (const child of Object.values(value2)) auditPostgresAst(child);
+}
+function assertReadOnlySelect(statement) {
+  if (statement.type === "select") {
+    auditPostgresAst(statement);
+    return;
+  }
+  if (statement.type === "with") {
+    for (const binding of statement.bind) assertReadOnlySelect(binding.statement);
+    assertReadOnlySelect(statement.in);
+    auditPostgresAst(statement);
+    return;
+  }
+  throw new AdapterContractError("Grafana PostgreSQL SQL must be one read-only SELECT or WITH SELECT");
+}
+function outerSelect(statement) {
+  if (statement.type === "select") return statement;
+  if (statement.type === "with") return outerSelect(statement.in);
+  throw new AdapterContractError("Grafana PostgreSQL SQL must end in a bounded SELECT");
+}
+function validateGrafanaPostgresSql(target) {
+  validateText(target.rawSql, "PostgreSQL SQL", 65536, true);
+  validatePositiveInteger(target.maxRows, "PostgreSQL row limit", 1e4);
+  let statements;
+  try {
+    statements = (0, import_pgsql_ast_parser.parse)(sqlForValidation(target.rawSql));
+  } catch {
+    throw new AdapterContractError("Grafana PostgreSQL SQL could not be parsed as a read-only statement");
+  }
+  if (statements.length !== 1) {
+    throw new AdapterContractError("Grafana PostgreSQL SQL must contain exactly one statement");
+  }
+  const statement = statements[0];
+  assertReadOnlySelect(statement);
+  const bounded = outerSelect(statement);
+  const limit = bounded.limit?.limit;
+  if (bounded.limit?.offset !== void 0 || limit?.type !== "integer" || !Number.isSafeInteger(limit.value) || limit.value < 1 || limit.value > target.maxRows) {
+    throw new AdapterContractError("Grafana PostgreSQL SQL LIMIT exceeds its enrolled row limit");
+  }
+}
+function validateFrameField(field) {
+  if (!isObject(field)) throw new AdapterContractError("Grafana frame field contract is invalid");
+  assertExactKeys(field, ["sourceName", "outputName", "type", "role"], "frame field contract");
+  validateText(field.sourceName, "frame source field", 256);
+  if (!SAFE_ID.test(field.outputName)) throw new AdapterContractError("Grafana frame output field is invalid");
+  if (!(/* @__PURE__ */ new Set(["time", "number", "string", "boolean"])).has(field.type)) {
+    throw new AdapterContractError("Grafana frame field type is unsupported");
+  }
+  if (!(/* @__PURE__ */ new Set(["TIME", "VALUE", "DIMENSION", "COLUMN", "SUMMARY", "ATTRIBUTE"])).has(field.role)) {
+    throw new AdapterContractError("Grafana frame field role is unsupported");
+  }
+  if (field.role === "TIME" && field.type !== "time") {
+    throw new AdapterContractError("Grafana TIME frame field must have time type");
+  }
+  if (field.role === "VALUE" && field.type !== "number") {
+    throw new AdapterContractError("Grafana VALUE frame field must have number type");
+  }
+  if (field.role === "SUMMARY" && field.type !== "string") {
+    throw new AdapterContractError("Grafana SUMMARY frame field must have string type");
+  }
+}
+function validateGrafanaFrameContract(frame) {
+  if (!isObject(frame)) throw new AdapterContractError("Grafana frame contract is invalid");
+  assertExactKeys(frame, ["resultKind", "fields", "allowedLabels", "unit", "eventSummary"], "frame contract");
+  if (!(/* @__PURE__ */ new Set(["SCALAR", "TIMESERIES", "TABLE", "EVENT"])).has(frame.resultKind)) {
+    throw new AdapterContractError("Grafana frame result kind is invalid");
+  }
+  if (!Array.isArray(frame.fields) || frame.fields.length === 0 || frame.fields.length > 32) {
+    throw new AdapterContractError("Grafana frame fields must be non-empty and bounded");
+  }
+  for (const field of frame.fields) validateFrameField(field);
+  if (new Set(frame.fields.map((field) => field.sourceName)).size !== frame.fields.length || new Set(frame.fields.map((field) => field.outputName)).size !== frame.fields.length) {
+    throw new AdapterContractError("Grafana frame fields must have unique source and output names");
+  }
+  if (!Array.isArray(frame.allowedLabels) || frame.allowedLabels.length > 16 || new Set(frame.allowedLabels).size !== frame.allowedLabels.length || frame.allowedLabels.some((label) => !SAFE_ID.test(label))) {
+    throw new AdapterContractError("Grafana frame labels must be unique, safe, and bounded");
+  }
+  const roles = frame.fields.map((field) => field.role);
+  const count = (role) => roles.filter((candidate) => candidate === role).length;
+  if (frame.resultKind === "SCALAR" && (count("VALUE") !== 1 || count("TIME") > 1 || roles.some((role) => !(/* @__PURE__ */ new Set(["VALUE", "TIME", "DIMENSION"])).has(role)))) {
+    throw new AdapterContractError("Grafana SCALAR frame contract roles are invalid");
+  }
+  if (frame.resultKind === "TIMESERIES" && (count("VALUE") < 1 || count("TIME") !== 1 || roles.some((role) => !(/* @__PURE__ */ new Set(["VALUE", "TIME", "DIMENSION"])).has(role)))) {
+    throw new AdapterContractError("Grafana TIMESERIES frame contract roles are invalid");
+  }
+  if (frame.resultKind === "TABLE" && roles.some((role) => !(/* @__PURE__ */ new Set(["COLUMN", "DIMENSION"])).has(role))) {
+    throw new AdapterContractError("Grafana TABLE frame contract roles are invalid");
+  }
+  if (frame.resultKind === "EVENT" && (count("TIME") !== 1 || count("SUMMARY") > 1 || roles.some((role) => !(/* @__PURE__ */ new Set(["TIME", "SUMMARY", "ATTRIBUTE", "DIMENSION"])).has(role)))) {
+    throw new AdapterContractError("Grafana EVENT frame contract roles are invalid");
+  }
+  if (frame.unit !== void 0) {
+    validateText(frame.unit, "frame unit", 64);
+    if (frame.resultKind !== "SCALAR" && frame.resultKind !== "TIMESERIES") {
+      throw new AdapterContractError("Grafana frame unit is only valid for numeric output");
+    }
+  }
+  if (frame.eventSummary !== void 0) validateText(frame.eventSummary, "event summary", 256);
+  if (frame.resultKind === "EVENT" && count("SUMMARY") === 0 && frame.eventSummary === void 0) {
+    throw new AdapterContractError("Grafana EVENT frame contract requires a fixed or mapped summary");
+  }
+}
+function validateGrafanaDatasourceQueryTarget(target) {
+  if (!isObject(target)) throw new AdapterContractError("Grafana datasource query target is invalid");
+  if (target.datasourceType === "prometheus") {
+    assertExactKeys(target, ["datasourceType", "expression", "mode", "format", "legendFormat"], "Prometheus target");
+    validateExpression(target.expression, "Prometheus expression");
+    if (!(/* @__PURE__ */ new Set(["instant", "range"])).has(target.mode) || !(/* @__PURE__ */ new Set(["time_series", "table"])).has(target.format)) {
+      throw new AdapterContractError("Grafana Prometheus target mode or format is invalid");
+    }
+    if (target.legendFormat !== void 0) validateText(target.legendFormat, "Prometheus legend", 256);
+    return;
+  }
+  if (target.datasourceType === "loki") {
+    assertExactKeys(target, ["datasourceType", "expression", "queryType", "direction"], "Loki target");
+    validateExpression(target.expression, "Loki expression");
+    if (target.queryType !== "range" || !(/* @__PURE__ */ new Set(["backward", "forward"])).has(target.direction)) {
+      throw new AdapterContractError("Grafana Loki target mode is invalid");
+    }
+    return;
+  }
+  if (target.datasourceType === "tempo") {
+    assertExactKeys(target, ["datasourceType", "expression", "queryType", "limit", "spansPerSpanSet", "tableType"], "Tempo target");
+    validateExpression(target.expression, "Tempo TraceQL expression");
+    validatePositiveInteger(target.limit, "Tempo trace limit", 1e3);
+    validatePositiveInteger(target.spansPerSpanSet, "Tempo spans-per-span-set", 1e3);
+    if (target.queryType !== "traceql" || !(/* @__PURE__ */ new Set(["traces", "spans"])).has(target.tableType)) {
+      throw new AdapterContractError("Grafana Tempo target mode is invalid");
+    }
+    return;
+  }
+  if (isGrafanaPostgresTarget(target)) {
+    assertExactKeys(target, ["datasourceType", "rawSql", "format", "maxRows"], "PostgreSQL target");
+    if (!(/* @__PURE__ */ new Set(["table", "time_series"])).has(target.format)) {
+      throw new AdapterContractError("Grafana PostgreSQL target format is invalid");
+    }
+    validateGrafanaPostgresSql(target);
+    return;
+  }
+  throw new AdapterContractError("Grafana datasource type is not certified");
+}
+function validateTargetFrameCompatibility(entry) {
+  const { target, frame } = entry;
+  if (target.datasourceType === "prometheus") {
+    if (target.format === "table" && frame.resultKind !== "TABLE") {
+      throw new AdapterContractError("Grafana Prometheus table target requires TABLE normalization");
+    }
+    if (target.format === "time_series" && !(/* @__PURE__ */ new Set(["SCALAR", "TIMESERIES"])).has(frame.resultKind)) {
+      throw new AdapterContractError("Grafana Prometheus time-series target has an incompatible frame contract");
+    }
+  } else if (target.datasourceType === "loki" && !(/* @__PURE__ */ new Set(["EVENT", "TABLE", "TIMESERIES"])).has(frame.resultKind)) {
+    throw new AdapterContractError("Grafana Loki target has an incompatible frame contract");
+  } else if (target.datasourceType === "tempo" && !(/* @__PURE__ */ new Set(["EVENT", "TABLE"])).has(frame.resultKind)) {
+    throw new AdapterContractError("Grafana Tempo target has an incompatible frame contract");
+  } else if (isGrafanaPostgresTarget(target)) {
+    const allowed = target.format === "table" ? ["SCALAR", "TABLE"] : ["SCALAR", "TIMESERIES"];
+    if (!allowed.includes(frame.resultKind)) {
+      throw new AdapterContractError("Grafana PostgreSQL target has an incompatible frame contract");
+    }
+  }
+}
+function extractBracedSelectors(expression, datasource) {
+  const selectors = [];
+  let quote;
+  let escaped = false;
+  let start;
+  for (let index = 0; index < expression.length; index += 1) {
+    const character = expression[index];
+    if (quote !== void 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = void 0;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") {
+      if (start !== void 0) {
+        throw new AdapterContractError("Grafana ".concat(datasource, " enrolled scope contains nested selectors"));
+      }
+      start = index;
+    } else if (character === "}") {
+      if (start === void 0) {
+        throw new AdapterContractError("Grafana ".concat(datasource, " enrolled scope contains an unmatched selector"));
+      }
+      selectors.push({ start, end: index, content: expression.slice(start + 1, index) });
+      start = void 0;
+    }
+  }
+  if (quote !== void 0 || start !== void 0) {
+    throw new AdapterContractError("Grafana ".concat(datasource, " enrolled scope contains an incomplete selector"));
+  }
+  return selectors;
+}
+function escapeRegularExpression(value2) {
+  return value2.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+function selectorHasExactMatcher(selector, field, providerValue2) {
+  const pattern = new RegExp(
+    "(?:^|,)\\s*".concat(escapeRegularExpression(field), '\\s*=\\s*"').concat(escapeRegularExpression(providerValue2), '"\\s*(?=,|$)'),
+    "u"
+  );
+  return pattern.test(selector);
+}
+function maskQuotedText(value2) {
+  const output = [...value2];
+  let quote;
+  let escaped = false;
+  for (let index = 0; index < output.length; index += 1) {
+    const character = output[index];
+    if (quote === void 0) {
+      if (character === '"' || character === "'" || character === "`") {
+        quote = character;
+        output[index] = " ";
+      }
+      continue;
+    }
+    output[index] = " ";
+    if (escaped) escaped = false;
+    else if (character === "\\") escaped = true;
+    else if (character === quote) quote = void 0;
+  }
+  return output.join("");
+}
+function selectorHasEveryExactMatcher(selector, constraints) {
+  return constraints.every((constraint) => selectorHasExactMatcher(selector, constraint.queryField, constraint.expectedValue));
+}
+function validatePrometheusTargetScope(expression, constraints) {
+  if (/\blabel_(?:join|replace)\s*\(/iu.test(maskQuotedText(expression))) {
+    throw new AdapterContractError("Grafana Prometheus target mutates enrolled scope labels");
+  }
+  const selectors = extractBracedSelectors(expression, "Prometheus");
+  if (selectors.length === 0 || selectors.some((selector) => !selectorHasEveryExactMatcher(selector.content, constraints))) {
+    throw new AdapterContractError("Grafana Prometheus target does not enforce every enrolled scope constraint");
+  }
+  const masked = [...expression];
+  for (const selector of selectors) {
+    let prefix = selector.start;
+    while (prefix > 0 && /[A-Za-z0-9_:]/u.test(expression[prefix - 1])) prefix -= 1;
+    masked.fill(" ", prefix, selector.end + 1);
+  }
+  let remainder = maskQuotedText(masked.join(""));
+  remainder = remainder.replace(/\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^()]*\)/gu, " ").replace(/\[[^\]]*\]/gu, " ").replace(/\b\d+(?:\.\d+)?(?:ms|s|m|h|d|w|y)\b/gu, " ").replace(/\b[A-Za-z_][A-Za-z0-9_]*\s*(?=\()/gu, " ").replace(/\b(?:and|or|unless|bool|offset|by|without|on|ignoring|group_left|group_right|inf|nan)\b/gu, " ");
+  if (/[A-Za-z_:][A-Za-z0-9_:]*/u.test(remainder)) {
+    throw new AdapterContractError("Grafana Prometheus target contains an unscoped vector selector");
+  }
+}
+function validateLokiTargetScope(expression, constraints) {
+  if (/\b(?:label_format|label_replace)\b/iu.test(maskQuotedText(expression))) {
+    throw new AdapterContractError("Grafana Loki target mutates enrolled scope labels");
+  }
+  const selectors = extractBracedSelectors(expression, "Loki");
+  if (selectors.length === 0 || selectors.some((selector) => !selectorHasEveryExactMatcher(selector.content, constraints))) {
+    throw new AdapterContractError("Grafana Loki target does not enforce every enrolled scope constraint");
+  }
+}
+function splitTempoConjuncts(selector) {
+  const conjuncts = [];
+  let quote;
+  let escaped = false;
+  let parentheses = 0;
+  let start = 0;
+  for (let index = 0; index < selector.length; index += 1) {
+    const character = selector[index];
+    if (quote !== void 0) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = void 0;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "(") parentheses += 1;
+    else if (character === ")") {
+      parentheses -= 1;
+      if (parentheses < 0) return void 0;
+    } else if (character === "|" && selector[index + 1] === "|") {
+      return void 0;
+    } else if (parentheses === 0 && character === "&" && selector[index + 1] === "&") {
+      conjuncts.push(selector.slice(start, index).trim());
+      start = index + 2;
+      index += 1;
+    }
+  }
+  if (quote !== void 0 || parentheses !== 0) return void 0;
+  conjuncts.push(selector.slice(start).trim());
+  return conjuncts;
+}
+function tempoConjunctMatchesConstraint(conjunct, constraint) {
+  const exactPredicate = new RegExp(
+    "^".concat(escapeRegularExpression(constraint.queryField), '\\s*=\\s*"').concat(escapeRegularExpression(constraint.expectedValue), '"$'),
+    "u"
+  );
+  return exactPredicate.test(conjunct);
+}
+function validateTempoTargetScope(expression, constraints) {
+  const selectors = extractBracedSelectors(expression, "Tempo");
+  if (selectors.length === 0 || selectors.some((selector) => {
+    const conjuncts = splitTempoConjuncts(selector.content);
+    return conjuncts === void 0 || constraints.some((constraint) => !conjuncts.some((conjunct) => tempoConjunctMatchesConstraint(conjunct, constraint)));
+  })) {
+    throw new AdapterContractError("Grafana Tempo target does not enforce every enrolled scope constraint");
+  }
+}
+function postgresReferenceMatches(value2, field) {
+  if (!isObject(value2) || value2.type !== "ref" || typeof value2.name !== "string") return false;
+  if (value2.name === field) return true;
+  return isObject(value2.table) && typeof value2.table.name === "string" && "".concat(value2.table.name, ".").concat(value2.name) === field;
+}
+function postgresStringMatches(value2, providerValue2) {
+  return isObject(value2) && value2.type === "string" && value2.value === providerValue2;
+}
+function postgresScopeEquality(value2, field, expectedValue) {
+  return isObject(value2) && value2.type === "binary" && value2.op === "=" && (postgresReferenceMatches(value2.left, field) && postgresStringMatches(value2.right, expectedValue) || postgresReferenceMatches(value2.right, field) && postgresStringMatches(value2.left, expectedValue));
+}
+function postgresWhereHasScopeConjunct(value2, field, expectedValue) {
+  if (postgresScopeEquality(value2, field, expectedValue)) return true;
+  return isObject(value2) && value2.type === "binary" && value2.op === "AND" && (postgresWhereHasScopeConjunct(value2.left, field, expectedValue) || postgresWhereHasScopeConjunct(value2.right, field, expectedValue));
+}
+function postgresColumnOutputName(value2) {
+  if (!isObject(value2)) return void 0;
+  if (isObject(value2.alias) && typeof value2.alias.name === "string") return value2.alias.name;
+  return isObject(value2.expr) && value2.expr.type === "ref" && typeof value2.expr.name === "string" ? value2.expr.name : void 0;
+}
+function postgresDirectlyProjectsScopeField(columns, field) {
+  if (!Array.isArray(columns)) return false;
+  const matching = columns.filter((column) => postgresColumnOutputName(column) === field);
+  return matching.length === 1 && isObject(matching[0]) && postgresReferenceMatches(matching[0].expr, field);
+}
+function validatePostgresTargetScope(rawSql, constraints) {
+  let statements;
+  try {
+    statements = (0, import_pgsql_ast_parser.parse)(sqlForValidation(rawSql));
+  } catch {
+    throw new AdapterContractError("Grafana PostgreSQL enrolled scope could not be parsed");
+  }
+  const statement = statements[0];
+  const source = statement?.type === "select" && Array.isArray(statement.from) && statement.from.length === 1 ? statement.from[0] : void 0;
+  if (statements.length !== 1 || statement?.type !== "select" || !isObject(source) || source.type !== "table" || source.join !== void 0 || constraints.some((constraint) => !postgresWhereHasScopeConjunct(statement.where, constraint.queryField, constraint.expectedValue) || !postgresDirectlyProjectsScopeField(statement.columns, constraint.outputField))) {
+    throw new AdapterContractError(
+      "Grafana PostgreSQL target must directly filter and project every enrolled scope constraint"
+    );
+  }
+}
+function targetScopeConstraints(entry) {
+  const tempo = entry.target.datasourceType === "tempo";
+  return [
+    {
+      scopeField: "environment",
+      outputField: entry.scopeMappings.environment,
+      queryField: tempo ? "resource.deployment.environment" : entry.scopeMappings.environment,
+      expectedValue: entry.scope.environment
+    },
+    ...entry.scope.service === void 0 ? [] : [{
+      scopeField: "service",
+      outputField: entry.scopeMappings.service,
+      queryField: tempo ? "resource.service.name" : entry.scopeMappings.service,
+      expectedValue: entry.scope.service
+    }],
+    ...entry.scope.subject === void 0 ? [] : [{
+      scopeField: "subject.ref",
+      outputField: entry.scopeMappings["subject.ref"],
+      queryField: entry.scopeMappings["subject.ref"],
+      expectedValue: entry.scope.subject.providerValue
+    }]
+  ];
+}
+function validateTargetScopeBindings(entry) {
+  const subject = entry.scope.subject;
+  if (subject !== void 0 && entry.frame.eventSummary?.includes(subject.providerValue) === true) {
+    throw new AdapterContractError("Grafana frame summary exposes its provider-native subject value");
+  }
+  const constraints = targetScopeConstraints(entry);
+  if (entry.target.datasourceType === "prometheus") {
+    validatePrometheusTargetScope(entry.target.expression, constraints);
+  } else if (entry.target.datasourceType === "loki") {
+    validateLokiTargetScope(entry.target.expression, constraints);
+  } else if (entry.target.datasourceType === "tempo") {
+    validateTempoTargetScope(entry.target.expression, constraints);
+  } else {
+    validatePostgresTargetScope(entry.target.rawSql, constraints);
+  }
+}
+function validateGrafanaDatasourceQueryEntry(entry) {
+  if (!SAFE_UID.test(entry.datasourceUid)) throw new AdapterContractError("Grafana datasource UID is invalid");
+  if (!SHA256.test(entry.datasourceIdentitySha256)) {
+    throw new AdapterContractError("Grafana datasource identity hash is invalid");
+  }
+  validatePositiveInteger(entry.minIntervalMs, "minimum query interval", 36e5);
+  validateGrafanaDatasourceQueryTarget(entry.target);
+  if (isGrafanaPostgresTarget(entry.target)) {
+    if (!isObject(entry.postgresReadOnlyIdentity)) {
+      throw new AdapterContractError("Grafana PostgreSQL target requires a SELECT_ONLY database identity attestation");
+    }
+    assertExactKeys(
+      entry.postgresReadOnlyIdentity,
+      ["roleIdentitySha256", "privilegeModel"],
+      "PostgreSQL database identity attestation"
+    );
+    if (!SHA256.test(entry.postgresReadOnlyIdentity.roleIdentitySha256) || entry.postgresReadOnlyIdentity.privilegeModel !== "SELECT_ONLY") {
+      throw new AdapterContractError("Grafana PostgreSQL database identity attestation is invalid");
+    }
+  } else if (entry.postgresReadOnlyIdentity !== void 0) {
+    throw new AdapterContractError("Grafana PostgreSQL database identity attestation is forbidden for non-PostgreSQL targets");
+  }
+  validateGrafanaFrameContract(entry.frame);
+  if (!isObject(entry.scope) || !isObject(entry.scopeMappings)) {
+    throw new AdapterContractError("Grafana datasource query scope is invalid");
+  }
+  assertExactKeys(entry.scope, ["environment", "service", "subject"], "datasource query scope");
+  assertExactKeys(entry.scopeMappings, ["environment", "service", "subject.ref"], "datasource query scope mappings");
+  if (!SAFE_SCOPE_VALUE.test(entry.scope.environment) || entry.scope.service !== void 0 && !SAFE_SCOPE_VALUE.test(entry.scope.service)) {
+    throw new AdapterContractError("Grafana datasource query scope values are invalid");
+  }
+  if (entry.scope.subject !== void 0) {
+    if (!isObject(entry.scope.subject)) throw new AdapterContractError("Grafana datasource query subject binding is invalid");
+    assertExactKeys(entry.scope.subject, ["kind", "ref", "providerValue"], "datasource query subject binding");
+    if (!(/* @__PURE__ */ new Set(["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"])).has(entry.scope.subject.kind) || !SUBJECT_REF.test(entry.scope.subject.ref) || !SAFE_PROVIDER_SUBJECT_VALUE.test(entry.scope.subject.providerValue)) {
+      throw new AdapterContractError("Grafana datasource query subject binding is invalid");
+    }
+  }
+  const scopeMappingValues = [
+    entry.scopeMappings.environment,
+    ...entry.scopeMappings.service === void 0 ? [] : [entry.scopeMappings.service],
+    ...entry.scopeMappings["subject.ref"] === void 0 ? [] : [entry.scopeMappings["subject.ref"]]
+  ];
+  if (!SAFE_ID.test(entry.scopeMappings.environment) || entry.scopeMappings.service !== void 0 && !SAFE_ID.test(entry.scopeMappings.service) || entry.scopeMappings["subject.ref"] !== void 0 && !SAFE_ID.test(entry.scopeMappings["subject.ref"]) || new Set(scopeMappingValues).size !== scopeMappingValues.length || entry.scope.service === void 0 !== (entry.scopeMappings.service === void 0) || entry.scope.subject === void 0 !== (entry.scopeMappings["subject.ref"] === void 0)) {
+    throw new AdapterContractError("Grafana datasource query scope mappings are invalid");
+  }
+  const scopeSources = /* @__PURE__ */ new Set([
+    ...entry.frame.fields.filter((field) => field.role === "DIMENSION").map((field) => field.sourceName),
+    ...entry.frame.allowedLabels
+  ]);
+  if (!scopeSources.has(entry.scopeMappings.environment) || entry.scopeMappings.service !== void 0 && !scopeSources.has(entry.scopeMappings.service) || entry.scopeMappings["subject.ref"] !== void 0 && !scopeSources.has(entry.scopeMappings["subject.ref"])) {
+    throw new AdapterContractError("Grafana datasource query scope mapping is not present in the enrolled frame");
+  }
+  if (entry.sourcePanel !== void 0) {
+    if (!isObject(entry.sourcePanel)) throw new AdapterContractError("Grafana saved-panel source is invalid");
+    assertExactKeys(entry.sourcePanel, ["dashboardUid", "dashboardVersion", "panelId", "targetRefId"], "saved-panel source");
+    if (!SAFE_UID.test(entry.sourcePanel.dashboardUid)) throw new AdapterContractError("Grafana dashboard UID is invalid");
+    validatePositiveInteger(entry.sourcePanel.dashboardVersion, "dashboard version", 2147483647);
+    validatePositiveInteger(entry.sourcePanel.panelId, "panel ID", 2147483647);
+    if (entry.sourcePanel.targetRefId !== "A") throw new AdapterContractError("Grafana saved panel must bind target A");
+  }
+  validateTargetFrameCompatibility(entry);
+  validateTargetScopeBindings(entry);
+}
+
+// adapters/grafana/src/catalog.ts
+var SAFE_ID2 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var SAFE_UID2 = /^[a-zA-Z0-9_-]{1,128}$/u;
+function assertExactKeys2(entry) {
+  const common = ["id", "route", "outputName"];
+  const specific = entry.route === "search" ? ["query", "searchType", "tags"] : entry.route === "datasource" || entry.route === "datasource-health" ? ["datasourceUid"] : entry.route === "datasource-query" ? [
+    "datasourceUid",
+    "datasourceIdentitySha256",
+    "target",
+    "frame",
+    "minIntervalMs",
+    "scope",
+    "scopeMappings",
+    "postgresReadOnlyIdentity",
+    "sourcePanel"
+  ] : entry.route === "annotations" ? ["annotationType", "tags"] : [];
+  const allowed = /* @__PURE__ */ new Set([...common, ...specific]);
+  if (Object.keys(entry).some((key) => !allowed.has(key))) {
+    throw new AdapterContractError("Grafana catalog entry contains an unsupported field");
+  }
+}
+function validateText2(value2, name, maxLength) {
+  if (value2.length > maxLength || [...value2].some((character) => (character.codePointAt(0) ?? 0) < 32)) {
+    throw new AdapterContractError("Grafana catalog ".concat(name, " is invalid"));
+  }
+}
+function validateTags(tags) {
+  if (tags === void 0) return;
+  if (tags.length > 16 || new Set(tags).size !== tags.length) {
+    throw new AdapterContractError("Grafana catalog tags must be unique and bounded");
+  }
+  for (const tag of tags) validateText2(tag, "tag", 128);
+}
+function validateEntry(entry) {
+  if (!(/* @__PURE__ */ new Set(["health", "search", "datasource", "datasource-health", "datasource-query", "annotations", "unified-alerts"])).has(entry.route)) {
+    throw new AdapterContractError("Grafana catalog route is not read-only and allowlisted");
+  }
+  assertExactKeys2(entry);
+  if (!SAFE_ID2.test(entry.id) || !SAFE_ID2.test(entry.outputName)) {
+    throw new AdapterContractError("Grafana catalog IDs must use the bounded safe identifier format");
+  }
+  if (entry.route === "search") {
+    if (entry.query !== void 0) validateText2(entry.query, "search query", 512);
+    validateTags(entry.tags);
+  }
+  if (entry.route === "annotations") validateTags(entry.tags);
+  if ((entry.route === "datasource" || entry.route === "datasource-health") && !SAFE_UID2.test(entry.datasourceUid)) {
+    throw new AdapterContractError("Grafana datasource UID is invalid");
+  }
+  if (entry.route === "datasource-query") validateGrafanaDatasourceQueryEntry(entry);
+  canonicalJson(entry);
+}
+function deepFreeze3(value2) {
+  if (value2 !== null && typeof value2 === "object" && !Object.isFrozen(value2)) {
+    for (const nested of Object.values(value2)) deepFreeze3(nested);
+    Object.freeze(value2);
+  }
+  return value2;
+}
+function grafanaCatalogEntryHash(entry) {
+  return sha256Canonical(entry);
+}
+var CompiledGrafanaCatalog = class {
+  #entries;
+  constructor(catalog) {
+    const entries = /* @__PURE__ */ new Map();
+    for (const supplied of catalog.entries) {
+      const entry = structuredClone(supplied);
+      validateEntry(entry);
+      if (entries.has(entry.id)) throw new AdapterContractError("Duplicate Grafana catalog entry: ".concat(entry.id));
+      entries.set(entry.id, deepFreeze3(entry));
+    }
+    this.#entries = entries;
+  }
+  resolve(id, expectedSha256) {
+    const entry = this.#entries.get(id);
+    if (entry === void 0) throw new AdapterContractError("Grafana catalog entry is not trusted");
+    if (grafanaCatalogEntryHash(entry) !== expectedSha256) {
+      throw new AdapterContractError("Grafana catalog entry hash mismatch");
+    }
+    return entry;
+  }
+};
+
+// adapters/grafana/src/frame-normalizer.ts
+var TIMESTAMP_SKEW_MS = 5 * 6e4;
+function isObject2(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function safeString(value2, subject, maximum = 4096) {
+  if (typeof value2 !== "string" || value2.length > maximum || [...value2].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 0 || code === 127 || code < 32 && code !== 9 && code !== 10 && code !== 13;
+  })) {
+    throw new AdapterContractError("Grafana frame ".concat(subject, " is invalid"));
+  }
+  return value2;
+}
+function parseTime(value2, subject, context) {
+  const parsed = typeof value2 === "number" ? new Date(value2) : typeof value2 === "string" ? new Date(value2) : void 0;
+  if (parsed === void 0 || Number.isNaN(parsed.getTime())) {
+    throw new AdapterContractError("Grafana frame ".concat(subject, " timestamp is invalid"));
+  }
+  const epoch = parsed.getTime();
+  const start = Date.parse(context.window.start) - TIMESTAMP_SKEW_MS;
+  const end = Date.parse(context.window.end) + TIMESTAMP_SKEW_MS;
+  if (epoch < start || epoch > end) {
+    throw new AdapterContractError("Grafana frame ".concat(subject, " timestamp falls outside the requested window"));
+  }
+  return parsed.toISOString();
+}
+function parseValue(value2, type, subject, context) {
+  if (value2 === null) return null;
+  if (type === "time") {
+    if ((typeof value2 !== "number" || !Number.isFinite(value2)) && typeof value2 !== "string") {
+      throw new AdapterContractError("Grafana frame ".concat(subject, " value has drifted from time"));
+    }
+    return parseTime(value2, subject, context);
+  }
+  if (type === "number") {
+    if (typeof value2 !== "number" || !Number.isFinite(value2)) {
+      throw new AdapterContractError("Grafana frame ".concat(subject, " value has drifted from number"));
+    }
+    return value2;
+  }
+  if (type === "string") return safeString(value2, "".concat(subject, " string"));
+  if (typeof value2 !== "boolean") throw new AdapterContractError("Grafana frame ".concat(subject, " value has drifted from boolean"));
+  return value2;
+}
+function parseLabels(value2, allowed) {
+  if (value2 === void 0) return {};
+  if (!isObject2(value2)) throw new AdapterContractError("Grafana frame labels are invalid");
+  const labels = {};
+  for (const [name, raw] of Object.entries(value2)) {
+    if (!allowed.has(name)) continue;
+    labels[name] = safeString(raw, "label value", 128);
+  }
+  return labels;
+}
+function mergeLabels(target, source) {
+  for (const [name, value2] of Object.entries(source)) {
+    if (target[name] !== void 0 && target[name] !== value2) {
+      throw new AdapterContractError("Grafana frame labels conflict across fields");
+    }
+    target[name] = value2;
+  }
+}
+function containsSubjectProviderValue(value2, providerValue2) {
+  if (typeof value2 === "string") return value2.includes(providerValue2);
+  if (typeof value2 === "number" || typeof value2 === "boolean") return String(value2) === providerValue2;
+  if (Array.isArray(value2)) return value2.some((item) => containsSubjectProviderValue(item, providerValue2));
+  if (isObject2(value2)) {
+    return Object.values(value2).some((item) => containsSubjectProviderValue(item, providerValue2));
+  }
+  return false;
+}
+function assertSubjectProviderValueNotExposed(value2, entry) {
+  if (entry.scope.subject !== void 0 && containsSubjectProviderValue(value2, entry.scope.subject.providerValue)) {
+    throw new AdapterContractError("Grafana datasource query response exposed its provider-native subject value");
+  }
+}
+function assertSubjectProviderValueConfined(fields, labels, entry) {
+  const subject = entry.scope.subject;
+  const subjectSource = entry.scopeMappings["subject.ref"];
+  if (subject === void 0 || subjectSource === void 0) return;
+  for (const [name, value2] of Object.entries(labels)) {
+    if (name !== subjectSource) assertSubjectProviderValueNotExposed(value2, entry);
+  }
+  for (const field of fields) {
+    if (field.contract.role !== "TIME" && field.contract.sourceName !== subjectSource) {
+      assertSubjectProviderValueNotExposed(field.values, entry);
+    }
+  }
+}
+function parseFrame(rawFrame, entry, context) {
+  if (!isObject2(rawFrame) || !isObject2(rawFrame.schema) || !isObject2(rawFrame.data)) {
+    throw new AdapterContractError("Grafana datasource query frame is invalid");
+  }
+  if (rawFrame.schema.refId !== "A" || !Array.isArray(rawFrame.schema.fields) || !Array.isArray(rawFrame.data.values)) {
+    throw new AdapterContractError("Grafana datasource query frame schema is invalid");
+  }
+  if (rawFrame.schema.fields.length !== entry.frame.fields.length || rawFrame.data.values.length !== entry.frame.fields.length) {
+    throw new AdapterContractError("Grafana datasource query frame shape drifted from the enrolled contract");
+  }
+  const allowedLabels = new Set(entry.frame.allowedLabels);
+  const fields = [];
+  const frameLabels = {};
+  let length;
+  for (let index = 0; index < entry.frame.fields.length; index += 1) {
+    const schemaField = rawFrame.schema.fields[index];
+    const values = rawFrame.data.values[index];
+    const contract = entry.frame.fields[index];
+    if (!isObject2(schemaField) || schemaField.name !== contract.sourceName || schemaField.type !== contract.type || !Array.isArray(values)) {
+      throw new AdapterContractError("Grafana datasource query frame field drifted from the enrolled contract");
+    }
+    if (length === void 0) length = values.length;
+    else if (values.length !== length) throw new AdapterContractError("Grafana datasource query frame fields have unequal lengths");
+    const labels = parseLabels(schemaField.labels, allowedLabels);
+    mergeLabels(frameLabels, labels);
+    fields.push({
+      contract,
+      labels,
+      values: values.map((value2) => parseValue(value2, contract.type, contract.sourceName, context))
+    });
+  }
+  assertSubjectProviderValueConfined(fields, frameLabels, entry);
+  return { fields, length: length ?? 0, labels: frameLabels };
+}
+function canAdd(state, context, kind) {
+  const current = state[kind];
+  const maximum = kind === "rows" ? context.budget.limits.maxRows : kind === "series" ? context.budget.limits.maxSeries : context.budget.limits.maxPoints;
+  if (current < maximum) return true;
+  state.truncatedReason ??= kind === "rows" ? "ROW_LIMIT" : kind === "series" ? "SERIES_LIMIT" : "POINT_LIMIT";
+  return false;
+}
+function addBudget(state, context, kind) {
+  if (!canAdd(state, context, kind)) return false;
+  if (kind === "rows") context.budget.consumeRows(1);
+  else if (kind === "series") context.budget.consumeSeries(1);
+  else context.budget.consumePoints(1);
+  state[kind] += 1;
+  return true;
+}
+function updateEvaluatedAt(state, timestamp2) {
+  if (Date.parse(timestamp2) > Date.parse(state.evaluatedAt)) state.evaluatedAt = timestamp2;
+}
+function valueAt(frame, sourceName, row) {
+  return frame.fields.find((field) => field.contract.sourceName === sourceName)?.values[row];
+}
+function scopeValue(frame, sourceName, row) {
+  if (frame.labels[sourceName] !== void 0) return frame.labels[sourceName];
+  const value2 = valueAt(frame, sourceName, row);
+  if (value2 === void 0 || value2 === null) return void 0;
+  if (typeof value2 === "string" || typeof value2 === "number" || typeof value2 === "boolean") return String(value2);
+  return void 0;
+}
+function verifyScope(frame, entry, row) {
+  if (scopeValue(frame, entry.scopeMappings.environment, row) !== entry.scope.environment) {
+    throw new AdapterContractError("Grafana datasource query response environment does not match the enrolled scope");
+  }
+  if (entry.scope.service !== void 0 && scopeValue(frame, entry.scopeMappings.service, row) !== entry.scope.service) {
+    throw new AdapterContractError("Grafana datasource query response service does not match the enrolled scope");
+  }
+  if (entry.scope.subject !== void 0 && scopeValue(frame, entry.scopeMappings["subject.ref"], row) !== entry.scope.subject.providerValue) {
+    throw new AdapterContractError("Grafana datasource query response subject does not match the enrolled scope");
+  }
+}
+function outputScopeValue(entry, sourceName, providerValue2) {
+  return entry.scope.subject !== void 0 && sourceName === entry.scopeMappings["subject.ref"] ? entry.scope.subject.ref : providerValue2;
+}
+function outputLabels(labels, entry) {
+  return Object.fromEntries(
+    Object.entries(labels).map(([name, value2]) => [name, outputScopeValue(entry, name, value2)])
+  );
+}
+function dimensions(frame, entry, row) {
+  const output = outputLabels(frame.labels, entry);
+  for (const field of frame.fields.filter((candidate) => candidate.contract.role === "DIMENSION")) {
+    const value2 = field.values[row];
+    if (value2 !== null) {
+      const safeValue = safeString(String(value2), "dimension value", 128);
+      output[field.contract.outputName] = outputScopeValue(entry, field.contract.sourceName, safeValue);
+    }
+  }
+  return output;
+}
+function normalizeScalar(frame, entry, context, state) {
+  if (frame.length === 0) return;
+  if (frame.length !== 1) throw new AdapterContractError("Grafana SCALAR frame must contain exactly one row");
+  if (!addBudget(state, context, "series") || !addBudget(state, context, "points")) return;
+  verifyScope(frame, entry, 0);
+  const valueField = frame.fields.find((field) => field.contract.role === "VALUE");
+  const timeField = frame.fields.find((field) => field.contract.role === "TIME");
+  const observedAt = timeField === void 0 ? void 0 : parseTime(timeField.values[0], timeField.contract.sourceName, context);
+  if (observedAt !== void 0) updateEvaluatedAt(state, observedAt);
+  state.records.push({
+    kind: "SCALAR",
+    name: valueField.contract.outputName,
+    value: valueField.values[0],
+    dimensions: dimensions(frame, entry, 0),
+    ...observedAt === void 0 ? {} : { observedAt },
+    ...entry.frame.unit === void 0 ? {} : { unit: entry.frame.unit }
+  });
+}
+function normalizeTimeseries(frame, entry, context, state) {
+  if (frame.length === 0) return;
+  const timeField = frame.fields.find((field) => field.contract.role === "TIME");
+  const expectedDimensions2 = dimensions(frame, entry, 0);
+  for (let row = 0; row < frame.length; row += 1) {
+    verifyScope(frame, entry, row);
+    if (JSON.stringify(dimensions(frame, entry, row)) !== JSON.stringify(expectedDimensions2)) {
+      throw new AdapterContractError("Grafana TIMESERIES dimensions vary between points");
+    }
+  }
+  for (const valueField of frame.fields.filter((field) => field.contract.role === "VALUE")) {
+    if (!addBudget(state, context, "series")) break;
+    const points = [];
+    let previous = -1;
+    for (let row = 0; row < frame.length; row += 1) {
+      if (!addBudget(state, context, "points")) break;
+      const at = parseTime(timeField.values[row], timeField.contract.sourceName, context);
+      const epoch = Date.parse(at);
+      if (epoch <= previous) throw new AdapterContractError("Grafana TIMESERIES timestamps are not increasing");
+      previous = epoch;
+      updateEvaluatedAt(state, at);
+      points.push({ at, value: valueField.values[row] });
+    }
+    if (points.length > 0) {
+      state.records.push({
+        kind: "TIMESERIES",
+        name: valueField.contract.outputName,
+        dimensions: { ...expectedDimensions2, ...outputLabels(valueField.labels, entry) },
+        points,
+        ...entry.frame.unit === void 0 ? {} : { unit: entry.frame.unit }
+      });
+    }
+    if (state.truncatedReason === "POINT_LIMIT") break;
+  }
+}
+function columnType(type) {
+  if (type === "number") return "NUMBER";
+  if (type === "boolean") return "BOOLEAN";
+  if (type === "time") return "DATETIME";
+  return "STRING";
+}
+function normalizeTable(frame, entry, context, state) {
+  const rows = [];
+  for (let row = 0; row < frame.length; row += 1) {
+    if (!addBudget(state, context, "rows")) break;
+    verifyScope(frame, entry, row);
+    rows.push(frame.fields.map((field) => {
+      const value2 = field.values[row];
+      return entry.scope.subject !== void 0 && field.contract.sourceName === entry.scopeMappings["subject.ref"] && value2 !== null ? entry.scope.subject.ref : value2;
+    }));
+    for (const field of frame.fields.filter((candidate) => candidate.contract.role === "COLUMN" && candidate.contract.type === "time")) {
+      if (field.values[row] !== null) {
+        updateEvaluatedAt(state, parseTime(field.values[row], field.contract.sourceName, context));
+      }
+    }
+  }
+  if (rows.length > 0) {
+    state.records.push({
+      kind: "TABLE",
+      name: entry.outputName,
+      columns: frame.fields.map((field) => ({
+        name: field.contract.outputName,
+        type: columnType(field.contract.type)
+      })),
+      rows
+    });
+  }
+}
+function normalizeEvents(frame, entry, context, state) {
+  const timeField = frame.fields.find((field) => field.contract.role === "TIME");
+  const summaryField = frame.fields.find((field) => field.contract.role === "SUMMARY");
+  for (let row = 0; row < frame.length; row += 1) {
+    if (!addBudget(state, context, "rows")) break;
+    verifyScope(frame, entry, row);
+    const occurredAt = parseTime(timeField.values[row], timeField.contract.sourceName, context);
+    updateEvaluatedAt(state, occurredAt);
+    const attributes = {};
+    for (const field of frame.fields) {
+      if (field.contract.role === "ATTRIBUTE" || field.contract.role === "DIMENSION") {
+        const value2 = field.values[row];
+        attributes[field.contract.outputName] = entry.scope.subject !== void 0 && field.contract.sourceName === entry.scopeMappings["subject.ref"] && value2 !== null ? entry.scope.subject.ref : value2;
+      }
+    }
+    for (const [name, value2] of Object.entries(outputLabels(frame.labels, entry))) attributes[name] = value2;
+    const summary = summaryField === void 0 ? entry.frame.eventSummary : safeString(summaryField.values[row], "event summary", 256);
+    assertSubjectProviderValueNotExposed(summary, entry);
+    state.records.push({
+      kind: "EVENT",
+      name: entry.outputName,
+      occurredAt,
+      summary,
+      attributes
+    });
+  }
+}
+function queryResult(body) {
+  if (!isObject2(body) || !isObject2(body.results) || Object.keys(body.results).length !== 1 || !isObject2(body.results.A)) {
+    throw new AdapterContractError("Grafana datasource query response envelope is invalid");
+  }
+  const result = body.results.A;
+  if (typeof result.status === "number" && result.status >= 400 || typeof result.error === "string" && result.error.length > 0) {
+    const providerStatus = typeof result.status === "number" ? result.status : void 0;
+    const category = providerStatus === 401 ? "AUTHENTICATION" : providerStatus === 403 ? "AUTHORIZATION" : providerStatus === 429 ? "RATE_LIMIT" : providerStatus !== void 0 && providerStatus >= 500 ? "UNAVAILABLE" : "INVALID_RESPONSE";
+    throw new AdapterExecutionError({
+      code: "GRAFANA_DATASOURCE_QUERY_FAILED",
+      category,
+      message: "Grafana datasource query failed",
+      retryable: category === "RATE_LIMIT" || category === "UNAVAILABLE",
+      ...providerStatus === void 0 ? {} : { providerStatus }
+    });
+  }
+  if (!Array.isArray(result.frames)) throw new AdapterContractError("Grafana datasource query frames are invalid");
+  return result.frames;
+}
+function normalizeGrafanaFrames(body, entry, context) {
+  const state = {
+    records: [],
+    evaluatedAt: new Date(context.window.end).toISOString(),
+    rows: 0,
+    series: 0,
+    points: 0
+  };
+  for (const rawFrame of queryResult(body)) {
+    const frame = parseFrame(rawFrame, entry, context);
+    if (entry.frame.resultKind === "SCALAR") normalizeScalar(frame, entry, context, state);
+    else if (entry.frame.resultKind === "TIMESERIES") normalizeTimeseries(frame, entry, context, state);
+    else if (entry.frame.resultKind === "TABLE") normalizeTable(frame, entry, context, state);
+    else normalizeEvents(frame, entry, context, state);
+    if (state.truncatedReason !== void 0) break;
+  }
+  return {
+    records: state.records,
+    evaluatedAt: state.evaluatedAt,
+    pagination: state.truncatedReason === void 0 ? { complete: true, pages: 1 } : { complete: false, pages: 1, truncatedReason: state.truncatedReason },
+    warnings: state.truncatedReason === void 0 ? [] : ["Grafana datasource query result was truncated by the bounded read policy"]
+  };
+}
+
+// adapters/grafana/src/native-response.ts
+function object(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function invalid2(message) {
+  throw new AdapterContractError("Grafana native response ".concat(message));
+}
+function text(value2, maximum = 4096) {
+  if (typeof value2 !== "string" || value2.length > maximum || [...value2].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code === 127 || code < 32 && code !== 9 && code !== 10 && code !== 13;
+  })) {
+    return invalid2("contains an invalid string");
+  }
+  return value2;
+}
+function decimal(value2) {
+  if (typeof value2 === "number" && Number.isFinite(value2)) return value2;
+  if (typeof value2 === "string" && /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(value2)) {
+    const converted = Number(value2);
+    if (Number.isFinite(converted)) return converted;
+  }
+  return invalid2("contains an invalid number");
+}
+function nanosToMilliseconds(value2) {
+  if (typeof value2 !== "string" || !/^[0-9]{1,30}$/u.test(value2)) return invalid2("contains invalid nanoseconds");
+  const milliseconds2 = Number(BigInt(value2) / 1000000n);
+  if (!Number.isSafeInteger(milliseconds2)) return invalid2("timestamp is outside the safe range");
+  return milliseconds2;
+}
+function typedPrimitive(value2, type) {
+  if (value2 === null) return null;
+  if (type === "number") return decimal(value2);
+  if (type === "string") return text(value2);
+  if (type === "boolean") {
+    if (value2 === true || value2 === false) return value2;
+    if (value2 === "true" || value2 === "false") return value2 === "true";
+    return invalid2("contains an invalid boolean");
+  }
+  if (typeof value2 === "number" && Number.isFinite(value2)) return value2;
+  if (typeof value2 === "string") return text(value2);
+  return invalid2("contains an invalid time");
+}
+function projectedFrame(entry, values, fieldValue = (field) => values[field.sourceName]) {
+  const labels = Object.fromEntries(entry.frame.allowedLabels.flatMap((name) => {
+    const value2 = values[name];
+    return value2 === void 0 || value2 === null ? [] : [[name, text(String(value2), 128)]];
+  }));
+  return {
+    schema: {
+      refId: "A",
+      fields: entry.frame.fields.map((field, index) => ({
+        name: field.sourceName,
+        type: field.type,
+        ...index === 0 && Object.keys(labels).length > 0 ? { labels } : {}
+      }))
+    },
+    data: {
+      values: entry.frame.fields.map((field) => {
+        const value2 = fieldValue(field);
+        if (value2 === void 0) return invalid2("omits an enrolled field");
+        return [typedPrimitive(value2, field.type)];
+      })
+    }
+  };
+}
+function envelope(frames) {
+  return { results: { A: { frames } } };
+}
+function stringLabels(value2) {
+  if (!object(value2) || Object.keys(value2).length > 128) return invalid2("labels are invalid");
+  return Object.fromEntries(Object.entries(value2).map(([key, item]) => [text(key, 256), text(item)]));
+}
+var LOKI_FIELD_SHAPES = /* @__PURE__ */ new Set([
+  "labels:other,Time:time,Line:string,tsNs:string,id:string",
+  "labels:other,Time:time,Line:string,tsNs:string,labelTypes:other,id:string",
+  "labels:other,timestamp:time,body:string,id:string",
+  "labels:other,timestamp:time,body:string,id:string,labelTypes:other"
+]);
+function normalizeLokiLogs(body, entry, context) {
+  if (!object(body) || !object(body.results) || !object(body.results.A) || !Array.isArray(body.results.A.frames)) return body;
+  const result = body.results.A;
+  if (Object.keys(body.results).length !== 1 || result.error !== void 0 || typeof result.status === "number" && result.status >= 400) return body;
+  const supplied = result.frames;
+  const native = supplied.some((frame) => object(frame) && object(frame.schema) && Array.isArray(frame.schema.fields) && frame.schema.fields.some((field) => object(field) && field.name === "labels" && field.type === "other"));
+  if (!native) return body;
+  const output = [];
+  for (const frame of supplied) {
+    if (!object(frame) || !object(frame.schema) || frame.schema.refId !== "A" || !Array.isArray(frame.schema.fields) || !object(frame.data) || !Array.isArray(frame.data.values)) {
+      return invalid2("Loki frame is invalid");
+    }
+    const names = frame.schema.fields.map((field) => {
+      if (!object(field) || typeof field.name !== "string" || typeof field.type !== "string") return invalid2("Loki field is invalid");
+      return "".concat(field.name, ":").concat(field.type);
+    });
+    if (!LOKI_FIELD_SHAPES.has(names.join(",")) || frame.data.values.length !== names.length) {
+      return invalid2("Loki frame contains unexpected fields");
+    }
+    const columns = {};
+    let rows;
+    for (const [index, rawField] of frame.schema.fields.entries()) {
+      const field = rawField;
+      const values = frame.data.values[index];
+      if (!Array.isArray(values) || rows !== void 0 && values.length !== rows) return invalid2("Loki columns have unequal lengths");
+      rows = values.length;
+      columns[field.name] = values;
+    }
+    for (let row = 0; row < (rows ?? 0); row += 1) {
+      context.budget.throwIfAborted();
+      const labels = stringLabels(columns.labels[row]);
+      if (labels[entry.scopeMappings.environment] !== entry.scope.environment || entry.scope.service !== void 0 && labels[entry.scopeMappings.service] !== entry.scope.service || entry.scope.subject !== void 0 && labels[entry.scopeMappings["subject.ref"]] !== entry.scope.subject.providerValue) {
+        return invalid2("Loki log row does not prove the enrolled scope");
+      }
+      if (columns.labelTypes !== void 0) stringLabels(columns.labelTypes[row]);
+      const time = (columns.Time ?? columns.timestamp)[row];
+      const line = text((columns.Line ?? columns.body)[row]);
+      const id = text(columns.id[row], 512);
+      const tsNs = columns.tsNs === void 0 ? void 0 : text(columns.tsNs[row], 30);
+      if (tsNs !== void 0 && !/^[0-9]+$/u.test(tsNs)) return invalid2("Loki nanoseconds are invalid");
+      const values = {
+        ...labels,
+        Time: typedPrimitive(time, "time"),
+        timestamp: typedPrimitive(time, "time"),
+        Line: line,
+        body: line,
+        Summary: line,
+        id,
+        ...tsNs === void 0 ? {} : { tsNs }
+      };
+      output.push(projectedFrame(entry, values));
+      if (output.length > context.budget.limits.maxRows) return envelope(output);
+    }
+  }
+  return envelope(output);
+}
+function protoPrimitive(value2) {
+  if (!object(value2)) return invalid2("Tempo attribute value is invalid");
+  const keys = Object.keys(value2);
+  if (keys.length !== 1) return invalid2("Tempo attribute value is ambiguous");
+  if (keys[0] === "stringValue") return text(value2.stringValue);
+  if (keys[0] === "intValue" || keys[0] === "doubleValue") return decimal(value2[keys[0]]);
+  if (keys[0] === "boolValue" && typeof value2.boolValue === "boolean") return value2.boolValue;
+  return invalid2("Tempo attribute type is unsupported");
+}
+function nativeAttributeName(name) {
+  return name.replace(/^(?:resource|span)\./u, "");
+}
+function tempoAttributes(value2, wanted) {
+  if (!Array.isArray(value2) || value2.length > 256) return invalid2("Tempo attributes are invalid");
+  const result = {};
+  for (const attribute of value2) {
+    if (!object(attribute)) return invalid2("Tempo attribute is invalid");
+    const key = text(attribute.key, 256);
+    if (!wanted.has(key)) continue;
+    if (Object.hasOwn(result, key)) return invalid2("Tempo attributes repeat an enrolled key");
+    result[key] = protoPrimitive(attribute.value);
+  }
+  return result;
+}
+function assertTempoScope(attributes, entry) {
+  if (attributes["deployment.environment"] !== entry.scope.environment || entry.scope.service !== void 0 && attributes["service.name"] !== entry.scope.service || entry.scope.subject !== void 0 && attributes[nativeAttributeName(entry.scopeMappings["subject.ref"])] !== entry.scope.subject.providerValue) {
+    return invalid2("Tempo matching span does not prove the enrolled scope");
+  }
+}
+function hexId(value2, length) {
+  const candidate = text(value2, length);
+  if (candidate.length !== length || !/^[a-f0-9]+$/iu.test(candidate)) return invalid2("Tempo identity is invalid");
+  return candidate;
+}
+function normalizeTempoSearch(body, entry, context) {
+  if (entry.target.datasourceType !== "tempo") return invalid2("Tempo target is invalid");
+  const traceLimit = Math.max(1, Math.min(entry.target.limit, context.budget.limits.maxRows));
+  const spansLimit = Math.max(1, Math.min(entry.target.spansPerSpanSet, context.budget.limits.maxRows));
+  if (!object(body) || !Array.isArray(body.traces) || body.traces.length > traceLimit) return invalid2("Tempo search envelope is invalid");
+  const wanted = /* @__PURE__ */ new Set([
+    "deployment.environment",
+    "service.name",
+    ...entry.frame.fields.map((field) => nativeAttributeName(field.sourceName)),
+    ...entry.frame.allowedLabels.map(nativeAttributeName),
+    ...entry.scope.subject === void 0 ? [] : [nativeAttributeName(entry.scopeMappings["subject.ref"])]
+  ]);
+  const output = [];
+  for (const trace of body.traces) {
+    context.budget.throwIfAborted();
+    if (!object(trace)) return invalid2("Tempo trace is invalid");
+    const traceID = hexId(trace.traceID, 32);
+    const sets = Array.isArray(trace.spanSets) ? trace.spanSets : object(trace.spanSet) ? [trace.spanSet] : void 0;
+    if (sets === void 0 || sets.length === 0 || sets.length > 64) return invalid2("Tempo trace omits matching spans");
+    const matches = [];
+    const seen = /* @__PURE__ */ new Map();
+    for (const set of sets) {
+      if (!object(set) || !Array.isArray(set.spans) || set.spans.length > spansLimit) return invalid2("Tempo span set exceeds its reviewed bound");
+      for (const span of set.spans) {
+        context.budget.throwIfAborted();
+        if (!object(span)) return invalid2("Tempo matching span is invalid");
+        const spanID = hexId(span.spanID, 16);
+        const attributes = tempoAttributes(span.attributes, wanted);
+        assertTempoScope(attributes, entry);
+        const identity = canonicalJson({ attributes, start: span.startTimeUnixNano, duration: span.durationNanos });
+        if (seen.has(spanID)) {
+          if (seen.get(spanID) !== identity) return invalid2("Tempo repeats a conflicting matching span");
+          continue;
+        }
+        seen.set(spanID, identity);
+        matches.push({ span, attributes, spanID });
+      }
+    }
+    if (matches.length === 0) return invalid2("Tempo trace has no scope-proven matching span");
+    const selected = entry.target.tableType === "traces" ? matches.slice(0, 1) : matches;
+    for (const { span, attributes, spanID } of selected) {
+      context.budget.throwIfAborted();
+      const traceTable = entry.target.tableType === "traces";
+      const time = nanosToMilliseconds(traceTable ? trace.startTimeUnixNano : span.startTimeUnixNano);
+      const duration = traceTable ? decimal(trace.durationMs) : decimal(span.durationNanos) / 1e6;
+      const summary = text(trace.rootTraceName, 256);
+      const values = {
+        ...attributes,
+        [entry.scopeMappings.environment]: attributes["deployment.environment"],
+        ...entry.scope.service === void 0 ? {} : { [entry.scopeMappings.service]: attributes["service.name"] },
+        ...entry.scope.subject === void 0 ? {} : {
+          [entry.scopeMappings["subject.ref"]]: attributes[nativeAttributeName(entry.scopeMappings["subject.ref"])]
+        },
+        Time: time,
+        startTime: time,
+        Duration: duration,
+        durationMs: duration,
+        Summary: summary,
+        rootTraceName: summary,
+        traceID,
+        spanID
+      };
+      output.push(projectedFrame(entry, values, (field) => values[field.sourceName] ?? attributes[nativeAttributeName(field.sourceName)]));
+      if (output.length > context.budget.limits.maxRows) return envelope(output);
+    }
+  }
+  return envelope(output);
+}
+function normalizeGrafanaNativeResponse(body, entry, context) {
+  if (entry.target.datasourceType === "tempo") return normalizeTempoSearch(body, entry, context);
+  if (entry.target.datasourceType === "loki" && (entry.frame.resultKind === "EVENT" || entry.frame.resultKind === "TABLE")) {
+    return normalizeLokiLogs(body, entry, context);
+  }
+  return body;
+}
+
+// adapters/grafana/src/adapter.ts
+var GRAFANA_ADAPTER_PACKAGE_ID = "adapter.grafana.v1";
+var grafanaAdapterPackage = {
+  schemaVersion: "1.0.0",
+  packageId: GRAFANA_ADAPTER_PACKAGE_ID,
+  name: "Grafana read-only evidence adapter",
+  version: "1.1.0",
+  protocolVersion: "1.0",
+  publisher: { name: "Codex Production Monitoring" },
+  entrypoint: { kind: "BUILTIN", registryKey: "grafana-v1" },
+  domains: ["METRICS", "LOGS", "TRACES", "ALERTS", "RUNTIME", "CHANGES", "RUNBOOKS"],
+  capabilities: [
+    "grafana.health.read",
+    "grafana.search.read",
+    "grafana.datasource.read",
+    "grafana.datasource.health.read",
+    "grafana.datasource.query.read",
+    "grafana.annotations.read",
+    "grafana.unified-alerts.read"
+  ],
+  providerCompatibility: [{ provider: "grafana", versions: ">=10 <14" }],
+  supportedContractVersions: ["1.0.0"],
+  conformance: ["CORE_READ", "METRICS", "LOGS", "TRACES", "ALERTS", "RUNTIME", "CHANGES", "RUNBOOKS"]
+};
+var OPERATION_BY_ROUTE = {
+  health: "grafana.health.read",
+  search: "grafana.search.read",
+  datasource: "grafana.datasource.read",
+  "datasource-health": "grafana.datasource.health.read",
+  "datasource-query": "grafana.datasource.query.read",
+  annotations: "grafana.annotations.read",
+  "unified-alerts": "grafana.unified-alerts.read"
+};
+var RESULT_KIND_BY_ROUTE = {
+  health: "TABLE",
+  search: "TABLE",
+  datasource: "TABLE",
+  "datasource-health": "TABLE",
+  "datasource-query": "TABLE",
+  annotations: "EVENT",
+  "unified-alerts": "TABLE"
+};
+function expectedResultKind(entry) {
+  return entry.route === "datasource-query" ? entry.frame.resultKind : RESULT_KIND_BY_ROUTE[entry.route];
+}
+function expectedDomain(entry) {
+  if (entry.route !== "datasource-query") return void 0;
+  if (entry.target.datasourceType === "loki") return "LOGS";
+  if (entry.target.datasourceType === "tempo") return "TRACES";
+  return "METRICS";
+}
+function sourceLineageFor(entry) {
+  return {
+    accessPath: "GRAFANA",
+    datasourceType: canonicalGrafanaDatasourceType(entry.target.datasourceType),
+    sourceIdentitySha256: entry.datasourceIdentitySha256
+  };
+}
+function expectedDimensions(entry) {
+  if (entry.route !== "datasource-query") return [];
+  return [.../* @__PURE__ */ new Set([
+    ...entry.frame.allowedLabels,
+    ...entry.frame.fields.filter((field) => field.role === "DIMENSION").map((field) => field.outputName)
+  ])].sort();
+}
+function sameStringSet(left, right) {
+  return canonicalJson([...new Set(left)].sort()) === canonicalJson([...new Set(right)].sort());
+}
+function isObject3(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function safeString2(value2, field, maxLength = 4096) {
+  const hasUnsafeControl = typeof value2 === "string" && [...value2].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code < 32 && code !== 9 && code !== 10 && code !== 13 || code === 127;
+  });
+  if (typeof value2 !== "string" || value2.length > maxLength || hasUnsafeControl) {
+    throw new AdapterContractError("Grafana ".concat(field, " is invalid"));
+  }
+  return value2;
+}
+function safeOptionalString(value2, field, maxLength = 4096) {
+  return value2 === void 0 || value2 === null ? null : safeString2(value2, field, maxLength);
+}
+function safeUid(value2, field) {
+  const uid = safeString2(value2, field, 128);
+  if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(uid)) throw new AdapterContractError("Grafana ".concat(field, " is invalid"));
+  return uid;
+}
+function dashboardDeepLink(uid) {
+  return "grafana:/d/".concat(uid);
+}
+function searchDeepLink(uid, type) {
+  return type === "dash-folder" ? "grafana:/dashboards/f/".concat(uid) : dashboardDeepLink(uid);
+}
+function alertDeepLink(uid) {
+  return "grafana:/alerting/grafana/".concat(uid, "/view");
+}
+function panelDeepLink(panel) {
+  return "grafana:/d/".concat(panel.dashboardUid, "?viewPanel=").concat(String(panel.panelId));
+}
+async function readJson(response, context) {
+  const chunks = [];
+  for await (const chunk of response.body) {
+    context.budget.throwIfAborted();
+    context.budget.consumeBytes(chunk.byteLength);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new AdapterContractError("Grafana response is not valid JSON");
+  }
+}
+function statusError(status) {
+  if (status === 401 || status === 403) {
+    return new AdapterExecutionError({
+      code: "GRAFANA_AUTHORIZATION",
+      category: status === 401 ? "AUTHENTICATION" : "AUTHORIZATION",
+      message: "Grafana denied the read",
+      retryable: false,
+      providerStatus: status
+    });
+  }
+  if (status === 429) {
+    return new AdapterExecutionError({
+      code: "GRAFANA_RATE_LIMIT",
+      category: "RATE_LIMIT",
+      message: "Grafana rate limited the read",
+      retryable: true,
+      providerStatus: status
+    });
+  }
+  return new AdapterExecutionError({
+    code: "GRAFANA_HTTP_ERROR",
+    category: status >= 500 ? "UNAVAILABLE" : "INVALID_RESPONSE",
+    message: "Grafana read failed",
+    retryable: status >= 500,
+    providerStatus: status
+  });
+}
+function assertDatasourceQueryVersion(body) {
+  if (!isObject3(body) || body.database !== "ok" || typeof body.version !== "string") {
+    throw new AdapterExecutionError({
+      code: "GRAFANA_HEALTH_INVALID",
+      category: "INVALID_RESPONSE",
+      message: "Grafana health preflight returned an invalid response",
+      retryable: false
+    });
+  }
+  const boundedVersion = /^(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})(?:[-+][0-9A-Za-z.-]{1,64})?$/u;
+  if (!boundedVersion.test(body.version)) {
+    throw new AdapterExecutionError({
+      code: "GRAFANA_VERSION_INVALID",
+      category: "INVALID_RESPONSE",
+      message: "Grafana health preflight returned an invalid version",
+      retryable: false
+    });
+  }
+  const certifiedVersion = /^(?:10|11|12|13)\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})(?:[-+][0-9A-Za-z.-]{1,64})?$/u;
+  if (!certifiedVersion.test(body.version)) {
+    throw new AdapterExecutionError({
+      code: "GRAFANA_VERSION_UNSUPPORTED",
+      category: "INVALID_RESPONSE",
+      message: "Grafana version is not certified for datasource queries",
+      retryable: false
+    });
+  }
+  return body.version.startsWith("13.") ? "Grafana 13 datasource queries use the certified legacy /api route, which is deprecated" : void 0;
+}
+async function requestJson(transport, request, context) {
+  let response;
+  try {
+    response = await transport.request(request);
+  } catch (error) {
+    if (error instanceof BudgetExceededError || error instanceof AdapterExecutionError || error instanceof AdapterContractError) throw error;
+    if (error instanceof GrafanaTransportError) {
+      const transportError2 = error;
+      throw new AdapterExecutionError({
+        code: transportError2.kind === "TIMEOUT" ? "GRAFANA_TRANSPORT_TIMEOUT" : "GRAFANA_UNAVAILABLE",
+        category: transportError2.kind,
+        message: transportError2.kind === "TIMEOUT" ? "Grafana request timed out" : "Grafana is unavailable",
+        retryable: true
+      });
+    }
+    throw error;
+  }
+  if (response.status < 200 || response.status >= 300) throw statusError(response.status);
+  return readJson(response, context);
+}
+function takeRow(state, context) {
+  if (state.rows >= context.budget.limits.maxRows) {
+    state.truncated = true;
+    return false;
+  }
+  context.budget.consumeRows(1);
+  state.rows += 1;
+  return true;
+}
+function table(name, columns, rows) {
+  return { kind: "TABLE", name, columns, rows };
+}
+function parseHealth(body, binding, context, state) {
+  if (!isObject3(body)) throw new AdapterContractError("Grafana health response is invalid");
+  const database = safeString2(body.database, "health database", 64);
+  if (!(/* @__PURE__ */ new Set(["ok", "fail"])).has(database.toLowerCase())) throw new AdapterContractError("Grafana health state drifted");
+  if (!takeRow(state, context)) return;
+  state.records.push(table(binding.outputName, [
+    { name: "database", type: "STRING" },
+    { name: "version", type: "STRING" },
+    { name: "commit", type: "STRING" }
+  ], [[database, safeString2(body.version, "health version", 128), safeString2(body.commit, "health commit", 128)]]));
+}
+function parseSearch(body, binding, context, state) {
+  if (!Array.isArray(body)) throw new AdapterContractError("Grafana search response is invalid");
+  if (context.budget.limits.maxRows > 0 && body.length >= context.budget.limits.maxRows) state.truncated = true;
+  const rows = [];
+  for (const item of body) {
+    if (!takeRow(state, context)) break;
+    if (!isObject3(item)) throw new AdapterContractError("Grafana search item is invalid");
+    const uid = safeUid(item.uid, "dashboard UID");
+    const type = safeString2(item.type, "search type", 64);
+    if (!(/* @__PURE__ */ new Set(["dash-db", "dash-folder"])).has(type)) throw new AdapterContractError("Grafana search item type drifted");
+    rows.push([
+      uid,
+      safeString2(item.title, "dashboard title", 1024),
+      type,
+      typeof item.isStarred === "boolean" ? item.isStarred : false,
+      item.folderUid === void 0 || item.folderUid === null || item.folderUid === "" ? null : safeUid(item.folderUid, "folder UID"),
+      searchDeepLink(uid, type)
+    ]);
+  }
+  if (rows.length > 0) state.records.push(table(binding.outputName, [
+    { name: "uid", type: "STRING" },
+    { name: "title", type: "STRING" },
+    { name: "type", type: "STRING" },
+    { name: "isStarred", type: "BOOLEAN" },
+    { name: "folderUid", type: "STRING" },
+    { name: "deepLink", type: "STRING" }
+  ], rows));
+}
+function parseDatasource(body, binding, context, state) {
+  if (!isObject3(body)) throw new AdapterContractError("Grafana datasource response is invalid");
+  const uid = safeUid(body.uid, "datasource UID");
+  if (uid !== binding.datasourceUid) throw new AdapterContractError("Grafana datasource UID does not match the trusted route");
+  if (!takeRow(state, context)) return;
+  state.records.push(table(binding.outputName, [
+    { name: "uid", type: "STRING" },
+    { name: "name", type: "STRING" },
+    { name: "type", type: "STRING" },
+    { name: "access", type: "STRING" },
+    { name: "isDefault", type: "BOOLEAN" },
+    { name: "readOnly", type: "BOOLEAN" }
+  ], [[
+    uid,
+    safeString2(body.name, "datasource name", 512),
+    safeString2(body.type, "datasource type", 256),
+    (() => {
+      const access = safeString2(body.access, "datasource access", 32);
+      if (!(/* @__PURE__ */ new Set(["proxy", "direct"])).has(access)) throw new AdapterContractError("Grafana datasource access drifted");
+      return access;
+    })(),
+    typeof body.isDefault === "boolean" ? body.isDefault : false,
+    typeof body.readOnly === "boolean" ? body.readOnly : false
+  ]]));
+}
+function parseDatasourceHealth(body, binding, context, state) {
+  if (!isObject3(body)) throw new AdapterContractError("Grafana datasource health response is invalid");
+  const status = safeString2(body.status, "datasource health status", 32).toUpperCase();
+  if (!(/* @__PURE__ */ new Set(["OK", "ERROR"])).has(status)) throw new AdapterContractError("Grafana datasource health status drifted");
+  if (!takeRow(state, context)) return;
+  state.records.push(table(binding.outputName, [
+    { name: "uid", type: "STRING" },
+    { name: "status", type: "STRING" },
+    { name: "message", type: "STRING" }
+  ], [[binding.datasourceUid ?? null, status, safeOptionalString(body.message, "datasource health message", 2048)]]));
+}
+function parseAnnotations(body, binding, context, state) {
+  if (!Array.isArray(body)) throw new AdapterContractError("Grafana annotations response is invalid");
+  if (context.budget.limits.maxRows > 0 && body.length >= context.budget.limits.maxRows) state.truncated = true;
+  for (const annotation of body) {
+    if (!takeRow(state, context)) break;
+    if (!isObject3(annotation) || !Number.isFinite(annotation.time)) {
+      throw new AdapterContractError("Grafana annotation is invalid");
+    }
+    const occurredAt = new Date(annotation.time);
+    if (Number.isNaN(occurredAt.getTime())) throw new AdapterContractError("Grafana annotation timestamp is invalid");
+    const attributes = {
+      text: safeOptionalString(annotation.text, "annotation text", 4096),
+      type: safeOptionalString(annotation.type, "annotation type", 64)
+    };
+    if (Array.isArray(annotation.tags)) {
+      if (annotation.tags.some((tag) => typeof tag !== "string")) throw new AdapterContractError("Grafana annotation tags are invalid");
+      attributes.tags = annotation.tags.slice(0, 16).map((tag) => safeString2(tag, "annotation tag", 128)).join(",");
+    }
+    if (annotation.dashboardUID !== void 0) {
+      const dashboardUid = safeUid(annotation.dashboardUID, "annotation dashboard UID");
+      attributes.dashboardUid = dashboardUid;
+      attributes.deepLink = dashboardDeepLink(dashboardUid);
+    }
+    state.records.push({
+      kind: "EVENT",
+      name: binding.outputName,
+      occurredAt: occurredAt.toISOString(),
+      summary: "Grafana annotation",
+      attributes
+    });
+  }
+}
+function parseUnifiedAlerts(body, binding, context, state) {
+  if (!Array.isArray(body)) throw new AdapterContractError("Grafana unified alert response is invalid");
+  const rows = [];
+  for (const rule of body) {
+    if (!takeRow(state, context)) break;
+    if (!isObject3(rule)) throw new AdapterContractError("Grafana unified alert metadata is invalid");
+    const uid = safeUid(rule.uid, "alert rule UID");
+    rows.push([
+      uid,
+      safeString2(rule.title, "alert rule title", 1024),
+      rule.folderUID === void 0 || rule.folderUID === null || rule.folderUID === "" ? null : safeUid(rule.folderUID, "alert folder UID"),
+      safeOptionalString(rule.ruleGroup, "alert rule group", 512),
+      safeOptionalString(rule.condition, "alert condition identifier", 128),
+      safeOptionalString(rule.noDataState, "alert no-data state", 64),
+      safeOptionalString(rule.execErrState, "alert error state", 64),
+      safeOptionalString(rule.for, "alert duration", 64),
+      typeof rule.isPaused === "boolean" ? rule.isPaused : false,
+      alertDeepLink(uid)
+    ]);
+  }
+  if (rows.length > 0) state.records.push(table(binding.outputName, [
+    { name: "uid", type: "STRING" },
+    { name: "title", type: "STRING" },
+    { name: "folderUid", type: "STRING" },
+    { name: "ruleGroup", type: "STRING" },
+    { name: "conditionId", type: "STRING" },
+    { name: "noDataState", type: "STRING" },
+    { name: "execErrState", type: "STRING" },
+    { name: "for", type: "STRING" },
+    { name: "isPaused", type: "BOOLEAN" },
+    { name: "deepLink", type: "STRING" }
+  ], rows));
+}
+function bindingFor(entry) {
+  return {
+    catalogEntryId: entry.id,
+    catalogEntrySha256: grafanaCatalogEntryHash(entry),
+    route: entry.route,
+    outputName: entry.outputName,
+    ...entry.route === "search" && entry.query !== void 0 ? { query: entry.query } : {},
+    ...entry.route === "search" && entry.searchType !== void 0 ? { searchType: entry.searchType } : {},
+    ...(entry.route === "search" || entry.route === "annotations") && entry.tags !== void 0 ? { tags: [...entry.tags] } : {},
+    ...entry.route === "datasource" || entry.route === "datasource-health" ? { datasourceUid: entry.datasourceUid } : {},
+    ...entry.route === "datasource-query" ? {
+      datasourceUid: entry.datasourceUid,
+      datasourceIdentitySha256: entry.datasourceIdentitySha256,
+      target: structuredClone(entry.target),
+      frame: structuredClone(entry.frame),
+      minIntervalMs: entry.minIntervalMs,
+      scopeEnvironment: entry.scope.environment,
+      ...entry.scope.service === void 0 ? {} : { scopeService: entry.scope.service },
+      scopeEnvironmentMapping: entry.scopeMappings.environment,
+      ...entry.scopeMappings.service === void 0 ? {} : { scopeServiceMapping: entry.scopeMappings.service },
+      ...entry.scope.subject === void 0 ? {} : {
+        scopeSubjectKind: entry.scope.subject.kind,
+        scopeSubjectRef: entry.scope.subject.ref,
+        scopeSubjectProviderValue: entry.scope.subject.providerValue,
+        scopeSubjectMapping: entry.scopeMappings["subject.ref"]
+      }
+    } : {},
+    ...entry.route === "annotations" && entry.annotationType !== void 0 ? { annotationType: entry.annotationType } : {}
+  };
+}
+function buildDatasourceQueryTarget(binding, context) {
+  const target = binding.target;
+  const windowMs = Date.parse(context.window.end) - Date.parse(context.window.start);
+  const intervalMs = Math.max(binding.minIntervalMs, Math.ceil(windowMs / Math.max(1, context.budget.limits.maxPoints)));
+  const common = {
+    refId: "A",
+    datasource: { type: target.datasourceType, uid: binding.datasourceUid },
+    intervalMs,
+    maxDataPoints: context.budget.limits.maxPoints
+  };
+  if (target.datasourceType === "prometheus") {
+    return {
+      ...common,
+      expr: target.expression,
+      instant: target.mode === "instant",
+      range: target.mode === "range",
+      format: target.format,
+      ...target.legendFormat === void 0 ? {} : { legendFormat: target.legendFormat }
+    };
+  }
+  if (target.datasourceType === "loki") {
+    return {
+      ...common,
+      expr: target.expression,
+      queryType: target.queryType,
+      direction: target.direction,
+      maxLines: context.budget.limits.maxRows
+    };
+  }
+  if (target.datasourceType === "tempo") {
+    return {
+      ...common,
+      query: target.expression,
+      queryType: target.queryType,
+      limit: Math.max(1, Math.min(target.limit, context.budget.limits.maxRows)),
+      spss: Math.max(1, Math.min(target.spansPerSpanSet, context.budget.limits.maxRows)),
+      tableType: target.tableType,
+      streaming: false
+    };
+  }
+  return {
+    ...common,
+    rawSql: target.rawSql,
+    format: target.format
+  };
+}
+function buildRequest(binding, context) {
+  if (binding.route === "datasource-query") {
+    if (binding.target?.datasourceType === "tempo") {
+      return {
+        method: "GET",
+        path: "/api/datasources/proxy/uid/".concat(binding.datasourceUid, "/api/search"),
+        query: {
+          q: binding.target.expression,
+          start: String(Math.floor(Date.parse(context.window.start) / 1e3)),
+          end: String(Math.ceil(Date.parse(context.window.end) / 1e3)),
+          limit: String(Math.max(1, Math.min(binding.target.limit, context.budget.limits.maxRows))),
+          spss: String(Math.max(1, Math.min(binding.target.spansPerSpanSet, context.budget.limits.maxRows)))
+        },
+        signal: context.signal,
+        maxResponseBytes: context.budget.limits.maxBytes
+      };
+    }
+    return {
+      method: "POST",
+      path: "/api/ds/query",
+      query: {},
+      body: {
+        from: String(Date.parse(context.window.start)),
+        to: String(Date.parse(context.window.end)),
+        queries: [buildDatasourceQueryTarget(binding, context)]
+      },
+      signal: context.signal,
+      maxResponseBytes: context.budget.limits.maxBytes
+    };
+  }
+  const query = {};
+  let path;
+  if (binding.route === "health") path = "/api/health";
+  else if (binding.route === "search") {
+    path = "/api/search";
+    if (binding.query !== void 0) query.query = binding.query;
+    if (binding.searchType !== void 0) query.type = binding.searchType;
+    if (binding.tags !== void 0) query.tag = binding.tags.join(",");
+    query.limit = String(context.budget.limits.maxRows);
+  } else if (binding.route === "datasource") path = "/api/datasources/uid/".concat(binding.datasourceUid);
+  else if (binding.route === "datasource-health") path = "/api/datasources/uid/".concat(binding.datasourceUid, "/health");
+  else if (binding.route === "annotations") {
+    path = "/api/annotations";
+    query.from = String(Date.parse(context.window.start));
+    query.to = String(Date.parse(context.window.end));
+    query.limit = String(context.budget.limits.maxRows);
+    if (binding.annotationType !== void 0) query.type = binding.annotationType;
+    if (binding.tags !== void 0) query.tags = binding.tags.join(",");
+  } else path = "/api/v1/provisioning/alert-rules";
+  return { method: "GET", path, query, signal: context.signal, maxResponseBytes: context.budget.limits.maxBytes };
+}
+var GrafanaAdapter = class {
+  descriptor = {
+    packageId: GRAFANA_ADAPTER_PACKAGE_ID,
+    name: grafanaAdapterPackage.name,
+    version: grafanaAdapterPackage.version,
+    provider: "grafana",
+    domains: ["METRICS", "LOGS", "TRACES", "ALERTS", "RUNTIME", "CHANGES", "RUNBOOKS"],
+    operations: grafanaAdapterPackage.capabilities,
+    resultSchemaVersions: ["1.0.0"]
+  };
+  #transport;
+  #catalog;
+  constructor(options) {
+    this.#transport = options.transport;
+    this.#catalog = new CompiledGrafanaCatalog(options.catalog);
+  }
+  async doctor() {
+    return {
+      status: "READY",
+      checks: [{ name: "read-only-transport", status: "PASS", message: "Trusted Grafana read catalog loaded" }]
+    };
+  }
+  async compile(operation2, context) {
+    if (context.adapterPackage.packageId !== GRAFANA_ADAPTER_PACKAGE_ID) {
+      throw new AdapterContractError("Grafana adapter package mismatch");
+    }
+    if (operation2.definition.adapterPackageId !== GRAFANA_ADAPTER_PACKAGE_ID || computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new AdapterContractError("Grafana operation is not bound to this adapter and hash");
+    }
+    if (Buffer.byteLength(canonicalJson(operation2.definition), "utf8") > context.maxDefinitionBytes) {
+      throw new AdapterContractError("Grafana operation definition exceeds the compile budget");
+    }
+    const reference = operation2.definition.sanitizedProviderDefinition;
+    if (Object.keys(reference).length !== 2 || typeof reference.catalogEntryId !== "string" || typeof reference.catalogEntrySha256 !== "string") {
+      throw new AdapterContractError("Grafana operation must contain only a trusted catalog reference");
+    }
+    const entry = this.#catalog.resolve(reference.catalogEntryId, reference.catalogEntrySha256);
+    if (operation2.definition.adapterOperation !== OPERATION_BY_ROUTE[entry.route]) {
+      throw new AdapterContractError("Grafana adapter operation does not match the catalog route");
+    }
+    if (operation2.definition.normalization.resultKind !== expectedResultKind(entry)) {
+      throw new AdapterContractError("Grafana normalization kind does not match the catalog route");
+    }
+    if (entry.route === "datasource-query") {
+      if (operation2.definition.domain !== expectedDomain(entry)) {
+        throw new AdapterContractError("Grafana datasource query domain does not match the certified datasource type");
+      }
+      const expectedSourceLineage = sourceLineageFor(entry);
+      if (canonicalJson(operation2.definition.expectedSourceLineage ?? null) !== canonicalJson(expectedSourceLineage)) {
+        throw new AdapterContractError("Grafana source lineage does not match the trusted catalog");
+      }
+      if (canonicalJson(operation2.definition.scopeMapping) !== canonicalJson(entry.scopeMappings)) {
+        throw new AdapterContractError("Grafana datasource query scope mapping does not match the catalog");
+      }
+      if (!sameStringSet(operation2.definition.allowedDimensions, expectedDimensions(entry))) {
+        throw new AdapterContractError("Grafana datasource query dimensions do not match the frame contract");
+      }
+      if (isGrafanaPostgresTarget(entry.target) && entry.target.maxRows > operation2.definition.limits.maxRows) {
+        throw new AdapterContractError("Grafana PostgreSQL enrolled row limit exceeds the operation budget");
+      }
+      const requiredScopes = new Set(operation2.definition.requiredProviderScopes);
+      if (!requiredScopes.has("environment") || entry.scope.service !== void 0 && !requiredScopes.has("service") || entry.scope.subject !== void 0 && !requiredScopes.has("subject.ref")) {
+        throw new AdapterContractError("Grafana datasource query operation does not require its enrolled scope claims");
+      }
+    }
+    return {
+      operationId: operation2.operationId,
+      operationDefinitionSha256: operation2.definitionSha256,
+      adapterPackageId: GRAFANA_ADAPTER_PACKAGE_ID,
+      adapterOperation: operation2.definition.adapterOperation,
+      binding: bindingFor(entry)
+    };
+  }
+  async execute(context, operation2) {
+    context.budget.throwIfAborted();
+    const trustedEntry = this.#catalog.resolve(
+      operation2.binding.catalogEntryId,
+      operation2.binding.catalogEntrySha256
+    );
+    if (operation2.adapterPackageId !== GRAFANA_ADAPTER_PACKAGE_ID || operation2.adapterOperation !== OPERATION_BY_ROUTE[trustedEntry.route] || canonicalJson(operation2.binding) !== canonicalJson(bindingFor(trustedEntry))) {
+      throw new AdapterContractError("Compiled Grafana binding no longer matches the trusted catalog");
+    }
+    if (trustedEntry.route === "datasource-query" && (context.scope.environment !== trustedEntry.scope.environment || context.scope.service !== trustedEntry.scope.service || context.scope.region !== void 0 || context.scope.cohort !== void 0 || canonicalJson(context.scope.subject ?? null) !== canonicalJson(
+      trustedEntry.scope.subject === void 0 ? null : { kind: trustedEntry.scope.subject.kind, ref: trustedEntry.scope.subject.ref }
+    ))) {
+      throw new AdapterContractError("Grafana datasource query execution scope does not match the trusted catalog");
+    }
+    let datasourceQueryVersionWarning;
+    if (trustedEntry.route === "datasource-query") {
+      const health = await requestJson(this.#transport, {
+        method: "GET",
+        path: "/api/health",
+        query: {},
+        signal: context.signal,
+        maxResponseBytes: context.budget.limits.maxBytes
+      }, context);
+      datasourceQueryVersionWarning = assertDatasourceQueryVersion(health);
+    }
+    const request = buildRequest(operation2.binding, context);
+    const body = await requestJson(this.#transport, request, context);
+    if (trustedEntry.route === "datasource-query") {
+      const normalized = normalizeGrafanaFrames(
+        normalizeGrafanaNativeResponse(body, trustedEntry, context),
+        trustedEntry,
+        context
+      );
+      const result2 = {
+        schemaVersion: "1.0.0",
+        collectionState: normalized.records.length === 0 ? "EMPTY" : "COMPLETE",
+        evaluatedAt: normalized.evaluatedAt,
+        nativeResultType: "datasource-query:".concat(trustedEntry.target.datasourceType),
+        nativeDimensions: {},
+        records: normalized.records,
+        pagination: normalized.pagination,
+        warnings: [
+          ...normalized.warnings,
+          ...datasourceQueryVersionWarning === void 0 ? [] : [datasourceQueryVersionWarning]
+        ],
+        sanitizedReference: trustedEntry.sourcePanel === void 0 ? "grafana:datasource-query:".concat(trustedEntry.id) : panelDeepLink(trustedEntry.sourcePanel),
+        providerScope: {
+          environment: trustedEntry.scope.environment,
+          ...trustedEntry.scope.service === void 0 ? {} : { service: trustedEntry.scope.service },
+          ...trustedEntry.scope.subject === void 0 ? {} : {
+            subject: {
+              kind: trustedEntry.scope.subject.kind,
+              ref: trustedEntry.scope.subject.ref
+            }
+          },
+          mappings: {
+            environment: trustedEntry.scopeMappings.environment,
+            ...trustedEntry.scopeMappings.service === void 0 ? {} : { service: trustedEntry.scopeMappings.service },
+            ...trustedEntry.scopeMappings["subject.ref"] === void 0 ? {} : { "subject.ref": trustedEntry.scopeMappings["subject.ref"] }
+          }
+        },
+        sourceLineage: sourceLineageFor(trustedEntry),
+        ...trustedEntry.frame.unit === void 0 ? {} : { nativeUnit: trustedEntry.frame.unit }
+      };
+      return result2;
+    }
+    const state = { records: [], rows: 0, truncated: false };
+    if (operation2.binding.route === "health") parseHealth(body, operation2.binding, context, state);
+    else if (operation2.binding.route === "search") parseSearch(body, operation2.binding, context, state);
+    else if (operation2.binding.route === "datasource") parseDatasource(body, operation2.binding, context, state);
+    else if (operation2.binding.route === "datasource-health") parseDatasourceHealth(body, operation2.binding, context, state);
+    else if (operation2.binding.route === "annotations") parseAnnotations(body, operation2.binding, context, state);
+    else parseUnifiedAlerts(body, operation2.binding, context, state);
+    const result = {
+      schemaVersion: "1.0.0",
+      collectionState: state.records.length === 0 ? "EMPTY" : "COMPLETE",
+      evaluatedAt: context.clock.now().toISOString(),
+      nativeResultType: operation2.binding.route,
+      nativeDimensions: {},
+      records: state.records,
+      pagination: state.truncated ? { complete: false, pages: 1, truncatedReason: "ROW_LIMIT" } : { complete: true, pages: 1 },
+      warnings: [],
+      sanitizedReference: "grafana:".concat(request.path)
+    };
+    return result;
+  }
+};
+
+// adapters/kubernetes/src/catalog.ts
+var SAFE_ID3 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var SAFE_ALIAS = /^[a-z][a-z0-9_-]{0,62}$/u;
+var DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+var RESOURCES = ["pods", "deployments", "statefulsets", "daemonsets"];
+function kubernetesCatalogEntryHash(entry) {
+  return sha256Canonical(entry);
+}
+function validateEntry2(entry) {
+  if (!SAFE_ID3.test(entry.id) || !SAFE_ID3.test(entry.outputName)) {
+    throw new AdapterContractError("Kubernetes catalog IDs must use the bounded safe identifier format");
+  }
+  if (!RESOURCES.includes(entry.resource)) throw new AdapterContractError("Kubernetes resource is not allowlisted");
+  const namespaceEntries = Object.entries(entry.namespaceByEnvironment);
+  if (namespaceEntries.length === 0 || namespaceEntries.length > 16 || namespaceEntries.some(([environment, namespace]) => !SAFE_ALIAS.test(environment) || !DNS_LABEL.test(namespace))) {
+    throw new AdapterContractError("Kubernetes environment-to-namespace allowlist is invalid");
+  }
+  if (new Set(namespaceEntries.map(([, namespace]) => namespace)).size !== namespaceEntries.length) {
+    throw new AdapterContractError("Kubernetes namespace allowlist must map environments one-to-one");
+  }
+  if (entry.mode === "GET") {
+    if (entry.nameSource !== "service" || entry.selector !== void 0) {
+      throw new AdapterContractError("Kubernetes GET entries require only a service-derived name");
+    }
+  } else if (entry.mode !== "LIST" || entry.nameSource !== void 0 || entry.selector?.valueSource !== "service" || !["app", "app.kubernetes.io/name"].includes(entry.selector.key)) {
+    throw new AdapterContractError("Kubernetes LIST entries require one fixed service selector");
+  }
+}
+var CompiledKubernetesCatalog = class {
+  #entries;
+  constructor(catalog) {
+    const entries = /* @__PURE__ */ new Map();
+    for (const supplied of catalog.entries) {
+      const entry = structuredClone(supplied);
+      validateEntry2(entry);
+      if (entries.has(entry.id)) throw new AdapterContractError("Duplicate Kubernetes catalog entry: ".concat(entry.id));
+      entries.set(entry.id, Object.freeze({
+        ...entry,
+        namespaceByEnvironment: Object.freeze({ ...entry.namespaceByEnvironment }),
+        ...entry.selector === void 0 ? {} : { selector: Object.freeze({ ...entry.selector }) }
+      }));
+    }
+    this.#entries = entries;
+  }
+  resolve(id, expectedSha256) {
+    const entry = this.#entries.get(id);
+    if (entry === void 0) throw new AdapterContractError("Kubernetes catalog entry is not trusted");
+    if (kubernetesCatalogEntryHash(entry) !== expectedSha256) {
+      throw new AdapterContractError("Kubernetes catalog entry hash mismatch");
+    }
+    return entry;
+  }
+};
+
+// adapters/kubernetes/src/adapter.ts
+var KUBERNETES_ADAPTER_PACKAGE_ID = "adapter.kubernetes.v1";
+var kubernetesAdapterPackage = {
+  schemaVersion: "1.0.0",
+  packageId: KUBERNETES_ADAPTER_PACKAGE_ID,
+  name: "Kubernetes production-read-only adapter",
+  version: "1.0.0",
+  protocolVersion: "1.0",
+  publisher: { name: "Codex Production Monitoring" },
+  entrypoint: { kind: "BUILTIN", registryKey: "kubernetes-v1" },
+  domains: ["RUNTIME"],
+  capabilities: ["kubernetes.resources.list", "kubernetes.resource.get"],
+  providerCompatibility: [{ provider: "kubernetes", versions: ">=1.28 <2" }],
+  supportedContractVersions: ["1.0.0"],
+  conformance: ["CORE_READ", "RUNTIME"]
+};
+var EXPECTED_KIND = {
+  pods: "Pod",
+  deployments: "Deployment",
+  statefulsets: "StatefulSet",
+  daemonsets: "DaemonSet"
+};
+var EXPECTED_API_VERSION = {
+  pods: "v1",
+  deployments: "apps/v1",
+  statefulsets: "apps/v1",
+  daemonsets: "apps/v1"
+};
+var DNS_LABEL2 = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;
+function isObject4(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function safeString3(value2, label, maxLength = 512) {
+  if (typeof value2 !== "string" || value2.length === 0 || value2.length > maxLength) {
+    throw new AdapterContractError("Kubernetes ".concat(label, " is invalid"));
+  }
+  if ([...value2].some((character) => (character.codePointAt(0) ?? 0) < 32)) {
+    throw new AdapterContractError("Kubernetes ".concat(label, " contains a control character"));
+  }
+  return value2;
+}
+function nonNegativeInteger(value2, label) {
+  if (value2 === void 0) return null;
+  if (!Number.isSafeInteger(value2) || value2 < 0) {
+    throw new AdapterContractError("Kubernetes ".concat(label, " is invalid"));
+  }
+  return value2;
+}
+function metadataOf(value2) {
+  if (!isObject4(value2.metadata)) throw new AdapterContractError("Kubernetes object metadata is missing");
+  const name = safeString3(value2.metadata.name, "resource name", 253);
+  const namespace = safeString3(value2.metadata.namespace, "namespace", 63);
+  if (!DNS_LABEL2.test(namespace)) throw new AdapterContractError("Kubernetes namespace is invalid");
+  const labels = {};
+  if (value2.metadata.labels !== void 0) {
+    if (!isObject4(value2.metadata.labels)) throw new AdapterContractError("Kubernetes labels are invalid");
+    for (const key of ["app", "app.kubernetes.io/name"]) {
+      if (value2.metadata.labels[key] !== void 0) labels[key] = safeString3(value2.metadata.labels[key], "service label", 253);
+    }
+  }
+  return { name, namespace, labels, generation: nonNegativeInteger(value2.metadata.generation, "generation") };
+}
+function assertObjectScope(metadata, namespace, service, mode) {
+  if (metadata.namespace !== namespace) {
+    throw new AdapterContractError("Kubernetes response crossed the authorized namespace scope");
+  }
+  const serviceClaim = metadata.labels["app.kubernetes.io/name"] ?? metadata.labels.app;
+  if (serviceClaim !== void 0 && serviceClaim !== service) {
+    throw new AdapterContractError("Kubernetes response crossed the authorized service scope");
+  }
+  if (mode === "GET" && metadata.name !== service) {
+    throw new AdapterContractError("Kubernetes GET response crossed the authorized resource scope");
+  }
+}
+function readyContainers(status) {
+  if (status.containerStatuses === void 0) return { ready: 0, desired: 0, restarts: 0 };
+  if (!Array.isArray(status.containerStatuses)) throw new AdapterContractError("Kubernetes container statuses are invalid");
+  let ready = 0;
+  let restarts = 0;
+  for (const container of status.containerStatuses) {
+    if (!isObject4(container) || typeof container.ready !== "boolean") {
+      throw new AdapterContractError("Kubernetes container status drifted");
+    }
+    if (container.ready) ready += 1;
+    const restartCount = nonNegativeInteger(container.restartCount, "restart count");
+    if (restartCount === null) throw new AdapterContractError("Kubernetes restart count is missing");
+    restarts += restartCount;
+  }
+  return { ready, desired: status.containerStatuses.length, restarts };
+}
+function objectRow(value2, resource, namespace, service, mode) {
+  if (!isObject4(value2)) throw new AdapterContractError("Kubernetes resource is invalid");
+  if (value2.apiVersion !== EXPECTED_API_VERSION[resource] || value2.kind !== EXPECTED_KIND[resource]) {
+    throw new AdapterContractError("Kubernetes resource schema drifted");
+  }
+  const metadata = metadataOf(value2);
+  assertObjectScope(metadata, namespace, service, mode);
+  const status = value2.status === void 0 ? {} : value2.status;
+  if (!isObject4(status)) throw new AdapterContractError("Kubernetes resource status is invalid");
+  let phase = null;
+  let ready = null;
+  let desired = null;
+  let restarts = null;
+  if (resource === "pods") {
+    phase = status.phase === void 0 ? null : safeString3(status.phase, "pod phase", 64);
+    const containers = readyContainers(status);
+    ready = containers.ready;
+    desired = containers.desired;
+    restarts = containers.restarts;
+  } else if (resource === "daemonsets") {
+    ready = nonNegativeInteger(status.numberReady, "ready count");
+    desired = nonNegativeInteger(status.desiredNumberScheduled, "desired count");
+  } else {
+    ready = nonNegativeInteger(status.readyReplicas, "ready replica count") ?? 0;
+    desired = nonNegativeInteger(status.replicas, "replica count") ?? 0;
+  }
+  const observedGeneration = nonNegativeInteger(status.observedGeneration, "observed generation");
+  return [
+    resource,
+    metadata.name,
+    metadata.namespace,
+    phase,
+    ready,
+    desired,
+    restarts,
+    metadata.generation,
+    observedGeneration
+  ];
+}
+async function readJson2(response, context) {
+  const chunks = [];
+  for await (const chunk of response.body) {
+    context.budget.throwIfAborted();
+    context.budget.consumeBytes(chunk.byteLength);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new AdapterContractError("Kubernetes response is not valid JSON");
+  }
+}
+function statusError2(status) {
+  if (status === 401 || status === 403) {
+    return new AdapterExecutionError({
+      code: "KUBERNETES_ACCESS_DENIED",
+      category: status === 401 ? "AUTHENTICATION" : "AUTHORIZATION",
+      message: "Kubernetes denied the bounded GET request",
+      retryable: false,
+      providerStatus: status
+    });
+  }
+  if (status === 429) {
+    return new AdapterExecutionError({
+      code: "KUBERNETES_RATE_LIMIT",
+      category: "RATE_LIMIT",
+      message: "Kubernetes rate limited the bounded GET request",
+      retryable: true,
+      providerStatus: status
+    });
+  }
+  return new AdapterExecutionError({
+    code: "KUBERNETES_READ_FAILED",
+    category: status >= 500 ? "UNAVAILABLE" : "INVALID_RESPONSE",
+    message: "Kubernetes bounded GET request failed",
+    retryable: status >= 500,
+    providerStatus: status
+  });
+}
+function parseBody(body, binding, namespace, service, context) {
+  if (!isObject4(body)) throw new AdapterContractError("Kubernetes response envelope is invalid");
+  const expectedApiVersion = EXPECTED_API_VERSION[binding.resource];
+  const expectedKind = EXPECTED_KIND[binding.resource];
+  const items = binding.mode === "LIST" ? (() => {
+    if (body.apiVersion !== expectedApiVersion || body.kind !== "".concat(expectedKind, "List") || !Array.isArray(body.items)) {
+      throw new AdapterContractError("Kubernetes list schema drifted");
+    }
+    return body.items;
+  })() : [body];
+  let providerTruncated = false;
+  if (binding.mode === "LIST" && body.metadata !== void 0) {
+    if (!isObject4(body.metadata)) throw new AdapterContractError("Kubernetes list metadata is invalid");
+    providerTruncated = typeof body.metadata.continue === "string" && body.metadata.continue.length > 0;
+  }
+  const state = { rows: [], providerTruncated };
+  for (const item of items) {
+    context.budget.throwIfAborted();
+    if (state.rows.length >= context.budget.limits.maxRows) {
+      state.truncatedReason = "ROW_LIMIT";
+      break;
+    }
+    const row = objectRow(item, binding.resource, namespace, service, binding.mode);
+    context.budget.consumeRows(1);
+    state.rows.push(row);
+  }
+  return state;
+}
+function bindingFor2(entry) {
+  return {
+    outputName: entry.outputName,
+    mode: entry.mode,
+    resource: entry.resource,
+    namespaceByEnvironment: { ...entry.namespaceByEnvironment },
+    ...entry.nameSource === void 0 ? {} : { nameSource: entry.nameSource },
+    ...entry.selector === void 0 ? {} : { selectorKey: entry.selector.key }
+  };
+}
+function table2(outputName, rows) {
+  return {
+    kind: "TABLE",
+    name: outputName,
+    columns: [
+      { name: "resource", type: "STRING" },
+      { name: "name", type: "STRING" },
+      { name: "namespace", type: "STRING" },
+      { name: "phase", type: "STRING" },
+      { name: "ready", type: "NUMBER" },
+      { name: "desired", type: "NUMBER" },
+      { name: "restarts", type: "NUMBER" },
+      { name: "generation", type: "NUMBER" },
+      { name: "observedGeneration", type: "NUMBER" }
+    ],
+    rows
+  };
+}
+var KubernetesAdapter = class {
+  descriptor = {
+    packageId: KUBERNETES_ADAPTER_PACKAGE_ID,
+    name: kubernetesAdapterPackage.name,
+    version: kubernetesAdapterPackage.version,
+    provider: "kubernetes",
+    domains: ["RUNTIME"],
+    operations: kubernetesAdapterPackage.capabilities,
+    resultSchemaVersions: ["1.0.0"]
+  };
+  #transport;
+  #catalog;
+  constructor(options) {
+    this.#transport = options.transport;
+    this.#catalog = new CompiledKubernetesCatalog(options.catalog);
+  }
+  async doctor() {
+    return {
+      status: "READY",
+      checks: [{
+        name: "production-read-only",
+        status: "PASS",
+        message: "Only fixed GET/LIST resources and namespaces are enabled; watch and writes are unavailable"
+      }]
+    };
+  }
+  async compile(operation2, context) {
+    if (context.adapterPackage.packageId !== KUBERNETES_ADAPTER_PACKAGE_ID) {
+      throw new AdapterContractError("Kubernetes adapter package mismatch");
+    }
+    if (operation2.definition.adapterPackageId !== KUBERNETES_ADAPTER_PACKAGE_ID || computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new AdapterContractError("Kubernetes operation is not bound to this adapter and hash");
+    }
+    if (Buffer.byteLength(canonicalJson(operation2.definition), "utf8") > context.maxDefinitionBytes) {
+      throw new AdapterContractError("Kubernetes operation definition exceeds the compile budget");
+    }
+    const reference = operation2.definition.sanitizedProviderDefinition;
+    if (Object.keys(reference).length !== 2 || typeof reference.catalogEntryId !== "string" || typeof reference.catalogEntrySha256 !== "string") {
+      throw new AdapterContractError("Kubernetes operation must contain only a trusted catalog reference");
+    }
+    const entry = this.#catalog.resolve(reference.catalogEntryId, reference.catalogEntrySha256);
+    const expectedOperation = entry.mode === "LIST" ? "kubernetes.resources.list" : "kubernetes.resource.get";
+    if (operation2.definition.adapterOperation !== expectedOperation) {
+      throw new AdapterContractError("Kubernetes operation does not match the trusted GET/LIST route");
+    }
+    if (operation2.definition.domain !== "RUNTIME" || operation2.definition.normalization.resultKind !== "TABLE") {
+      throw new AdapterContractError("Kubernetes operation result contract is invalid");
+    }
+    return {
+      operationId: operation2.operationId,
+      operationDefinitionSha256: operation2.definitionSha256,
+      adapterPackageId: KUBERNETES_ADAPTER_PACKAGE_ID,
+      adapterOperation: operation2.definition.adapterOperation,
+      binding: bindingFor2(entry)
+    };
+  }
+  async execute(context, operation2) {
+    context.budget.throwIfAborted();
+    const namespace = operation2.binding.namespaceByEnvironment[context.scope.environment];
+    if (namespace === void 0) {
+      throw new AdapterExecutionError({
+        code: "KUBERNETES_SCOPE_NOT_ALLOWED",
+        category: "POLICY",
+        message: "The requested environment has no reviewed Kubernetes namespace mapping",
+        retryable: false
+      });
+    }
+    const service = context.scope.service;
+    if (service === void 0 || !DNS_LABEL2.test(service)) {
+      throw new AdapterExecutionError({
+        code: "KUBERNETES_SERVICE_SCOPE_REQUIRED",
+        category: "POLICY",
+        message: "A valid reviewed service scope is required for Kubernetes evidence",
+        retryable: false
+      });
+    }
+    let response;
+    try {
+      response = await this.#transport.request({
+        verb: "GET",
+        mode: operation2.binding.mode,
+        resource: operation2.binding.resource,
+        namespace,
+        ...operation2.binding.mode === "GET" ? { name: service } : {},
+        ...operation2.binding.mode === "LIST" ? { selector: { key: operation2.binding.selectorKey, value: service } } : {},
+        limit: context.budget.limits.maxRows,
+        signal: context.signal,
+        maxResponseBytes: context.budget.limits.maxBytes
+      });
+    } catch (error) {
+      if (error instanceof AdapterExecutionError || error instanceof AdapterContractError || error instanceof BudgetExceededError) {
+        throw error;
+      }
+      if (error?.name === "KubernetesTransportError") {
+        const transportError2 = error;
+        throw new AdapterExecutionError({
+          code: transportError2.kind === "TIMEOUT" ? "KUBERNETES_TIMEOUT" : "KUBERNETES_UNAVAILABLE",
+          category: transportError2.kind,
+          message: transportError2.kind === "TIMEOUT" ? "Kubernetes read timed out" : "Kubernetes is unavailable",
+          retryable: true
+        });
+      }
+      if (context.signal.aborted) throw context.signal.reason ?? error;
+      throw new AdapterExecutionError({
+        code: "KUBERNETES_UNAVAILABLE",
+        category: "UNAVAILABLE",
+        message: "Kubernetes is unavailable",
+        retryable: true
+      });
+    }
+    const body = await readJson2(response, context);
+    if (response.status < 200 || response.status >= 300) throw statusError2(response.status);
+    const state = parseBody(body, operation2.binding, namespace, service, context);
+    const truncatedReason = state.truncatedReason ?? (state.providerTruncated ? "ROW_LIMIT" : void 0);
+    return {
+      schemaVersion: "1.0.0",
+      collectionState: state.rows.length === 0 ? "EMPTY" : "COMPLETE",
+      evaluatedAt: context.clock.now().toISOString(),
+      nativeResultType: "".concat(operation2.binding.resource, ":").concat(operation2.binding.mode.toLowerCase()),
+      nativeDimensions: { namespace, resource: operation2.binding.resource },
+      records: state.rows.length === 0 ? [] : [table2(operation2.binding.outputName, state.rows)],
+      pagination: truncatedReason === void 0 ? { complete: true, pages: 1 } : { complete: false, pages: 1, truncatedReason },
+      warnings: truncatedReason === void 0 ? [] : ["Kubernetes result was truncated by the bounded read policy"],
+      sanitizedReference: "kubernetes:".concat(operation2.binding.resource),
+      providerScope: {
+        environment: context.scope.environment,
+        service,
+        mappings: { environment: "namespace", service: "service" }
+      }
+    };
+  }
+};
+
+// adapters/kubernetes/src/types.ts
+var KubernetesTransportError = class extends Error {
+  kind;
+  constructor(kind) {
+    super("Kubernetes transport ".concat(kind.toLowerCase()));
+    this.name = "KubernetesTransportError";
+    this.kind = kind;
+  }
+};
+
+// adapters/loki/src/catalog.ts
+var SAFE_ID4 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var SAFE_LABEL = /^[a-zA-Z_][a-zA-Z0-9_]*$/u;
+var SAFE_SCOPE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var SHA2562 = /^[a-f0-9]{64}$/u;
+function assertExactKeys3(entry) {
+  const allowed = /* @__PURE__ */ new Set([
+    "id",
+    "sourceIdentitySha256",
+    "expression",
+    "outputName",
+    "allowedLabels",
+    "direction",
+    "scope"
+  ]);
+  if (Object.keys(entry).some((key) => !allowed.has(key))) {
+    throw new AdapterContractError("Loki catalog entry contains an unsupported field");
+  }
+}
+function lokiCatalogEntryHash(entry) {
+  return sha256Canonical(entry);
+}
+function validateEntry3(entry) {
+  assertExactKeys3(entry);
+  if (!SAFE_ID4.test(entry.id) || !SAFE_ID4.test(entry.outputName)) {
+    throw new AdapterContractError("Loki catalog IDs must use the bounded safe identifier format");
+  }
+  if (!SHA2562.test(entry.sourceIdentitySha256)) {
+    throw new AdapterContractError("Loki catalog source identity hash is invalid");
+  }
+  if (entry.expression.length === 0 || entry.expression.length > 16384) {
+    throw new AdapterContractError("Loki catalog expression is empty or too large");
+  }
+  if (entry.direction !== "backward" && entry.direction !== "forward") {
+    throw new AdapterContractError("Loki catalog direction is invalid");
+  }
+  if (!SAFE_SCOPE.test(entry.scope.environment) || !SAFE_SCOPE.test(entry.scope.service)) {
+    throw new AdapterContractError("Loki catalog scope is invalid");
+  }
+  if (entry.allowedLabels.length > 16 || new Set(entry.allowedLabels).size !== entry.allowedLabels.length || entry.allowedLabels.some((label) => !SAFE_LABEL.test(label))) {
+    throw new AdapterContractError("Loki allowed labels must be unique, valid, and bounded");
+  }
+  canonicalJson(entry);
+}
+var CompiledLokiCatalog = class {
+  #entries;
+  constructor(catalog) {
+    const entries = /* @__PURE__ */ new Map();
+    for (const supplied of catalog.entries) {
+      const entry = structuredClone(supplied);
+      validateEntry3(entry);
+      if (entries.has(entry.id)) throw new AdapterContractError("Duplicate Loki catalog entry: ".concat(entry.id));
+      entries.set(entry.id, Object.freeze({
+        ...entry,
+        allowedLabels: Object.freeze([...entry.allowedLabels]),
+        scope: Object.freeze({ ...entry.scope })
+      }));
+    }
+    this.#entries = entries;
+  }
+  resolve(id, expectedSha256) {
+    const entry = this.#entries.get(id);
+    if (entry === void 0) throw new AdapterContractError("Loki catalog entry is not trusted");
+    if (lokiCatalogEntryHash(entry) !== expectedSha256) {
+      throw new AdapterContractError("Loki catalog entry hash mismatch");
+    }
+    return entry;
+  }
+};
+
+// adapters/loki/src/adapter.ts
+var LOKI_ADAPTER_PACKAGE_ID = "adapter.loki.v1";
+var lokiAdapterPackage = {
+  schemaVersion: "1.0.0",
+  packageId: LOKI_ADAPTER_PACKAGE_ID,
+  name: "Loki production-read-only adapter",
+  version: "1.0.0",
+  protocolVersion: "1.0",
+  publisher: { name: "Codex Production Monitoring" },
+  entrypoint: { kind: "BUILTIN", registryKey: "loki-v1" },
+  domains: ["LOGS"],
+  capabilities: ["loki.logs.query-range"],
+  providerCompatibility: [{ provider: "loki", versions: ">=2.9 <4" }],
+  supportedContractVersions: ["1.0.0"],
+  conformance: ["CORE_READ", "LOGS"]
+};
+function isObject5(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function safeString4(value2, label, maxLength = 4096) {
+  if (typeof value2 !== "string" || value2.length === 0 || value2.length > maxLength) {
+    throw new AdapterContractError("Loki ".concat(label, " is invalid"));
+  }
+  return value2;
+}
+function safeLabelValue(value2) {
+  const text2 = safeString4(value2, "label value", 512);
+  if ([...text2].some((character) => (character.codePointAt(0) ?? 0) < 32)) {
+    throw new AdapterContractError("Loki label contains a control character");
+  }
+  return text2;
+}
+function safeLogLine(value2) {
+  const text2 = safeString4(value2, "log line", 16384);
+  const redacted = text2.replaceAll(/\bBearer\s+[A-Za-z0-9._~+/-]+=*\b/giu, "[REDACTED]").replaceAll(/\b(?:token|password|secret|api[_-]?key)\s*[=:]\s*\S+/giu, "[REDACTED]");
+  return [...redacted].map((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || codePoint === 127 ? "�" : character;
+  }).join("").slice(0, 2048);
+}
+function timestampFromNanoseconds(value2) {
+  const text2 = safeString4(value2, "timestamp", 32);
+  if (!/^\d{1,20}$/u.test(text2)) throw new AdapterContractError("Loki timestamp is invalid");
+  const nanoseconds = BigInt(text2);
+  const milliseconds2 = nanoseconds / 1000000n;
+  if (milliseconds2 > BigInt(Number.MAX_SAFE_INTEGER)) throw new AdapterContractError("Loki timestamp is out of range");
+  const date2 = new Date(Number(milliseconds2));
+  if (Number.isNaN(date2.getTime())) throw new AdapterContractError("Loki timestamp is out of range");
+  return date2.toISOString();
+}
+async function readJson3(response, context) {
+  const chunks = [];
+  for await (const chunk of response.body) {
+    context.budget.throwIfAborted();
+    context.budget.consumeBytes(chunk.byteLength);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new AdapterContractError("Loki response is not valid JSON");
+  }
+}
+function statusError3(status) {
+  if (status === 401 || status === 403) {
+    return new AdapterExecutionError({
+      code: "LOKI_ACCESS_DENIED",
+      category: status === 401 ? "AUTHENTICATION" : "AUTHORIZATION",
+      message: "Loki denied the bounded read request",
+      retryable: false,
+      providerStatus: status
+    });
+  }
+  if (status === 429) {
+    return new AdapterExecutionError({
+      code: "LOKI_RATE_LIMIT",
+      category: "RATE_LIMIT",
+      message: "Loki rate limited the bounded read request",
+      retryable: true,
+      providerStatus: status
+    });
+  }
+  return new AdapterExecutionError({
+    code: "LOKI_READ_FAILED",
+    category: status >= 500 ? "UNAVAILABLE" : "INVALID_RESPONSE",
+    message: "Loki bounded read failed",
+    retryable: status >= 500,
+    providerStatus: status
+  });
+}
+function assertScope(labels, context) {
+  const environment = labels.environment;
+  const service = labels.service;
+  if (environment !== void 0 && environment !== context.scope.environment) {
+    throw new AdapterContractError("Loki response crossed the authorized environment scope");
+  }
+  if (service !== void 0 && context.scope.service !== void 0 && service !== context.scope.service) {
+    throw new AdapterContractError("Loki response crossed the authorized service scope");
+  }
+}
+function parseLabels2(value2, allowed) {
+  if (!isObject5(value2)) throw new AdapterContractError("Loki stream labels are invalid");
+  const labels = {};
+  for (const [key, raw] of Object.entries(value2)) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/u.test(key)) throw new AdapterContractError("Loki label name is invalid");
+    const parsed = safeLabelValue(raw);
+    if (allowed.includes(key) || key === "environment" || key === "service") labels[key] = parsed;
+  }
+  return labels;
+}
+function parseStreams(data, binding, context) {
+  if (!isObject5(data) || data.resultType !== "streams" || !Array.isArray(data.result)) {
+    throw new AdapterContractError("Loki query response shape drifted");
+  }
+  const state = { events: [], evaluatedAt: new Date(context.window.end).toISOString() };
+  for (const streamResult of data.result) {
+    context.budget.throwIfAborted();
+    if (!isObject5(streamResult) || !Array.isArray(streamResult.values)) {
+      throw new AdapterContractError("Loki stream result is invalid");
+    }
+    const labels = parseLabels2(streamResult.stream, binding.allowedLabels);
+    assertScope(labels, context);
+    const attributes = Object.fromEntries(
+      Object.entries(labels).filter(([key]) => binding.allowedLabels.includes(key))
+    );
+    for (const pair of streamResult.values) {
+      if (!Array.isArray(pair) || pair.length !== 2) throw new AdapterContractError("Loki log entry is invalid");
+      if (state.events.length >= context.budget.limits.maxRows) {
+        state.truncatedReason = "ROW_LIMIT";
+        break;
+      }
+      const occurredAt = timestampFromNanoseconds(pair[0]);
+      const event = {
+        kind: "EVENT",
+        name: binding.outputName,
+        occurredAt,
+        summary: safeLogLine(pair[1]),
+        attributes
+      };
+      context.budget.consumeRows(1);
+      state.events.push(event);
+      if (Date.parse(occurredAt) > Date.parse(state.evaluatedAt)) state.evaluatedAt = occurredAt;
+    }
+    if (state.truncatedReason !== void 0) break;
+  }
+  return state;
+}
+function bindingFor3(entry) {
+  return {
+    catalogEntryId: entry.id,
+    catalogEntrySha256: lokiCatalogEntryHash(entry),
+    sourceIdentitySha256: entry.sourceIdentitySha256,
+    expression: entry.expression,
+    outputName: entry.outputName,
+    allowedLabels: [...entry.allowedLabels],
+    direction: entry.direction,
+    scopeEnvironment: entry.scope.environment,
+    scopeService: entry.scope.service
+  };
+}
+var LokiAdapter = class {
+  descriptor = {
+    packageId: LOKI_ADAPTER_PACKAGE_ID,
+    name: lokiAdapterPackage.name,
+    version: lokiAdapterPackage.version,
+    provider: "loki",
+    domains: ["LOGS"],
+    operations: lokiAdapterPackage.capabilities,
+    resultSchemaVersions: ["1.0.0"]
+  };
+  #transport;
+  #catalog;
+  constructor(options) {
+    this.#transport = options.transport;
+    this.#catalog = new CompiledLokiCatalog(options.catalog);
+  }
+  async doctor() {
+    return {
+      status: "READY",
+      checks: [{ name: "production-read-only", status: "PASS", message: "Trusted Loki catalog loaded" }]
+    };
+  }
+  async compile(operation

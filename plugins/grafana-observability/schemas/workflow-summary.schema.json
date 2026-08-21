@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:workflow-summary:1",
+  "title": "Production Monitoring workflow summary",
+  "$ref": "urn:production-monitoring:schema:workflow-result:1"
+}

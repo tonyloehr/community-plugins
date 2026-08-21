@@ -1,0 +1,5 @@
+interface:
+  display_name: "Inspect Infrastructure Health"
+  short_description: "Review bounded host and fleet health signals"
+  brand_color: "#7058E8"
+  default_prompt: "Use $inspect-infrastructure-health to review CPU, memory, disk, and load evidence for this approved scope and window."

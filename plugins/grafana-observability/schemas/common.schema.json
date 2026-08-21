@@ -1,0 +1,328 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:common:1",
+  "title": "Production Monitoring common definitions",
+  "$defs": {
+    "Sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "Alias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    "ErrorCode": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?:[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*|[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*)$"
+    },
+    "RunId": {
+      "type": "string",
+      "pattern": "^pmrun_[A-Za-z0-9_-]{20,128}$"
+    },
+    "EvidenceId": {
+      "type": "string",
+      "pattern": "^pmev_[A-Za-z0-9_-]{20,128}$"
+    },
+    "ContradictionId": {
+      "type": "string",
+      "pattern": "^pmcon_[A-Za-z0-9_-]{20,128}$"
+    },
+    "BundleId": {
+      "type": "string",
+      "pattern": "^pmbundle_[A-Za-z0-9_-]{20,128}$"
+    },
+    "MonitoringWorkspaceId": {
+      "type": "string",
+      "pattern": "^pmws_[A-Za-z0-9_-]{20,128}$"
+    },
+    "WorkbenchEvidenceRef": {
+      "type": "string",
+      "pattern": "^pmwsev_[A-Za-z0-9_-]{20,128}$"
+    },
+    "WorkbenchLinkRef": {
+      "type": "string",
+      "pattern": "^pmwslnk_[A-Za-z0-9_-]{20,128}$"
+    },
+    "WorkbenchIssueRef": {
+      "type": "string",
+      "pattern": "^pmwsiss_[A-Za-z0-9_-]{20,128}$"
+    },
+    "SubjectRef": {
+      "type": "string",
+      "pattern": "^pmsub_[A-Za-z0-9_-]{20,128}$"
+    },
+    "CapabilityPackId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    "OperationId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    "AdapterPackageId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    "Workflow": {
+      "enum": ["triage", "investigate", "deep", "change-review", "verify"]
+    },
+    "Origin": {
+      "enum": ["LIVE", "REPLAY", "SIMULATED"]
+    },
+    "Authority": {
+      "enum": ["AUTHORITATIVE", "CORROBORATING"]
+    },
+    "InvestigationStatus": {
+      "enum": ["COMPLETE", "PARTIAL", "BLOCKED"]
+    },
+    "RecoveryState": {
+      "enum": ["NONE", "APPROVAL_REQUIRED", "ACTION_FAILED", "INCOMPLETE", "NOT_RECOVERED", "RECOVERED"]
+    },
+    "EvidenceDomain": {
+      "enum": ["METRICS", "ALERTS", "LOGS", "TRACES", "RUNTIME", "CHANGES", "RUNBOOKS"]
+    },
+    "TimeWindow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment"],
+      "properties": {
+        "environment": { "$ref": "#/$defs/Alias" },
+        "service": { "$ref": "#/$defs/Alias" },
+        "region": { "$ref": "#/$defs/Alias" },
+        "cohort": { "$ref": "#/$defs/Alias" },
+        "subject": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "ref"],
+          "properties": {
+            "kind": { "enum": ["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"] },
+            "ref": { "$ref": "#/$defs/SubjectRef" }
+          }
+        }
+      }
+    },
+    "CorrelationIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment"],
+      "properties": {
+        "environment": { "$ref": "#/$defs/Alias" },
+        "serviceNamespace": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "serviceName": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "releaseVersion": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "deploymentId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "gitCommit": { "type": "string", "pattern": "^[a-fA-F0-9]{7,64}$" },
+        "traceId": { "type": "string", "pattern": "^[a-fA-F0-9]{16,64}$" }
+      }
+    },
+    "Integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hashContractVersion", "algorithm", "canonicalization", "contentSha256"],
+      "properties": {
+        "hashContractVersion": { "const": "sha256-jcs-v1" },
+        "algorithm": { "const": "sha256" },
+        "canonicalization": { "const": "RFC8785" },
+        "contentSha256": { "$ref": "#/$defs/Sha256" }
+      }
+    },
+    "RedactionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ruleId", "path", "action"],
+      "properties": {
+        "ruleId": { "$ref": "#/$defs/Alias" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "action": { "enum": ["REMOVED", "MASKED", "HASHED", "GENERALIZED"] }
+      }
+    },
+    "SanitizedError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "category", "message", "retryable"],
+      "properties": {
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "category": {
+          "enum": [
+            "AUTHORIZATION",
+            "AUTHENTICATION",
+            "UNAVAILABLE",
+            "TIMEOUT",
+            "RATE_LIMIT",
+            "INVALID_RESPONSE",
+            "POLICY",
+            "INTERNAL"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "retryable": { "type": "boolean" },
+        "providerStatus": { "type": "integer", "minimum": 100, "maximum": 599 }
+      }
+    },
+    "Pagination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["complete", "pages"],
+      "properties": {
+        "complete": { "type": "boolean" },
+        "pages": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "truncatedReason": {
+          "enum": ["BYTE_LIMIT", "ROW_LIMIT", "SERIES_LIMIT", "POINT_LIMIT", "TIME_LIMIT"]
+        }
+      }
+    },
+    "Dimensions": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 512
+      }
+    },
+    "JsonPrimitive": {
+      "type": ["null", "boolean", "number", "string"]
+    },
+    "ScalarValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "value", "dimensions"],
+      "properties": {
+        "kind": { "const": "SCALAR" },
+        "name": { "$ref": "#/$defs/Alias" },
+        "value": { "$ref": "#/$defs/JsonPrimitive" },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "dimensions": { "$ref": "#/$defs/Dimensions" },
+        "observedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "TimeSeriesPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "value"],
+      "properties": {
+        "at": { "type": "string", "format": "date-time" },
+        "value": { "type": ["number", "null"] }
+      }
+    },
+    "TimeSeriesValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "dimensions", "points"],
+      "properties": {
+        "kind": { "const": "TIMESERIES" },
+        "name": { "$ref": "#/$defs/Alias" },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "dimensions": { "$ref": "#/$defs/Dimensions" },
+        "points": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10000,
+          "items": { "$ref": "#/$defs/TimeSeriesPoint" }
+        }
+      }
+    },
+    "TableColumn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type"],
+      "properties": {
+        "name": { "$ref": "#/$defs/Alias" },
+        "type": { "enum": ["STRING", "NUMBER", "BOOLEAN", "DATETIME", "NULL"] }
+      }
+    },
+    "TableValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "columns", "rows"],
+      "properties": {
+        "kind": { "const": "TABLE" },
+        "name": { "$ref": "#/$defs/Alias" },
+        "columns": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/TableColumn" }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "array",
+            "maxItems": 128,
+            "items": { "$ref": "#/$defs/JsonPrimitive" }
+          }
+        }
+      }
+    },
+    "EventValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name", "occurredAt", "summary", "attributes"],
+      "properties": {
+        "kind": { "const": "EVENT" },
+        "name": { "$ref": "#/$defs/Alias" },
+        "occurredAt": { "type": "string", "format": "date-time" },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "attributes": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$" },
+          "additionalProperties": { "$ref": "#/$defs/JsonPrimitive" }
+        }
+      }
+    },
+    "NormalizedValue": {
+      "oneOf": [
+        { "$ref": "#/$defs/ScalarValue" },
+        { "$ref": "#/$defs/TimeSeriesValue" },
+        { "$ref": "#/$defs/TableValue" },
+        { "$ref": "#/$defs/EventValue" }
+      ]
+    },
+    "OperationLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutMs", "maxAgeMs", "maxBytes", "maxRows", "maxSeries", "maxPoints"],
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 300000 },
+        "maxAgeMs": { "type": "integer", "minimum": 0, "maximum": 31536000000 },
+        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "maxRows": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "maxSeries": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "maxPoints": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+      }
+    },
+    "PortableRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]+$"
+    }
+  }
+}

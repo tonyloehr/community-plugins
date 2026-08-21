@@ -1,0 +1,1354 @@
+diff --git a/adapters/grafana/src/adapter.ts b/adapters/grafana/src/adapter.ts
+index 5599773..cec1b7b 100644
+--- a/adapters/grafana/src/adapter.ts
++++ b/adapters/grafana/src/adapter.ts
+@@ -25,6 +25,7 @@ import {
+ 
+ import { CompiledGrafanaCatalog, grafanaCatalogEntryHash } from "./catalog.ts";
+ import { normalizeGrafanaFrames } from "./frame-normalizer.ts";
++import { normalizeGrafanaNativeResponse } from "./native-response.ts";
+ import {
+   canonicalGrafanaDatasourceType,
+   GrafanaTransportError,
+@@ -550,6 +551,24 @@ function buildDatasourceQueryTarget(binding: GrafanaBinding, context: AdapterExe
+ 
+ function buildRequest(binding: GrafanaBinding, context: AdapterExecutionContext): GrafanaHttpRequest {
+   if (binding.route === "datasource-query") {
++    if (binding.target?.datasourceType === "tempo") {
++      // Grafana 10–12 do not implement backend TraceQL search through
++      // /api/ds/query. This is one code-owned read route, not a generic proxy:
++      // the datasource UID and TraceQL came from the hash-verified catalog.
++      return {
++        method: "GET",
++        path: `/api/datasources/proxy/uid/${binding.datasourceUid!}/api/search`,
++        query: {
++          q: binding.target.expression,
++          start: String(Math.floor(Date.parse(context.window.start) / 1_000)),
++          end: String(Math.ceil(Date.parse(context.window.end) / 1_000)),
++          limit: String(Math.max(1, Math.min(binding.target.limit, context.budget.limits.maxRows))),
++          spss: String(Math.max(1, Math.min(binding.target.spansPerSpanSet, context.budget.limits.maxRows))),
++        },
++        signal: context.signal,
++        maxResponseBytes: context.budget.limits.maxBytes,
++      };
++    }
+     return {
+       method: "POST",
+       path: "/api/ds/query",
+@@ -718,7 +737,9 @@ export class GrafanaAdapter implements EvidenceAdapter<GrafanaBinding> {
+     const request = buildRequest(operation.binding, context);
+     const body = await requestJson(this.#transport, request, context);
+     if (trustedEntry.route === "datasource-query") {
+-      const normalized = normalizeGrafanaFrames(body, trustedEntry, context);
++      const normalized = normalizeGrafanaFrames(
++        normalizeGrafanaNativeResponse(body, trustedEntry, context), trustedEntry, context,
++      );
+       const result: GrafanaLineageProviderResult = {
+         schemaVersion: "1.0.0",
+         collectionState: normalized.records.length === 0 ? "EMPTY" : "COMPLETE",
+diff --git a/adapters/grafana/src/native-response.ts b/adapters/grafana/src/native-response.ts
+new file mode 100644
+index 0000000..6ffc4fd
+--- /dev/null
++++ b/adapters/grafana/src/native-response.ts
+@@ -0,0 +1,306 @@
++import { canonicalJson, type JsonPrimitive } from "../../../packages/contracts/src/index.ts";
++import { AdapterContractError, type AdapterExecutionContext } from "../../../packages/adapter-sdk/src/index.ts";
++
++import type {
++  GrafanaDatasourceQueryCatalogEntry,
++  GrafanaFrameFieldContract,
++  GrafanaFrameFieldType,
++} from "./types.ts";
++
++type ObjectValue = Record<string, unknown>;
++type NativeValues = Record<string, JsonPrimitive>;
++
++function object(value: unknown): value is ObjectValue {
++  return value !== null && typeof value === "object" && !Array.isArray(value);
++}
++
++function invalid(message: string): never {
++  throw new AdapterContractError(`Grafana native response ${message}`);
++}
++
++function text(value: unknown, maximum = 4_096): string {
++  if (typeof value !== "string" || value.length > maximum || [...value].some((character) => {
++    const code = character.codePointAt(0) ?? 0;
++    return code === 127 || (code < 32 && code !== 9 && code !== 10 && code !== 13);
++  })) {
++    return invalid("contains an invalid string");
++  }
++  return value;
++}
++
++function decimal(value: unknown): number {
++  if (typeof value === "number" && Number.isFinite(value)) return value;
++  if (typeof value === "string" && /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$/u.test(value)) {
++    const converted = Number(value);
++    if (Number.isFinite(converted)) return converted;
++  }
++  return invalid("contains an invalid number");
++}
++
++function nanosToMilliseconds(value: unknown): number {
++  if (typeof value !== "string" || !/^[0-9]{1,30}$/u.test(value)) return invalid("contains invalid nanoseconds");
++  const milliseconds = Number(BigInt(value) / 1_000_000n);
++  if (!Number.isSafeInteger(milliseconds)) return invalid("timestamp is outside the safe range");
++  return milliseconds;
++}
++
++function typedPrimitive(value: unknown, type: GrafanaFrameFieldType): JsonPrimitive {
++  if (value === null) return null;
++  if (type === "number") return decimal(value);
++  if (type === "string") return text(value);
++  if (type === "boolean") {
++    if (value === true || value === false) return value;
++    if (value === "true" || value === "false") return value === "true";
++    return invalid("contains an invalid boolean");
++  }
++  if (typeof value === "number" && Number.isFinite(value)) return value;
++  if (typeof value === "string") return text(value);
++  return invalid("contains an invalid time");
++}
++
++function projectedFrame(
++  entry: Readonly<GrafanaDatasourceQueryCatalogEntry>,
++  values: Readonly<NativeValues>,
++  fieldValue: (field: GrafanaFrameFieldContract) => unknown = (field) => values[field.sourceName],
++): ObjectValue {
++  const labels = Object.fromEntries(entry.frame.allowedLabels.flatMap((name) => {
++    const value = values[name];
++    return value === undefined || value === null ? [] : [[name, text(String(value), 128)]];
++  }));
++  return {
++    schema: {
++      refId: "A",
++      fields: entry.frame.fields.map((field, index) => ({
++        name: field.sourceName,
++        type: field.type,
++        ...(index === 0 && Object.keys(labels).length > 0 ? { labels } : {}),
++      })),
++    },
++    data: {
++      values: entry.frame.fields.map((field) => {
++        const value = fieldValue(field);
++        if (value === undefined) return invalid("omits an enrolled field");
++        return [typedPrimitive(value, field.type)];
++      }),
++    },
++  };
++}
++
++function envelope(frames: ObjectValue[]): ObjectValue {
++  return { results: { A: { frames } } };
++}
++
++function stringLabels(value: unknown): Record<string, string> {
++  if (!object(value) || Object.keys(value).length > 128) return invalid("labels are invalid");
++  return Object.fromEntries(Object.entries(value).map(([key, item]) => [text(key, 256), text(item)]));
++}
++
++const LOKI_FIELD_SHAPES = new Set([
++  "labels:other,Time:time,Line:string,tsNs:string,id:string",
++  "labels:other,Time:time,Line:string,tsNs:string,labelTypes:other,id:string",
++  "labels:other,timestamp:time,body:string,id:string",
++  "labels:other,timestamp:time,body:string,id:string,labelTypes:other",
++]);
++
++/** Project only the documented Grafana 10–13 native Loki log-frame layouts. */
++function normalizeLokiLogs(
++  body: unknown,
++  entry: Readonly<GrafanaDatasourceQueryCatalogEntry>,
++  context: AdapterExecutionContext,
++): unknown {
++  if (!object(body) || !object(body.results) || !object(body.results.A) || !Array.isArray(body.results.A.frames)) return body;
++  const result = body.results.A;
++  if (Object.keys(body.results).length !== 1 || result.error !== undefined ||
++      (typeof result.status === "number" && result.status >= 400)) return body;
++  const supplied = result.frames as unknown[];
++  const native = supplied.some((frame) => object(frame) && object(frame.schema) &&
++    Array.isArray(frame.schema.fields) && frame.schema.fields.some((field) =>
++      object(field) && field.name === "labels" && field.type === "other"));
++  if (!native) return body; // Existing exact, primitive enrolled frames remain valid.
++  const output: ObjectValue[] = [];
++  for (const frame of supplied) {
++    if (!object(frame) || !object(frame.schema) || frame.schema.refId !== "A" ||
++        !Array.isArray(frame.schema.fields) || !object(frame.data) || !Array.isArray(frame.data.values)) {
++      return invalid("Loki frame is invalid");
++    }
++    const names = frame.schema.fields.map((field) => {
++      if (!object(field) || typeof field.name !== "string" || typeof field.type !== "string") return invalid("Loki field is invalid");
++      return `${field.name}:${field.type}`;
++    });
++    if (!LOKI_FIELD_SHAPES.has(names.join(",")) || frame.data.values.length !== names.length) {
++      return invalid("Loki frame contains unexpected fields");
++    }
++    const columns: Record<string, unknown[]> = {};
++    let rows: number | undefined;
++    for (const [index, rawField] of frame.schema.fields.entries()) {
++      const field = rawField as { name: string };
++      const values = frame.data.values[index];
++      if (!Array.isArray(values) || (rows !== undefined && values.length !== rows)) return invalid("Loki columns have unequal lengths");
++      rows = values.length;
++      columns[field.name] = values;
++    }
++    for (let row = 0; row < (rows ?? 0); row += 1) {
++      context.budget.throwIfAborted();
++      const labels = stringLabels(columns.labels![row]);
++      // Scope is proved in the actual JSON labels before reserved projection
++      // aliases (Time/Line/body/etc.) can overwrite a same-named label.
++      if (labels[entry.scopeMappings.environment] !== entry.scope.environment ||
++          (entry.scope.service !== undefined && labels[entry.scopeMappings.service!] !== entry.scope.service) ||
++          (entry.scope.subject !== undefined && labels[entry.scopeMappings["subject.ref"]!] !== entry.scope.subject.providerValue)) {
++        return invalid("Loki log row does not prove the enrolled scope");
++      }
++      if (columns.labelTypes !== undefined) stringLabels(columns.labelTypes[row]);
++      const time = (columns.Time ?? columns.timestamp)![row];
++      const line = text((columns.Line ?? columns.body)![row]);
++      const id = text(columns.id![row], 512);
++      const tsNs = columns.tsNs === undefined ? undefined : text(columns.tsNs[row], 30);
++      if (tsNs !== undefined && !/^[0-9]+$/u.test(tsNs)) return invalid("Loki nanoseconds are invalid");
++      const values: NativeValues = {
++        ...labels,
++        Time: typedPrimitive(time, "time"),
++        timestamp: typedPrimitive(time, "time"),
++        Line: line,
++        body: line,
++        Summary: line,
++        id,
++        ...(tsNs === undefined ? {} : { tsNs }),
++      };
++      output.push(projectedFrame(entry, values));
++      if (output.length > context.budget.limits.maxRows) return envelope(output);
++    }
++  }
++  return envelope(output);
++}
++
++function protoPrimitive(value: unknown): JsonPrimitive {
++  if (!object(value)) return invalid("Tempo attribute value is invalid");
++  const keys = Object.keys(value);
++  if (keys.length !== 1) return invalid("Tempo attribute value is ambiguous");
++  if (keys[0] === "stringValue") return text(value.stringValue);
++  if (keys[0] === "intValue" || keys[0] === "doubleValue") return decimal(value[keys[0]]);
++  if (keys[0] === "boolValue" && typeof value.boolValue === "boolean") return value.boolValue;
++  return invalid("Tempo attribute type is unsupported");
++}
++
++function nativeAttributeName(name: string): string {
++  return name.replace(/^(?:resource|span)\./u, "");
++}
++
++function tempoAttributes(value: unknown, wanted: ReadonlySet<string>): NativeValues {
++  if (!Array.isArray(value) || value.length > 256) return invalid("Tempo attributes are invalid");
++  const result: NativeValues = {};
++  for (const attribute of value) {
++    if (!object(attribute)) return invalid("Tempo attribute is invalid");
++    const key = text(attribute.key, 256);
++    if (!wanted.has(key)) continue;
++    if (Object.hasOwn(result, key)) return invalid("Tempo attributes repeat an enrolled key");
++    result[key] = protoPrimitive(attribute.value);
++  }
++  return result;
++}
++
++function assertTempoScope(attributes: Readonly<NativeValues>, entry: Readonly<GrafanaDatasourceQueryCatalogEntry>): void {
++  if (attributes["deployment.environment"] !== entry.scope.environment ||
++      (entry.scope.service !== undefined && attributes["service.name"] !== entry.scope.service) ||
++      (entry.scope.subject !== undefined &&
++        attributes[nativeAttributeName(entry.scopeMappings["subject.ref"]!)] !== entry.scope.subject.providerValue)) {
++    return invalid("Tempo matching span does not prove the enrolled scope");
++  }
++}
++
++function hexId(value: unknown, length: number): string {
++  const candidate = text(value, length);
++  if (candidate.length !== length || !/^[a-f0-9]+$/iu.test(candidate)) return invalid("Tempo identity is invalid");
++  return candidate;
++}
++
++/**
++ * Tempo's search response is not a Grafana dataframe. Scope is proved from
++ * each matching span's actual resource attributes, never rootServiceName or
++ * the catalog's expected values. Only explicitly enrolled primitive columns
++ * are projected into the existing strict dataframe normalizer.
++ */
++function normalizeTempoSearch(
++  body: unknown,
++  entry: Readonly<GrafanaDatasourceQueryCatalogEntry>,
++  context: AdapterExecutionContext,
++): unknown {
++  if (entry.target.datasourceType !== "tempo") return invalid("Tempo target is invalid");
++  const traceLimit = Math.max(1, Math.min(entry.target.limit, context.budget.limits.maxRows));
++  const spansLimit = Math.max(1, Math.min(entry.target.spansPerSpanSet, context.budget.limits.maxRows));
++  if (!object(body) || !Array.isArray(body.traces) || body.traces.length > traceLimit) return invalid("Tempo search envelope is invalid");
++  const wanted = new Set([
++    "deployment.environment", "service.name",
++    ...entry.frame.fields.map((field) => nativeAttributeName(field.sourceName)),
++    ...entry.frame.allowedLabels.map(nativeAttributeName),
++    ...(entry.scope.subject === undefined ? [] : [nativeAttributeName(entry.scopeMappings["subject.ref"]!)]),
++  ]);
++  const output: ObjectValue[] = [];
++  for (const trace of body.traces) {
++    context.budget.throwIfAborted();
++    if (!object(trace)) return invalid("Tempo trace is invalid");
++    const traceID = hexId(trace.traceID, 32);
++    const sets = Array.isArray(trace.spanSets) ? trace.spanSets : object(trace.spanSet) ? [trace.spanSet] : undefined;
++    if (sets === undefined || sets.length === 0 || sets.length > 64) return invalid("Tempo trace omits matching spans");
++    const matches: Array<{ span: ObjectValue; attributes: NativeValues; spanID: string }> = [];
++    const seen = new Map<string, string>();
++    for (const set of sets) {
++      if (!object(set) || !Array.isArray(set.spans) || set.spans.length > spansLimit) return invalid("Tempo span set exceeds its reviewed bound");
++      for (const span of set.spans) {
++        context.budget.throwIfAborted();
++        if (!object(span)) return invalid("Tempo matching span is invalid");
++        const spanID = hexId(span.spanID, 16);
++        const attributes = tempoAttributes(span.attributes, wanted);
++        assertTempoScope(attributes, entry);
++        const identity = canonicalJson({ attributes, start: span.startTimeUnixNano, duration: span.durationNanos });
++        if (seen.has(spanID)) {
++          if (seen.get(spanID) !== identity) return invalid("Tempo repeats a conflicting matching span");
++          continue;
++        }
++        seen.set(spanID, identity);
++        matches.push({ span, attributes, spanID });
++      }
++    }
++    if (matches.length === 0) return invalid("Tempo trace has no scope-proven matching span");
++    const selected = entry.target.tableType === "traces" ? matches.slice(0, 1) : matches;
++    for (const { span, attributes, spanID } of selected) {
++      context.budget.throwIfAborted();
++      const traceTable = entry.target.tableType === "traces";
++      const time = nanosToMilliseconds(traceTable ? trace.startTimeUnixNano : span.startTimeUnixNano);
++      const duration = traceTable ? decimal(trace.durationMs) : decimal(span.durationNanos) / 1_000_000;
++      const summary = text(trace.rootTraceName, 256);
++      const values: NativeValues = {
++        ...attributes,
++        [entry.scopeMappings.environment]: attributes["deployment.environment"]!,
++        ...(entry.scope.service === undefined ? {} : { [entry.scopeMappings.service!]: attributes["service.name"]! }),
++        ...(entry.scope.subject === undefined ? {} : {
++          [entry.scopeMappings["subject.ref"]!]: attributes[nativeAttributeName(entry.scopeMappings["subject.ref"]!)]!,
++        }),
++        Time: time,
++        startTime: time,
++        Duration: duration,
++        durationMs: duration,
++        Summary: summary,
++        rootTraceName: summary,
++        traceID,
++        spanID,
++      };
++      output.push(projectedFrame(entry, values, (field) =>
++        values[field.sourceName] ?? attributes[nativeAttributeName(field.sourceName)]));
++      if (output.length > context.budget.limits.maxRows) return envelope(output);
++    }
++  }
++  return envelope(output);
++}
++
++export function normalizeGrafanaNativeResponse(
++  body: unknown,
++  entry: Readonly<GrafanaDatasourceQueryCatalogEntry>,
++  context: AdapterExecutionContext,
++): unknown {
++  if (entry.target.datasourceType === "tempo") return normalizeTempoSearch(body, entry, context);
++  if (entry.target.datasourceType === "loki" && (entry.frame.resultKind === "EVENT" || entry.frame.resultKind === "TABLE")) {
++    return normalizeLokiLogs(body, entry, context);
++  }
++  return body;
++}
+diff --git a/adapters/grafana/src/types.ts b/adapters/grafana/src/types.ts
+index f6e26d7..f6b465b 100644
+--- a/adapters/grafana/src/types.ts
++++ b/adapters/grafana/src/types.ts
+@@ -209,6 +209,7 @@ export interface GrafanaHttpGetRequest extends GrafanaHttpRequestBase {
+     | "/api/search"
+     | `/api/datasources/uid/${string}`
+     | `/api/datasources/uid/${string}/health`
++    | `/api/datasources/proxy/uid/${string}/api/search`
+     | "/api/annotations"
+     | "/api/v1/provisioning/alert-rules";
+   query: Readonly<Record<string, string>>;
+diff --git a/packages/grafana-credential-profile/src/macos-keychain-loader.ts b/packages/grafana-credential-profile/src/macos-keychain-loader.ts
+index d4e68b1..2d3d399 100644
+--- a/packages/grafana-credential-profile/src/macos-keychain-loader.ts
++++ b/packages/grafana-credential-profile/src/macos-keychain-loader.ts
+@@ -14,6 +14,7 @@ import {
+ 
+ const SHA256 = /^[a-f0-9]{64}$/u;
+ const MAX_NATIVE_ASSET_BYTES = 64 * 1_024 * 1_024;
++const MAX_NATIVE_SECRET_BYTES = 16_384;
+ 
+ export interface HashPinnedMacOsKeychainAsset {
+   /** A code-owned file URL resolved relative to the signed plugin bundle. */
+@@ -25,7 +26,8 @@ export interface HashPinnedMacOsKeychainAsset {
+ export type NativeAddonImporter = (absolutePath: string) => unknown | Promise<unknown>;
+ 
+ interface RawAsyncEntry {
+-  getSecret(signal?: AbortSignal): Promise<Uint8Array | undefined>;
++  // The pinned N-API addon returns null or number[] on macOS despite its .d.ts.
++  getSecret(signal?: AbortSignal): Promise<unknown>;
+   setSecret(secret: Uint8Array, signal?: AbortSignal): Promise<void>;
+   deleteCredential(signal?: AbortSignal): Promise<boolean>;
+ }
+@@ -44,6 +46,52 @@ function record(value: unknown): Record<string, unknown> | undefined {
+     : undefined;
+ }
+ 
++function copyNativeSecret(value: unknown): Uint8Array | undefined {
++  if (value === undefined || value === null) return undefined;
++  if (value instanceof Uint8Array) {
++    if (value.byteLength < 1 || value.byteLength > MAX_NATIVE_SECRET_BYTES) throw new NativeKeyringUnavailableError();
++    return Uint8Array.from(value);
++  }
++  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_NATIVE_SECRET_BYTES ||
++      Object.getOwnPropertyNames(value).length !== value.length + 1 || Object.getOwnPropertySymbols(value).length !== 0) {
++    throw new NativeKeyringUnavailableError();
++  }
++  const bytes = new Uint8Array(value.length);
++  try {
++    for (let index = 0; index < value.length; index += 1) {
++      const property = Object.getOwnPropertyDescriptor(value, String(index));
++      if (property === undefined || !("value" in property) || property.writable !== true ||
++          typeof property.value !== "number" || !Number.isInteger(property.value) || property.value < 0 || property.value > 255) {
++        throw new NativeKeyringUnavailableError();
++      }
++      bytes[index] = property.value;
++    }
++    return bytes;
++  } catch (error) {
++    bytes.fill(0);
++    throw error;
++  }
++}
++
++function eraseNativeSecret(value: unknown): void {
++  try {
++    if (value instanceof Uint8Array) {
++      Uint8Array.prototype.fill.call(value, 0);
++    } else if (Array.isArray(value)) {
++      // Do not densify an oversized sparse malformed array or invoke accessors.
++      for (const name of Object.getOwnPropertyNames(value)) {
++        if (!/^(?:0|[1-9][0-9]*)$/u.test(name) || Number(name) >= value.length) continue;
++        const property = Object.getOwnPropertyDescriptor(value, name);
++        if (property !== undefined && "value" in property && property.writable === true) {
++          Object.defineProperty(value, name, { ...property, value: 0 });
++        }
++      }
++    }
++  } catch {
++    // Rejected immutable or exotic values cannot be reliably overwritten.
++  }
++}
++
+ function adaptMacOsKeychainAddon(value: unknown): NativeKeyringModule {
+   const AsyncEntry = record(value)?.AsyncEntry;
+   if (typeof AsyncEntry !== "function") throw new NativeKeyringUnavailableError();
+@@ -61,14 +109,12 @@ function adaptMacOsKeychainAddon(value: unknown): NativeKeyringModule {
+       }
+       return {
+         async getSecret(signal?: AbortSignal): Promise<Uint8Array | undefined> {
+-          let nativeSecret: Uint8Array | undefined;
++          let nativeSecret: unknown;
+           try {
+             nativeSecret = await entry.getSecret(signal);
+-            if (nativeSecret === undefined) return undefined;
+-            if (!(nativeSecret instanceof Uint8Array)) throw new NativeKeyringUnavailableError();
+-            return Uint8Array.from(nativeSecret);
++            return copyNativeSecret(nativeSecret);
+           } finally {
+-            nativeSecret?.fill(0);
++            eraseNativeSecret(nativeSecret);
+           }
+         },
+         async setSecret(secret: Uint8Array, signal?: AbortSignal): Promise<void> {
+@@ -195,12 +241,10 @@ async function importPrivateVerifiedCopy(
+     } finally {
+       verified.fill(0);
+     }
+-    await unlink(stagedPath);
+-    stagedPath = undefined;
+-    await rmdir(directory);
+-    directory = undefined;
+-    // Loading through the still-open descriptor removes the verify/dlopen path
+-    // race. The private staged inode has already been unlinked.
++    // Loading through the still-open descriptor avoids a verify/dlopen path
++    // race. Keep the owner-only inode linked until dlopen finishes: macOS code
++    // signing rejects an otherwise valid Mach-O library after it is unlinked.
++    // The finally block removes the staged file and directory on either result.
+     return await importer(`/dev/fd/${String(handle.fd)}`);
+   } catch {
+     throw new NativeKeyringUnavailableError();
+diff --git a/packages/observability-cli/src/entrypoint.ts b/packages/observability-cli/src/entrypoint.ts
+index cc40e96..895738b 100644
+--- a/packages/observability-cli/src/entrypoint.ts
++++ b/packages/observability-cli/src/entrypoint.ts
+@@ -10,6 +10,7 @@ import {
+ 
+ import { runObservabilityCli, type ObservabilityCliIo } from "./main.ts";
+ import { HttpGrafanaConnectionDiscovery } from "./grafana-discovery.ts";
++import { observabilityCliInformation } from "./help.ts";
+ 
+ export const BUNDLED_MACOS_KEYCHAIN_ASSETS = Object.freeze({
+   arm64: Object.freeze({
+@@ -62,19 +63,27 @@ export function createBundledMacOsKeychainLoader(options: {
+ export async function runObservabilityCliEntrypoint(options: {
+   argv?: readonly string[];
+   io?: ObservabilityCliIo;
+-  nativeLoader: NativeKeyringModuleLoader;
++  nativeLoader?: NativeKeyringModuleLoader;
+   platform?: NodeJS.Platform;
+-}): Promise<number> {
++} = {}): Promise<number> {
+   const io = options.io ?? {
+     stdin: process.stdin,
+     stdout: process.stdout,
+     stderr: process.stderr,
+   };
++  const argv = options.argv ?? process.argv.slice(2);
++  const information = observabilityCliInformation(argv);
++  if (information !== undefined) {
++    io.stdout.write(information);
++    return 0;
++  }
+   const backend = new NativeGrafanaKeyringBackend({
+-    loader: options.nativeLoader,
++    loader: options.nativeLoader ?? createBundledMacOsKeychainLoader(
++      options.platform === undefined ? {} : { platform: options.platform },
++    ),
+     ...(options.platform === undefined ? {} : { platform: options.platform }),
+   });
+-  return runObservabilityCli(options.argv ?? process.argv.slice(2), {
++  return runObservabilityCli(argv, {
+     profileStore: new SharedGrafanaProfileStore(
+       options.platform === undefined ? {} : { platform: options.platform },
+     ),
+@@ -88,11 +97,9 @@ const directlyExecuted = process.argv[1] !== undefined
+   && pathToFileURL(process.argv[1]).href === import.meta.url;
+ 
+ if (directlyExecuted) {
+-  // Only the code-owned bundle-relative, hash-pinned macOS asset is admitted.
+-  // Construction fails closed on Linux, Windows, and unsupported architectures.
+-  void Promise.resolve().then(() => runObservabilityCliEntrypoint({
+-    nativeLoader: createBundledMacOsKeychainLoader(),
+-  })).then((exitCode) => {
++  // Credential commands admit only the code-owned, hash-pinned native asset;
++  // informational commands remain usable on unsupported credential platforms.
++  void Promise.resolve().then(() => runObservabilityCliEntrypoint()).then((exitCode) => {
+     process.exitCode = exitCode;
+   }).catch(() => {
+     process.stderr.write("The shared Grafana credential store is unavailable.\n");
+diff --git a/packages/observability-cli/src/help.ts b/packages/observability-cli/src/help.ts
+index 8e4428b..ef4bb0e 100644
+--- a/packages/observability-cli/src/help.ts
++++ b/packages/observability-cli/src/help.ts
+@@ -1,5 +1,12 @@
+ export const OBSERVABILITY_CLI_VERSION = "0.1.0";
+ 
++/** Informational commands must not initialize a platform credential backend. */
++export function observabilityCliInformation(argv: readonly string[]): string | undefined {
++  if (argv.length === 1 && argv[0] === "--version") return `${OBSERVABILITY_CLI_VERSION}\n`;
++  if (argv.length === 0 || (argv.length === 1 && argv[0] === "--help")) return observabilityCliHelp();
++  return undefined;
++}
++
+ export function observabilityCliHelp(): string {
+   return `observabilityctl ${OBSERVABILITY_CLI_VERSION}
+ 
+diff --git a/packages/observability-cli/src/main.ts b/packages/observability-cli/src/main.ts
+index 4e52a0d..5a392aa 100644
+--- a/packages/observability-cli/src/main.ts
++++ b/packages/observability-cli/src/main.ts
+@@ -27,7 +27,7 @@ import {
+   type GrafanaConnectionDiscovery,
+   type GrafanaConnectionPreview,
+ } from "./grafana-discovery.ts";
+-import { OBSERVABILITY_CLI_VERSION, observabilityCliHelp } from "./help.ts";
++import { observabilityCliInformation } from "./help.ts";
+ import {
+   confirmSharedProfileActivation,
+   confirmSharedProfileDeletion,
+@@ -497,12 +497,9 @@ export async function runObservabilityCli(
+   argv: readonly string[],
+   dependencies: ObservabilityCliDependencies,
+ ): Promise<number> {
+-  if (argv.length === 1 && argv[0] === "--version") {
+-    dependencies.io.stdout.write(`${OBSERVABILITY_CLI_VERSION}\n`);
+-    return 0;
+-  }
+-  if (argv.length === 0 || (argv.length === 1 && argv[0] === "--help")) {
+-    dependencies.io.stdout.write(observabilityCliHelp());
++  const information = observabilityCliInformation(argv);
++  if (information !== undefined) {
++    dependencies.io.stdout.write(information);
+     return 0;
+   }
+   try {
+diff --git a/plugins/grafana-observability/.codex-plugin/plugin.json b/plugins/grafana-observability/.codex-plugin/plugin.json
+index 0e9b007..4d1d287 100644
+--- a/plugins/grafana-observability/.codex-plugin/plugin.json
++++ b/plugins/grafana-observability/.codex-plugin/plugin.json
+@@ -33,7 +33,7 @@
+     "logo": "./assets/icon.svg",
+     "composerIcon": "./assets/icon.svg",
+     "defaultPrompt": [
+-      "Use $setup-grafana-observability to check my reviewed Grafana profile and active packs.",
++      "Use $setup-grafana-observability to check the fixture profile and available packs.",
+       "Use $setup-grafana-observability to explain how to connect a reviewed read-only Grafana profile.",
+       "Use $setup-grafana-observability to list supported packs and activation prerequisites."
+     ]
+diff --git a/plugins/grafana-observability/.mcp.json b/plugins/grafana-observability/.mcp.json
+index c9ae127..be29de9 100644
+--- a/plugins/grafana-observability/.mcp.json
++++ b/plugins/grafana-observability/.mcp.json
+@@ -7,6 +7,13 @@
+         "--stdio"
+       ],
+       "cwd": ".",
++      "env_vars": [
++        "PRODUCTION_MONITORING_MODE",
++        "PRODUCTION_MONITORING_TRUST_ROOT",
++        "PRODUCTION_MONITORING_ACTIVATION_RECEIPT",
++        "PRODUCTION_MONITORING_ARTIFACT_ROOT",
++        "PRODUCTION_MONITORING_STATE_ROOT"
++      ],
+       "tool_timeout_sec": 3600
+     }
+   }
+diff --git a/plugins/grafana-observability/README.md b/plugins/grafana-observability/README.md
+new file mode 100644
+index 0000000..0798528
+--- /dev/null
++++ b/plugins/grafana-observability/README.md
+@@ -0,0 +1,91 @@
++# Grafana Observability for Codex
++
++Investigate infrastructure, application performance, logs, edge devices, and business KPIs using administrator-approved, read-only Grafana evidence.
++
++[![Watch the Grafana production-monitoring demo](../../docs/media/grafana-production-monitoring-demo.png)](../../docs/media/grafana-production-monitoring-demo-8x.mp4)
++
++**[Watch the 23-second demo · 8× speed](../../docs/media/grafana-production-monitoring-demo-8x.mp4)** · [Full walkthrough · 3 minutes](../../docs/media/grafana-production-monitoring-demo.mp4)
++
++The recording illustrates a local production-monitoring workflow, including a separately approved code patch. This plugin collects evidence; it does **not** patch, deploy, restart services, or change Grafana. The recording is not an installed-package test.
++
++## What it does
++
++| Reviewed pack | Evidence |
++| --- | --- |
++| `grafana.infrastructure` | CPU, memory, disk space, system load |
++| `grafana.apm` | Request and error rates, error codes, p95 latency, slow traces |
++| `grafana.logs` | Log events, error rates, security markers |
++| `grafana.iot-edge` | Device telemetry and freshness |
++| `grafana.business-kpis` | Revenue, conversion, operational KPIs |
++
++Only packs activated by your administrator are available. Runs use bounded time windows and can compare an equal-duration, non-overlapping baseline. Results include explicit freshness/failure states, normalized evidence, source links, and a distinction between signed-rule findings and observed deviations. Missing data is not reported as healthy.
++
++## Install
++
++Requires **Node.js 22.19+**. Installation and MCP startup are tested with **Codex CLI 0.144.3**. From a reviewed local checkout:
++
++```sh
++codex plugin marketplace add .
++codex plugin add grafana-observability@community-plugins
++```
++
++Run the first command from the repository root, then start a new Codex task.
++The GitHub-backed marketplace can be added with
++`codex plugin marketplace add tonyloehr/community-plugins --ref main`.
++
++Start with:
++
++```text
++Use $setup-grafana-observability to check the fixture profile and available packs.
++```
++
++The default launcher is a **credential-free fixture**, not a production connection. Its `fixture` profile is ready for a protocol check but deliberately has no activated Grafana packs.
++That is intentional: the five investigation skills stop until an administrator
++activates the exact reviewed packs and scopes, so a canned demo cannot be
++mistaken for customer evidence.
++
++## Connect a real Grafana instance
++
++Use an identity whose **effective permissions** are read-only. A role named
++Viewer is not sufficient: some Grafana releases grant dashboard-annotation
++writes to Viewers, and this plugin correctly rejects those credentials. Have
++the administrator remove mutating grants; do not bypass the check. See
++[Grafana's permission definitions](https://grafana.com/docs/grafana/latest/administration/roles-and-permissions/access-control/custom-role-actions-scopes/).
++
++1. On macOS arm64, run the following from the installed plugin root in your own interactive terminal. With the default Codex home, that root is `~/.codex/plugins/cache/community-plugins/grafana-observability/0.1.0`. The credential is entered at a hidden prompt; never paste it into chat.
++
++   ```sh
++   node ./scripts/observabilityctl.mjs grafana connect --url <grafana-origin> --profile <profile-alias>
++   ```
++
++2. Have your monitoring administrator provide a reviewed, signed authority bundle containing the exact endpoints, scopes, frozen operations, and packs. Connecting a credential does **not** create that authority. See the [complete enrollment and activation procedure](skills/setup-grafana-observability/SKILL.md) and [saved-panel examples](skills/setup-grafana-observability/references/saved-panel-enrollment.md).
++3. Validate and activate the bundle with the included `grafana-authorityctl.mjs`. Start a **new Codex CLI session** with the non-secret settings below, replacing every example path. The trust root is a directory; the receipt is the file created by activation.
++
++   ```sh
++   PRODUCTION_MONITORING_MODE=live \
++   PRODUCTION_MONITORING_TRUST_ROOT=/absolute/admin/grafana-authority \
++   PRODUCTION_MONITORING_ACTIVATION_RECEIPT=/absolute/private/grafana-receipt.json \
++   PRODUCTION_MONITORING_ARTIFACT_ROOT=/absolute/private/grafana-evidence \
++   PRODUCTION_MONITORING_STATE_ROOT=/absolute/private/grafana-state \
++   codex
++   ```
++
++   The plugin forwards only these five settings, not token variables or arbitrary environment values. Check your exact activated profile alias with the setup skill. For clients that do not inherit shell exports, use the [explicit launcher configuration](skills/setup-grafana-observability/references/client-launch.md); do not assume a Dock-launched Desktop app receives this CLI environment.
++
++Version 0.1.0 ships a hash-pinned **macOS arm64** native credential broker. Other native platforms fail closed. Separately reviewed headless credential arrangements are possible, but are not the interactive Keychain setup described above.
++
++## Safety and tool surface
++
++The five MCP tools are `grafana_profile_status`, `grafana_list_packs`, `grafana_run_pack`, `grafana_get_evidence`, and `grafana_resolve_link`. Model-controlled input is limited to aliases, pack IDs, time windows, and opaque references—not tokens, URLs, datasource IDs, SQL, PromQL, LogQL, or TraceQL. Provider access is read-only. A pack run writes only plugin-owned local audit, run, checkpoint, and evidence state.
++
++## Verify or contribute
++
++From the repository root:
++
++```sh
++npm run validate
++npm run test:grafana
++npm run verify:grafana:source
++```
++
++The tests launch an isolated copy of the actual package, not a development server. `npm run test:grafana:live` starts a disposable real Grafana stack; `npm run test:grafana:keychain` creates and removes one disposable macOS Keychain item. Neither uses production credentials. See the [test guide](../../tests/grafana-observability/README.md) for coverage, results, and limitations. The [source/build notes](../../docs/grafana-observability-source.md) explain how to reproduce the integrity-pinned runtime. Do not edit generated source shards by hand.
+diff --git a/plugins/grafana-observability/skills/setup-grafana-observability/references/client-launch.md b/plugins/grafana-observability/skills/setup-grafana-observability/references/client-launch.md
+new file mode 100644
+index 0000000..84d1abe
+--- /dev/null
++++ b/plugins/grafana-observability/skills/setup-grafana-observability/references/client-launch.md
+@@ -0,0 +1,58 @@
++# Codex launcher configuration
++
++Connecting a credential and activating its administrator-reviewed authority are
++separate prerequisites. Launcher settings do not grant authority. The default
++plugin starts in credential-free `fixture` mode.
++
++For Codex CLI, use the five non-secret environment settings in the
++[plugin guide](../../../README.md) when starting a new session. The trust root
++is a directory; the activation receipt is a file outside that directory.
++
++## Clients that do not inherit your shell
++
++A Desktop app started from the Dock does not inherit shell exports. Codex
++0.144.3's per-plugin configuration supports tool policy and enablement, not
++transport `env`, `cwd`, or `args` overrides. Use a separately named local MCP
++entry when those values must be configured explicitly.
++
++In your own editor, merge the following into your existing Codex configuration
++(`~/.codex/config.toml` with the default Codex home). Do not replace the file or
++edit the plugin cache. Replace every example path with an absolute local path.
++Keep the same OS user that connected the credential.
++
++```toml
++# Keep the plugin's skills; disable only its bundled MCP launch.
++[plugins."grafana-observability@community-plugins".mcp_servers."grafana-observability"]
++enabled = false
++
++[mcp_servers.grafana-observability-local]
++command = "node"
++args = ["./mcp/server.mjs", "--stdio"]
++cwd = "/absolute/installed/plugin/root"
++tool_timeout_sec = 3600
++
++[mcp_servers.grafana-observability-local.env]
++PRODUCTION_MONITORING_MODE = "live"
++PRODUCTION_MONITORING_TRUST_ROOT = "/absolute/admin/grafana-authority"
++PRODUCTION_MONITORING_ACTIVATION_RECEIPT = "/absolute/private/grafana-receipt.json"
++PRODUCTION_MONITORING_ARTIFACT_ROOT = "/absolute/private/grafana-evidence"
++PRODUCTION_MONITORING_STATE_ROOT = "/absolute/private/grafana-state"
++```
++
++With the default Codex home, this release's installed root is
++`~/.codex/plugins/cache/community-plugins/grafana-observability/0.1.0`; expand `~` in
++the `cwd` value. Check installed versions with
++`codex plugin list --marketplace community-plugins --json`, and update `cwd` after a
++plugin upgrade. If the client cannot find Node, set `command` to the absolute
++path of your Node.js 22.19+ executable.
++
++These settings contain no credential. Do not put tokens in the configuration,
++launcher arguments, or chat. Restart the client, start a new task, and ask the
++setup skill to check your exact activated profile alias. If startup or readiness
++fails, stop and report the sanitized failure rather than bypassing authority or
++credential checks.
++
++Both the bundled launcher and this shared-configuration mechanism are exercised
++through the actual Codex 0.144.3 installer and app-server in an isolated,
++network-disabled container. That check verifies fixture startup and environment
++handling; it is not a Desktop GUI or installed-client live-authentication test.
+diff --git a/scripts/plugin-descriptors.mjs b/scripts/plugin-descriptors.mjs
+index 9e83fc6..dc1eb20 100644
+--- a/scripts/plugin-descriptors.mjs
++++ b/scripts/plugin-descriptors.mjs
+@@ -24,6 +24,7 @@ const grafanaObservabilityReleaseEntries = [
+   ".codex-plugin",
+   ".mcp.json",
+   "LICENSE",
++  "README.md",
+   "THIRD_PARTY_NOTICES.txt",
+   "assets",
+   "mcp",
+diff --git a/tests/adapters/grafana/grafana-adapter.test.ts b/tests/adapters/grafana/grafana-adapter.test.ts
+index 63d66f4..c5b753d 100644
+--- a/tests/adapters/grafana/grafana-adapter.test.ts
++++ b/tests/adapters/grafana/grafana-adapter.test.ts
+@@ -536,14 +536,29 @@ test("datasource-query emits exactly one certified target for Prometheus, Loki,
+   ];
+   for (const [datasourceType, entry] of cases) {
+     await t.test(datasourceType, async () => {
+-      const transport = new FakeTransport(() => response({ results: { A: { frames: [] } } }));
++      const transport = new FakeTransport(() => response(entry.target.datasourceType === "tempo"
++        ? { traces: [] }
++        : { results: { A: { frames: [] } } }));
+       const compiled = await compiledAdapter(entry, transport);
+       const result = await compiled.adapter.execute(executionContext(), compiled.compiled);
+       assert.equal(transport.requests[0]?.method, "GET");
+       assert.equal(transport.requests[0]?.path, "/api/health");
+       const request = transport.requests[1];
+-      assert.equal(request?.method, "POST");
+-      assert.equal(request?.path, "/api/ds/query");
++      if (entry.target.datasourceType === "tempo") {
++        assert.equal(request?.method, "GET");
++        assert.equal(request?.path, `/api/datasources/proxy/uid/${entry.datasourceUid}/api/search`);
++        assert.deepEqual(request?.query, {
++          q: entry.target.expression,
++          start: String(Date.parse(executionContext().window.start) / 1_000),
++          end: String(Date.parse(executionContext().window.end) / 1_000),
++          limit: "25",
++          spss: "10",
++        });
++        assert.equal("body" in request!, false);
++      } else {
++        assert.equal(request?.method, "POST");
++        assert.equal(request?.path, "/api/ds/query");
++      }
+       if (request?.method === "POST") {
+         assert.deepEqual(request.query, {});
+         const queries = request.body.queries;
+diff --git a/tests/distribution/grafana-native-response.test.ts b/tests/distribution/grafana-native-response.test.ts
+new file mode 100644
+index 0000000..8de07d9
+--- /dev/null
++++ b/tests/distribution/grafana-native-response.test.ts
+@@ -0,0 +1,216 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import {
++  GrafanaAdapter,
++  grafanaAdapterPackage,
++  grafanaCatalogEntryHash,
++  type GrafanaDatasourceQueryCatalogEntry,
++  type GrafanaHttpRequest,
++} from "../../adapters/grafana/src/index.ts";
++import { normalizeGrafanaNativeResponse } from "../../adapters/grafana/src/native-response.ts";
++import { normalizeGrafanaFrames } from "../../adapters/grafana/src/frame-normalizer.ts";
++import { createBudgetController, type AdapterExecutionContext } from "../../packages/adapter-sdk/src/index.ts";
++import { computeOperationDefinitionHash, type OperationSnapshot, type Sha256 } from "../../packages/contracts/src/index.ts";
++
++const NOW = "2026-08-20T12:00:00.000Z";
++const TIME = Date.parse(NOW) - 1_000;
++const LIMITS = { timeoutMs: 5_000, maxAgeMs: 60_000, maxBytes: 100_000, maxRows: 20, maxSeries: 10, maxPoints: 100 };
++
++function context(limits = LIMITS): AdapterExecutionContext {
++  const signal = new AbortController().signal;
++  return {
++    origin: "SIMULATED",
++    scope: { environment: "simulation", service: "checkout" },
++    window: { start: "2026-08-20T11:55:00.000Z", end: NOW },
++    clock: { now: () => new Date(NOW) },
++    budget: createBudgetController(limits, signal),
++    signal,
++  };
++}
++
++function tempoEntry(): GrafanaDatasourceQueryCatalogEntry {
++  return {
++    id: "native-tempo", route: "datasource-query", outputName: "slow_traces",
++    datasourceUid: "reviewed-tempo", datasourceIdentitySha256: "1".repeat(64) as Sha256,
++    target: {
++      datasourceType: "tempo", expression: '{ resource.deployment.environment = "simulation" && resource.service.name = "checkout" && duration > 1s }',
++      queryType: "traceql", limit: 10, spansPerSpanSet: 10, tableType: "traces",
++    },
++    frame: {
++      resultKind: "EVENT",
++      fields: [
++        { sourceName: "Time", outputName: "observed_at", type: "time", role: "TIME" },
++        { sourceName: "Summary", outputName: "summary", type: "string", role: "SUMMARY" },
++        { sourceName: "Duration", outputName: "duration_ms", type: "number", role: "ATTRIBUTE" },
++        { sourceName: "environment", outputName: "environment", type: "string", role: "DIMENSION" },
++        { sourceName: "service", outputName: "service", type: "string", role: "DIMENSION" },
++      ],
++      allowedLabels: [],
++    },
++    minIntervalMs: 1_000,
++    scope: { environment: "simulation", service: "checkout" },
++    scopeMappings: { environment: "environment", service: "service" },
++  };
++}
++
++function tempoResponse() {
++  return { traces: [{
++    traceID: "1".repeat(32), rootServiceName: "checkout", rootTraceName: "checkout.bank_transfer",
++    startTimeUnixNano: String(BigInt(TIME) * 1_000_000n), durationMs: 1_250,
++    spanSets: [{ spans: [{
++      spanID: "2".repeat(16), startTimeUnixNano: String(BigInt(TIME) * 1_000_000n), durationNanos: "1250000000",
++      attributes: [
++        { key: "deployment.environment", value: { stringValue: "simulation" } },
++        { key: "service.name", value: { stringValue: "checkout" } },
++      ],
++    }] }],
++  }] };
++}
++
++function snapshot(entry: GrafanaDatasourceQueryCatalogEntry): OperationSnapshot {
++  const semantic = {
++    operationId: "grafana.apm.traces.slow" as OperationSnapshot["operationId"], revision: 1,
++    definition: {
++      domain: "TRACES" as const, sourceAlias: "grafana-test", adapterPackageId: grafanaAdapterPackage.packageId,
++      adapterOperation: "grafana.datasource.query.read", authority: "CORROBORATING" as const,
++      sanitizedProviderDefinition: { catalogEntryId: entry.id, catalogEntrySha256: grafanaCatalogEntryHash(entry) },
++      expectedSourceLineage: { accessPath: "GRAFANA" as const, datasourceType: "tempo" as const, sourceIdentitySha256: entry.datasourceIdentitySha256 },
++      scopeMapping: { ...entry.scopeMappings }, allowedDimensions: ["environment", "service"],
++      requiredProviderScopes: ["environment", "service"], sensitivity: "INTERNAL" as const, limits: LIMITS,
++      normalization: { resultKind: "EVENT" as const, dimensionMappings: {} },
++    },
++  };
++  return { schemaVersion: "1.0.0", ...semantic, capturedAt: NOW, definitionSha256: computeOperationDefinitionHash(semantic) };
++}
++
++async function* json(value: unknown) { yield Buffer.from(JSON.stringify(value)); }
++
++test("Tempo uses only the enrolled fixed read proxy and verifies actual matching-span scope", async () => {
++  const entry = tempoEntry();
++  const requests: GrafanaHttpRequest[] = [];
++  const adapter = new GrafanaAdapter({ catalog: { entries: [entry] }, transport: {
++    async request(request) {
++      requests.push(request);
++      return { status: 200, body: json(request.path === "/api/health" ? { database: "ok", version: "12.1.0" } : tempoResponse()) };
++    },
++  } });
++  const compiled = await adapter.compile(snapshot(entry), { adapterPackage: grafanaAdapterPackage, maxDefinitionBytes: 100_000 });
++  const result = await adapter.execute(context(), compiled);
++  assert.equal(result.collectionState, "COMPLETE");
++  assert.equal(result.records[0]?.kind, "EVENT");
++  assert.equal(requests.length, 2);
++  const request = requests[1]!;
++  assert.equal(request.method, "GET");
++  assert.equal(request.path, "/api/datasources/proxy/uid/reviewed-tempo/api/search");
++  assert.deepEqual(request.query, {
++    q: entry.target.datasourceType === "tempo" ? entry.target.expression : "",
++    start: String(Date.parse("2026-08-20T11:55:00.000Z") / 1_000), end: String(Date.parse(NOW) / 1_000),
++    limit: "10", spss: "10",
++  });
++  assert.equal("body" in request, false);
++  await assert.rejects(adapter.execute(context(), {
++    ...compiled, binding: { ...compiled.binding, datasourceUid: "arbitrary-route" } as typeof compiled.binding,
++  }));
++  assert.equal(requests.length, 2, "a modified binding cannot produce another provider request");
++  assert.throws(() => new GrafanaAdapter({
++    catalog: { entries: [{ ...entry, datasourceUid: "bad/../../proxy" }] },
++    transport: { async request() { throw new Error("must not run"); } },
++  }));
++});
++
++test("Tempo never substitutes requested scope or rootServiceName for matching-span evidence", () => {
++  for (const mode of ["wrong-environment", "missing-service", "duplicate-service", "empty-spans"] as const) {
++    const body = tempoResponse();
++    const span = body.traces[0]!.spanSets[0]!.spans[0]!;
++    if (mode === "wrong-environment") span.attributes[0]!.value.stringValue = "another-environment";
++    if (mode === "missing-service") span.attributes.pop();
++    if (mode === "duplicate-service") span.attributes.push({ key: "service.name", value: { stringValue: "checkout" } });
++    if (mode === "empty-spans") body.traces[0]!.spanSets[0]!.spans = [];
++    assert.throws(() => normalizeGrafanaNativeResponse(body, tempoEntry(), context()), /Grafana native response/u, mode);
++  }
++});
++
++test("Tempo enforces the effective request limits, not only the larger enrolled maxima", () => {
++  const traces = tempoResponse();
++  traces.traces.push({ ...structuredClone(traces.traces[0]!), traceID: "3".repeat(32) });
++  assert.throws(() => normalizeGrafanaNativeResponse(traces, tempoEntry(), context({ ...LIMITS, maxRows: 1 })), /Tempo search envelope/u);
++  const spans = tempoResponse();
++  const set = spans.traces[0]!.spanSets[0]!;
++  set.spans.push({ ...structuredClone(set.spans[0]!), spanID: "4".repeat(16) });
++  assert.throws(() => normalizeGrafanaNativeResponse(spans, tempoEntry(), context({ ...LIMITS, maxRows: 1 })), /Tempo span set/u);
++});
++
++function lokiEntry(): GrafanaDatasourceQueryCatalogEntry {
++  return {
++    ...tempoEntry(), id: "native-loki", outputName: "error_codes", datasourceUid: "reviewed-loki",
++    target: { datasourceType: "loki", expression: '{environment="simulation",service="checkout"} | json | status_code = 503', queryType: "range", direction: "backward" },
++    frame: {
++      resultKind: "EVENT",
++      fields: [
++        { sourceName: "Time", outputName: "observed_at", type: "time", role: "TIME" },
++        { sourceName: "Line", outputName: "summary", type: "string", role: "SUMMARY" },
++        { sourceName: "status_code", outputName: "status_code", type: "number", role: "ATTRIBUTE" },
++        { sourceName: "environment", outputName: "environment", type: "string", role: "DIMENSION" },
++        { sourceName: "service", outputName: "service", type: "string", role: "DIMENSION" },
++      ], allowedLabels: [],
++    },
++  };
++}
++
++function lokiResponse(): { results: { A: { frames: Array<{ schema: { refId: string; fields: Array<{ name: string; type: string }> }; data: { values: unknown[][] } }> } } } {
++  return { results: { A: { frames: [{
++    schema: { refId: "A", fields: [
++      { name: "labels", type: "other" }, { name: "Time", type: "time" }, { name: "Line", type: "string" },
++      { name: "tsNs", type: "string" }, { name: "labelTypes", type: "other" }, { name: "id", type: "string" },
++    ] },
++    data: { values: [
++      [{ environment: "simulation", service: "checkout", status_code: "503" }], [TIME], ["checkout payment timeout"],
++      [String(BigInt(TIME) * 1_000_000n)], [{ environment: "I", service: "I", status_code: "P" }], ["bounded-id"],
++    ] },
++  }] } } };
++}
++
++test("native Loki JSON labels project only enrolled primitive fields and prove each row's scope", () => {
++  const entry = lokiEntry();
++  const ctx = context();
++  const result = normalizeGrafanaFrames(normalizeGrafanaNativeResponse(lokiResponse(), entry, ctx), entry, ctx);
++  assert.equal(result.records.length, 1);
++  assert.deepEqual(result.records[0], {
++    kind: "EVENT", name: "error_codes", occurredAt: new Date(TIME).toISOString(), summary: "checkout payment timeout",
++    attributes: { status_code: 503, environment: "simulation", service: "checkout" },
++  });
++  for (const mode of ["malformed-labels", "wrong-scope", "extra-field", "unequal-columns"] as const) {
++    const body = lokiResponse();
++    const frame = body.results.A.frames[0]!;
++    if (mode === "malformed-labels") frame.data.values[0]![0] = { environment: 7, service: "checkout" };
++    if (mode === "wrong-scope") frame.data.values[0]![0] = { environment: "other", service: "checkout", status_code: "503" };
++    if (mode === "extra-field") {
++      frame.schema.fields.push({ name: "unexpected", type: "string" }); frame.data.values.push(["canary"]);
++    }
++    if (mode === "unequal-columns") frame.data.values[2]!.push("extra");
++    const current = context();
++    assert.throws(() => normalizeGrafanaFrames(normalizeGrafanaNativeResponse(body, entry, current), entry, current), /Grafana/u, mode);
++  }
++});
++
++test("Loki projection aliases cannot overwrite a conflicting native scope label", () => {
++  const base = lokiEntry();
++  const entry: GrafanaDatasourceQueryCatalogEntry = {
++    ...base,
++    target: { datasourceType: "loki", expression: '{body="simulation",service="checkout"}', queryType: "range", direction: "backward" },
++    scopeMappings: { environment: "body", service: "service" },
++    frame: {
++      resultKind: "EVENT", allowedLabels: [], eventSummary: "Reviewed log line",
++      fields: [
++        { sourceName: "Time", outputName: "observed_at", type: "time", role: "TIME" },
++        { sourceName: "body", outputName: "environment", type: "string", role: "DIMENSION" },
++        { sourceName: "service", outputName: "service", type: "string", role: "DIMENSION" },
++      ],
++    },
++  };
++  const body = lokiResponse();
++  body.results.A.frames[0]!.data.values[0]![0] = { body: "outside-scope", service: "checkout" };
++  body.results.A.frames[0]!.data.values[2]![0] = "simulation";
++  assert.throws(() => normalizeGrafanaNativeResponse(body, entry, context()), /Loki log row does not prove/u);
++});
+diff --git a/tests/distribution/macos-keychain-loader-regression.test.ts b/tests/distribution/macos-keychain-loader-regression.test.ts
+new file mode 100644
+index 0000000..f415f43
+--- /dev/null
++++ b/tests/distribution/macos-keychain-loader-regression.test.ts
+@@ -0,0 +1,137 @@
++import assert from "node:assert/strict";
++import { createHash } from "node:crypto";
++import {
++  existsSync,
++  fstatSync,
++  lstatSync,
++  mkdtempSync,
++  readFileSync,
++  readdirSync,
++  rmSync,
++  statSync,
++  writeFileSync,
++} from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { pathToFileURL } from "node:url";
++import test from "node:test";
++
++import { HashPinnedMacOsKeychainLoader } from "../../packages/grafana-credential-profile/src/macos-keychain-loader.ts";
++
++class AsyncEntry {
++  async getSecret(): Promise<undefined> { return undefined; }
++  async setSecret(): Promise<void> { /* test-only addon */ }
++  async deleteCredential(): Promise<boolean> { return false; }
++}
++
++for (const failImport of [false, true]) {
++  test(`native staging remains linked through ${failImport ? "failed" : "successful"} import`, async (t) => {
++    const parent = mkdtempSync(join(tmpdir(), "grafana-linked-inode-test-"));
++    t.after(() => rmSync(parent, { force: true, recursive: true }));
++    const filename = "keyring.darwin-arm64.node";
++    const sourcePath = join(parent, filename);
++    const source = Buffer.from("synthetic-native-addon-fixture", "ascii");
++    writeFileSync(sourcePath, source, { mode: 0o400 });
++    let importedPath = "";
++    let stagedPath = "";
++    let stagedDirectory = "";
++    const loader = new HashPinnedMacOsKeychainLoader({
++      platform: "darwin",
++      architecture: "arm64",
++      asset: {
++        fileUrl: pathToFileURL(sourcePath),
++        bytes: source.byteLength,
++        sha256: createHash("sha256").update(source).digest("hex"),
++      },
++      importer(absolutePath) {
++        importedPath = absolutePath;
++        assert.match(absolutePath, /^\/dev\/fd\/\d+$/u);
++        const held = fstatSync(Number(absolutePath.split("/").at(-1)));
++        assert.equal(held.nlink, 1, "macOS code signing requires a linked Mach-O inode");
++        assert.equal(held.mode & 0o777, 0o400);
++        assert.deepEqual(readFileSync(absolutePath), source);
++        for (const entry of readdirSync(tmpdir(), { withFileTypes: true })) {
++          if (!entry.isDirectory() || !entry.name.startsWith("codex-observability-keyring-")) continue;
++          const candidate = join(tmpdir(), entry.name, filename);
++          if (!existsSync(candidate)) continue;
++          const metadata = statSync(candidate);
++          if (metadata.dev === held.dev && metadata.ino === held.ino) {
++            stagedPath = candidate;
++            stagedDirectory = join(tmpdir(), entry.name);
++            break;
++          }
++        }
++        assert.notEqual(stagedPath, "", "verified staged inode must remain named during import");
++        const directory = lstatSync(stagedDirectory);
++        assert.equal(directory.isSymbolicLink(), false);
++        assert.equal(directory.mode & 0o777, 0o700);
++        if (typeof process.getuid === "function") assert.equal(directory.uid, process.getuid());
++        if (failImport) throw new Error("synthetic import failure");
++        return { AsyncEntry };
++      },
++    });
++    if (failImport) await assert.rejects(loader.load(), /native OS keyring backend is unavailable/u);
++    else assert.equal((await loader.load()).backendKind, "MACOS_KEYCHAIN");
++    assert.notEqual(importedPath, "");
++    assert.equal(existsSync(importedPath), false, "the held descriptor must close");
++    assert.equal(existsSync(stagedPath), false, "the staged file must be removed");
++    assert.equal(existsSync(stagedDirectory), false, "the private directory must be removed");
++    assert.equal(existsSync(sourcePath), true, "the packaged source asset is preserved");
++  });
++}
++
++test("the pinned native ABI accepts missing values and copies then erases byte arrays", async (t) => {
++  const parent = mkdtempSync(join(tmpdir(), "grafana-native-abi-test-"));
++  t.after(() => rmSync(parent, { force: true, recursive: true }));
++  const source = Buffer.from("synthetic-native-abi-fixture", "ascii");
++  const sourcePath = join(parent, "keyring.darwin-arm64.node");
++  writeFileSync(sourcePath, source, { mode: 0o400 });
++  let raw: unknown;
++  class AbiEntry {
++    async getSecret(): Promise<unknown> { return raw; }
++    async setSecret(): Promise<void> { /* test-only addon */ }
++    async deleteCredential(): Promise<boolean> { return false; }
++  }
++  const module = await new HashPinnedMacOsKeychainLoader({
++    platform: "darwin", architecture: "arm64",
++    asset: {
++      fileUrl: pathToFileURL(sourcePath), bytes: source.byteLength,
++      sha256: createHash("sha256").update(source).digest("hex"),
++    },
++    importer() { return { AsyncEntry: AbiEntry }; },
++  }).load();
++  const entry = module.createEntry("synthetic-service", "synthetic-account");
++
++  for (const missing of [undefined, null]) {
++    raw = missing;
++    assert.equal(await entry.getSecret(), undefined);
++  }
++  for (const value of [[0, 65, 255], Uint8Array.from([0, 65, 255])]) {
++    raw = value;
++    const copied = await entry.getSecret();
++    assert.deepEqual(copied, Uint8Array.from([0, 65, 255]));
++    assert.notEqual(copied, value);
++    assert.deepEqual(Array.from(value), [0, 0, 0]);
++    copied?.fill(0);
++  }
++
++  const sparse = [65, 66];
++  delete sparse[0];
++  let accessorReads = 0;
++  const accessor = [65];
++  Object.defineProperty(accessor, "0", { get() { accessorReads += 1; return 65; }, configurable: true });
++  const extraProperty = Object.assign([65], { extra: true });
++  for (const malformed of [[], [256], [-1], [1.5], [Number.NaN], ["65"], sparse, accessor, extraProperty, Array(16_385).fill(65), {}, "not-bytes"]) {
++    raw = malformed;
++    await assert.rejects(entry.getSecret(), /native OS keyring backend is unavailable/u);
++    if (Array.isArray(malformed)) {
++      for (const name of Object.getOwnPropertyNames(malformed)) {
++        const property = Object.getOwnPropertyDescriptor(malformed, name);
++        if (/^(?:0|[1-9][0-9]*)$/u.test(name) && property !== undefined && "value" in property && property.writable === true) {
++          assert.equal(property.value, 0, "rejected native array bytes are erased");
++        }
++      }
++    }
++  }
++  assert.equal(accessorReads, 0, "native ABI validation must not invoke array accessors");
++});
+diff --git a/tests/distribution/observability-cli-information.test.ts b/tests/distribution/observability-cli-information.test.ts
+new file mode 100644
+index 0000000..0e072f0
+--- /dev/null
++++ b/tests/distribution/observability-cli-information.test.ts
+@@ -0,0 +1,47 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import { runObservabilityCliEntrypoint } from "../../packages/observability-cli/src/entrypoint.ts";
++import {
++  OBSERVABILITY_CLI_VERSION,
++  observabilityCliHelp,
++  observabilityCliInformation,
++} from "../../packages/observability-cli/src/help.ts";
++
++test("help and version do not construct or read a platform credential backend", async () => {
++  for (const platform of ["linux", "win32", "darwin"] as const) {
++    for (const argv of [[], ["--help"], ["--version"]]) {
++      let stdout = "";
++      let stderr = "";
++      let loaderReads = 0;
++      const status = await runObservabilityCliEntrypoint({
++        argv,
++        platform,
++        get nativeLoader(): never {
++          loaderReads += 1;
++          throw new Error("informational command touched the credential backend");
++        },
++        io: {
++          stdin: process.stdin,
++          stdout: { write(value) { stdout += value; } },
++          stderr: { write(value) { stderr += value; } },
++        },
++      });
++      assert.equal(status, 0);
++      assert.equal(stdout, argv[0] === "--version" ? `${OBSERVABILITY_CLI_VERSION}\n` : observabilityCliHelp());
++      assert.equal(stderr, "");
++      assert.equal(loaderReads, 0);
++    }
++  }
++});
++
++test("unsupported platforms still reject credential commands before state or network access", async () => {
++  for (const platform of ["linux", "win32"] as const) {
++    await assert.rejects(
++      runObservabilityCliEntrypoint({ argv: ["grafana", "status"], platform }),
++      /native OS keyring backend is unavailable/u,
++    );
++  }
++  assert.equal(observabilityCliInformation(["--help", "--version"]), undefined);
++  assert.equal(observabilityCliInformation(["grafana", "--help"]), undefined);
++});
+diff --git a/tests/grafana-mcp-server/actual-grafana-adapter-runtime.test.ts b/tests/grafana-mcp-server/actual-grafana-adapter-runtime.test.ts
+index 8c861ea..d2656ae 100644
+--- a/tests/grafana-mcp-server/actual-grafana-adapter-runtime.test.ts
++++ b/tests/grafana-mcp-server/actual-grafana-adapter-runtime.test.ts
+@@ -120,8 +120,10 @@ test("all five packs use the actual Grafana adapter, frozen targets, and frame n
+     const requests = fixture.transport.requests.filter((request) => request.operationId === operationId);
+     assert.equal(requests.length, 1, operationId);
+     assert.equal(requests[0]!.targetCount, 1, operationId);
+-    assert.equal(requests[0]!.method, "POST", operationId);
+-    assert.equal(requests[0]!.path, "/api/ds/query", operationId);
++    assert.equal(requests[0]!.method, datasourceType === "tempo" ? "GET" : "POST", operationId);
++    assert.equal(requests[0]!.path, datasourceType === "tempo"
++      ? `/api/datasources/proxy/uid/${requests[0]!.datasourceUid}/api/search`
++      : "/api/ds/query", operationId);
+     assert.equal(requests[0]!.datasourceType, datasourceType, operationId);
+     const evidence = collectedEvidence.find((item) => item.operationId === operationId);
+     assert.ok(evidence !== undefined, operationId);
+diff --git a/tests/grafana-mcp-server/real-grafana-adapter-fixture.ts b/tests/grafana-mcp-server/real-grafana-adapter-fixture.ts
+index b4e157a..0610dca 100644
+--- a/tests/grafana-mcp-server/real-grafana-adapter-fixture.ts
++++ b/tests/grafana-mcp-server/real-grafana-adapter-fixture.ts
+@@ -167,8 +167,8 @@ export interface CapturedGrafanaQuery {
+   datasourceType: CertifiedDatasourceType;
+   datasourceUid: string;
+   targetCount: number;
+-  method: "POST";
+-  path: "/api/ds/query";
++  method: "GET" | "POST";
++  path: "/api/ds/query" | `/api/datasources/proxy/uid/${string}/api/search`;
+ }
+ 
+ function isEventSpec(spec: FixtureSpec): spec is EventFixtureSpec {
+@@ -442,6 +442,29 @@ async function* chunks(value: unknown): AsyncGenerator<Uint8Array> {
+ }
+ 
+ function responseFor(compiled: CompiledFixtureSpec): GrafanaHttpResponse {
++  if (compiled.spec.datasourceType === "tempo" && isEventSpec(compiled.spec)) {
++    const startTimeUnixNano = String(BigInt(Date.parse(REAL_GRAFANA_FIXTURE_NOW) - 120_000) * 1_000_000n);
++    const durationMs = compiled.spec.attribute.value;
++    return {
++      status: 200,
++      body: chunks({ traces: [{
++        traceID: "1".repeat(32),
++        rootServiceName: compiled.entry.scope.service,
++        rootTraceName: compiled.spec.summary,
++        startTimeUnixNano,
++        durationMs,
++        spanSets: [{ spans: [{
++          spanID: "2".repeat(16),
++          startTimeUnixNano,
++          durationNanos: String(durationMs * 1_000_000),
++          attributes: [
++            { key: "deployment.environment", value: { stringValue: compiled.entry.scope.environment } },
++            { key: "service.name", value: { stringValue: compiled.entry.scope.service } },
++          ],
++        }] }],
++      }] }),
++    };
++  }
+   return {
+     status: 200,
+     body: chunks({
+@@ -475,8 +498,35 @@ export class DeterministicGrafanaTransport implements GrafanaTransport {
+     if (request.method === "GET" && request.path === "/api/health") {
+       return { status: 200, body: chunks({ database: "ok", version: "13.1.0" }) };
+     }
++    if (request.method === "GET") {
++      const compiled = [...this.#byUid.values()].find((candidate) =>
++        candidate.entry.target.datasourceType === "tempo" &&
++        request.path === `/api/datasources/proxy/uid/${candidate.entry.datasourceUid}/api/search`);
++      if (compiled === undefined || compiled.entry.target.datasourceType !== "tempo") {
++        throw new TypeError("The deterministic Grafana fixture received an unknown Tempo route");
++      }
++      const expectedQuery = {
++        q: compiled.entry.target.expression,
++        start: String(Date.parse(REAL_GRAFANA_FIXTURE_WINDOW.start) / 1_000),
++        end: String(Date.parse(REAL_GRAFANA_FIXTURE_WINDOW.end) / 1_000),
++        limit: String(Math.min(compiled.entry.target.limit, LIMITS.maxRows)),
++        spss: String(Math.min(compiled.entry.target.spansPerSpanSet, LIMITS.maxRows)),
++      };
++      if (sha256Canonical(request.query) !== sha256Canonical(expectedQuery) || "body" in request) {
++        throw new TypeError("The deterministic Grafana fixture received a modified Tempo query");
++      }
++      this.requests.push({
++        operationId: compiled.spec.operationId,
++        datasourceType: compiled.spec.datasourceType,
++        datasourceUid: compiled.entry.datasourceUid,
++        targetCount: 1,
++        method: "GET",
++        path: `/api/datasources/proxy/uid/${compiled.entry.datasourceUid}/api/search`,
++      });
++      return responseFor(compiled);
++    }
+     if (request.method !== "POST" || request.path !== "/api/ds/query") {
+-      throw new TypeError("The deterministic Grafana fixture accepts only health preflights and datasource-query POSTs");
++      throw new TypeError("The deterministic Grafana fixture accepts only reviewed datasource read routes");
+     }
+     const queries = request.body.queries;
+     if (!Array.isArray(queries) || queries.length !== 1) {
+@@ -496,7 +546,7 @@ export class DeterministicGrafanaTransport implements GrafanaTransport {
+       throw new TypeError("The deterministic Grafana fixture datasource binding is invalid");
+     }
+     const compiled = this.#byUid.get(uid);
+-    if (compiled === undefined || compiled.spec.datasourceType !== datasourceType) {
++    if (compiled === undefined || compiled.spec.datasourceType !== datasourceType || datasourceType === "tempo") {
+       throw new TypeError("The deterministic Grafana fixture received an unknown datasource binding");
+     }
+     this.requests.push({

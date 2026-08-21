@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:contradiction:1",
+  "title": "Cross-source contradiction record",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "contradictionId", "runId", "consistencyState", "kind", "summary", "claimRefs", "resolutionState", "assessedAt", "integrity"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "contradictionId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" }, "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" }, "consistencyState": { "const": "CONTRADICTORY" }, "kind": { "enum": ["VALUE", "SCOPE", "TIME", "IDENTITY", "AUTHORITY", "SEMANTIC"] }, "summary": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "claimRefs": { "type": "array", "minItems": 2, "maxItems": 128, "items": { "type": "object", "additionalProperties": false, "required": ["evidenceId", "jsonPointer", "claim"], "properties": { "evidenceId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" }, "jsonPointer": { "type": "string", "pattern": "^(?:/(?:[^~/]|~0|~1)*)*$", "maxLength": 1024 }, "claim": { "type": "string", "minLength": 1, "maxLength": 2048 } } } },
+    "resolutionState": { "enum": ["UNRESOLVED", "EXPLAINED", "RESOLVED"] }, "resolution": { "type": "string", "minLength": 1, "maxLength": 4096 }, "assessedAt": { "type": "string", "format": "date-time" }, "integrity": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  "allOf": [{ "if": { "properties": { "resolutionState": { "enum": ["EXPLAINED", "RESOLVED"] } }, "required": ["resolutionState"] }, "then": { "properties": { "resolution": { "type": "string", "minLength": 1, "maxLength": 4096 } }, "required": ["resolution"] } }]
+}

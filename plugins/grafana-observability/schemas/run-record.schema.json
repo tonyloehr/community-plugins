@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:run-record:1",
+  "title": "Authenticated monitoring run record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "state", "workflow", "origin", "principal", "handleSha256", "requestSha256", "trustBundleSha256", "profileAlias", "scope", "window", "allowedOperationHashes", "evidenceIds", "contradictionIds", "audit", "createdAt", "expiresAt", "integrity"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    "state": { "enum": ["OPEN", "FINALIZING", "SEALED", "ABORTED", "EXPIRED"] }, "workflow": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Workflow" }, "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    "principal": { "type": "object", "additionalProperties": false, "required": ["issuerAlias", "subjectSha256", "tenantSha256", "sessionSha256"], "properties": { "issuerAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" }, "subjectSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "tenantSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "sessionSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" } } },
+    "handleSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "requestSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "trustBundleSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "profileAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    "scope": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Scope" }, "window": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" }, "baselineWindow": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" }, "incidentAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    "parent": { "type": "object", "additionalProperties": false, "required": ["runId", "verificationContractSha256"], "properties": { "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" }, "verificationContractSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" } } },
+    "allowedOperationHashes": { "type": "object", "propertyNames": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, "additionalProperties": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" } },
+    "evidenceIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } }, "contradictionIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" } },
+    "audit": { "type": "object", "additionalProperties": false, "required": ["required", "state"], "properties": { "required": { "type": "boolean" }, "state": { "enum": ["HEALTHY", "DEGRADED", "FAILED"] } } },
+    "createdAt": { "type": "string", "format": "date-time" }, "expiresAt": { "type": "string", "format": "date-time" }, "finalizedAt": { "type": "string", "format": "date-time" }, "abortedAt": { "type": "string", "format": "date-time" }, "integrity": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  "allOf": [
+    { "if": { "properties": { "state": { "const": "SEALED" } }, "required": ["state"] }, "then": { "properties": { "finalizedAt": { "type": "string", "format": "date-time" } }, "required": ["finalizedAt"] } },
+    { "if": { "properties": { "state": { "const": "ABORTED" } }, "required": ["state"] }, "then": { "properties": { "abortedAt": { "type": "string", "format": "date-time" } }, "required": ["abortedAt"] } },
+    { "if": { "properties": { "workflow": { "const": "verify" } }, "required": ["workflow"] }, "then": { "properties": { "parent": { "type": "object" } }, "required": ["parent"] } }
+  ]
+}

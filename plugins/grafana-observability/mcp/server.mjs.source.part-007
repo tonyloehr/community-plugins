@@ -1,0 +1,3041 @@
+igningKeyId)) {
+    throw new ConfigurationError("SIGNING_KEY_NOT_CONFIGURED", "".concat(binding.packageId, " does not use a configured signing key"));
+  }
+}
+function assertEndpointAdmission(endpointId, packageId, bundle, path) {
+  const endpoint = endpointFor(bundle, endpointId, path);
+  if (endpoint.adapterId !== packageId) {
+    throw new ConfigurationError("ENDPOINT_ADAPTER_MISMATCH", "".concat(path, " is not bound to ").concat(packageId));
+  }
+}
+function parseCredentialEnvironment(value, path) {
+  return requireStringArray(value, path, 64).map((key, index) => {
+    if (!ENVIRONMENT_KEY2.test(key)) {
+      throw new ConfigurationError("INVALID_ENVIRONMENT_REFERENCE", "".concat(path, "[").concat(index, "] is not an environment key"));
+    }
+    return key;
+  });
+}
+function parseAccessApproval(value, path) {
+  const object4 = requireObject(value, path);
+  requireExactKeys(
+    object4,
+    ["approvalId", "reviewedAt", "effectiveProviderScopes"],
+    ["approvalId", "reviewedAt", "effectiveProviderScopes"],
+    path
+  );
+  const reviewedAt = requireString(object4.reviewedAt, "".concat(path, ".reviewedAt"));
+  if (!Number.isFinite(Date.parse(reviewedAt)) || new Date(reviewedAt).toISOString() !== reviewedAt) {
+    throw new ConfigurationError("INVALID_TIME", "".concat(path, ".reviewedAt must be a canonical UTC timestamp"));
+  }
+  const effectiveProviderScopes = requireStringArray(
+    object4.effectiveProviderScopes,
+    "".concat(path, ".effectiveProviderScopes"),
+    128
+  ).map((scope, index) => {
+    if (scope.length > 256 || /[\r\n\0]/u.test(scope)) {
+      throw new ConfigurationError("INVALID_PROVIDER_SCOPE", "".concat(path, ".effectiveProviderScopes[").concat(index, "] is invalid"));
+    }
+    return scope;
+  });
+  if (new Set(effectiveProviderScopes).size !== effectiveProviderScopes.length) {
+    throw new ConfigurationError("DUPLICATE_PROVIDER_SCOPE", "".concat(path, ".effectiveProviderScopes contains duplicates"));
+  }
+  return {
+    approvalId: requireAlias(object4.approvalId, "".concat(path, ".approvalId")),
+    reviewedAt,
+    effectiveProviderScopes: [...effectiveProviderScopes].sort()
+  };
+}
+function endpointCredentialReferences(bundle, endpointId) {
+  const endpoint = endpointFor(bundle, endpointId, endpointId);
+  return trustedEndpointCredentialReferences(endpoint);
+}
+function providerBindingEndpointIds(binding) {
+  return binding.kind === "alertmanager" ? binding.bootstrap.endpointIds : binding.kind === "git" || binding.kind === "fixture" ? [] : [binding.bootstrap.endpointId];
+}
+function providerBindingCredentialReferences(binding, bundle) {
+  return providerBindingEndpointIds(binding).flatMap((endpointId) => endpointCredentialReferences(bundle, endpointId));
+}
+function expectedCredentialEnvironment(binding, bundle) {
+  const keys = providerBindingCredentialReferences(binding, bundle).filter((reference) => reference.kind === "env").map((reference) => reference.key);
+  return [...new Set(keys)].sort();
+}
+function requiredProviderScopesForBinding(binding, bundle) {
+  const scopes = bundle.operations.filter((operation2) => bundle.profile.operationIds.includes(operation2.operationId) && operation2.definition.adapterPackageId === binding.packageId).flatMap((operation2) => operation2.definition.requiredProviderScopes);
+  return [...new Set(scopes)].sort();
+}
+function activeOperationsForBinding(binding, bundle) {
+  return bundle.operations.filter((operation2) => bundle.profile.operationIds.includes(operation2.operationId) && operation2.definition.adapterPackageId === binding.packageId);
+}
+function assertOperationSourceBinding(binding, bundle, path) {
+  const operations = activeOperationsForBinding(binding, bundle);
+  if (binding.kind === "git" || binding.kind === "fixture") return;
+  if (binding.kind !== "alertmanager") {
+    const mismatched = operations.find(
+      (operation2) => operation2.definition.sourceAlias !== binding.bootstrap.endpointId
+    );
+    if (mismatched !== void 0) {
+      throw new ConfigurationError(
+        "OPERATION_SOURCE_MISMATCH",
+        "".concat(path, " cannot serve active operation ").concat(mismatched.operationId, " from a different endpoint")
+      );
+    }
+    return;
+  }
+  const endpointIds = new Set(binding.bootstrap.endpointIds);
+  if (endpointIds.size !== binding.bootstrap.endpointIds.length) {
+    throw new ConfigurationError(
+      "DUPLICATE_ENDPOINT_SELECTION",
+      "".concat(path, ".bootstrap.endpointIds contains a duplicate endpoint")
+    );
+  }
+  const catalog = /* @__PURE__ */ new Map();
+  for (const [index, rawBinding] of binding.bootstrap.catalog.entries()) {
+    const bindingId = rawBinding.bindingId;
+    const endpointId = rawBinding.endpointId;
+    const operation2 = rawBinding.operation;
+    if (typeof bindingId !== "string" || typeof endpointId !== "string" || typeof operation2 !== "string") {
+      throw new ConfigurationError(
+        "INVALID_CATALOG_BINDING",
+        "".concat(path, ".bootstrap.catalog[").concat(index, "] must bind an operation and endpoint")
+      );
+    }
+    if (!endpointIds.has(endpointId)) {
+      throw new ConfigurationError(
+        "CATALOG_ENDPOINT_NOT_SELECTED",
+        "".concat(path, ".bootstrap.catalog[").concat(index, "] targets an endpoint outside the binding")
+      );
+    }
+    if (catalog.has(bindingId)) {
+      throw new ConfigurationError(
+        "DUPLICATE_CATALOG_BINDING",
+        "".concat(path, ".bootstrap.catalog contains duplicate bindingId ").concat(bindingId)
+      );
+    }
+    catalog.set(bindingId, { endpointId, operation: operation2 });
+  }
+  for (const activeOperation of operations) {
+    if (!endpointIds.has(activeOperation.definition.sourceAlias)) {
+      throw new ConfigurationError(
+        "OPERATION_SOURCE_MISMATCH",
+        "".concat(path, " does not select the endpoint for active operation ").concat(activeOperation.operationId)
+      );
+    }
+    const providerDefinition = activeOperation.definition.sanitizedProviderDefinition;
+    const bindingId = Object.keys(providerDefinition).length === 1 ? providerDefinition.bindingId : void 0;
+    const catalogBinding = typeof bindingId === "string" ? catalog.get(bindingId) : void 0;
+    if (catalogBinding === void 0 || catalogBinding.endpointId !== activeOperation.definition.sourceAlias || catalogBinding.operation !== activeOperation.definition.adapterOperation) {
+      throw new ConfigurationError(
+        "OPERATION_CATALOG_BINDING_MISMATCH",
+        "".concat(path, " cannot prove the catalog endpoint selected by active operation ").concat(activeOperation.operationId)
+      );
+    }
+  }
+}
+function parseBinding(value, index, bundle, admission) {
+  const path = "provider-runtime.adapters[".concat(index, "]");
+  const object4 = requireObject(value, path);
+  requireExactKeys(
+    object4,
+    ["kind", "packageId", "credentialEnv", "access", "bootstrap"],
+    ["kind", "packageId", "credentialEnv", "access", "bootstrap"],
+    path
+  );
+  const kindValue = requireString(object4.kind, "".concat(path, ".kind"));
+  if (!PROVIDER_KINDS.has(kindValue)) {
+    throw new ConfigurationError("UNSUPPORTED_PROVIDER", "".concat(path, ".kind is not a supported provider"));
+  }
+  const kind = kindValue;
+  const packageId = requireAlias(object4.packageId, "".concat(path, ".packageId"));
+  const credentialEnv = parseCredentialEnvironment(object4.credentialEnv, "".concat(path, ".credentialEnv"));
+  const access = parseAccessApproval(object4.access, "".concat(path, ".access"));
+  const bootstrapPath = "".concat(path, ".bootstrap");
+  const bootstrap = requireObject(object4.bootstrap, bootstrapPath);
+  let binding;
+  if (kind === "git") {
+    requireExactKeys(bootstrap, ["gitExecutable", "workspaces", "catalog"], ["gitExecutable", "workspaces", "catalog"], bootstrapPath);
+    const gitExecutable = requireString(bootstrap.gitExecutable, "".concat(bootstrapPath, ".gitExecutable"));
+    if (!(0, import_node_path.isAbsolute)(gitExecutable)) {
+      throw new ConfigurationError("RELATIVE_GIT_EXECUTABLE", "".concat(bootstrapPath, ".gitExecutable must be administrator-pinned and absolute"));
+    }
+    binding = {
+      kind,
+      packageId,
+      credentialEnv,
+      access,
+      bootstrap: {
+        gitExecutable,
+        workspaces: requireJsonObjectArray(bootstrap.workspaces, "".concat(bootstrapPath, ".workspaces"), 64),
+        catalog: requireJsonObjectArray(bootstrap.catalog, "".concat(bootstrapPath, ".catalog"))
+      }
+    };
+  } else if (kind === "alertmanager") {
+    requireExactKeys(bootstrap, ["endpointIds", "catalog", "transport"], ["endpointIds", "catalog", "transport"], bootstrapPath);
+    const endpointIds = requireStringArray(bootstrap.endpointIds, "".concat(bootstrapPath, ".endpointIds"), 16);
+    if (endpointIds.length === 0) throw new ConfigurationError("EMPTY_SELECTION", "".concat(bootstrapPath, ".endpointIds cannot be empty"));
+    binding = {
+      kind,
+      packageId,
+      credentialEnv,
+      access,
+      bootstrap: {
+        endpointIds,
+        catalog: requireJsonObjectArray(bootstrap.catalog, "".concat(bootstrapPath, ".catalog")),
+        transport: parseTransport(bootstrap.transport, "".concat(bootstrapPath, ".transport"))
+      }
+    };
+  } else if (kind === "fixture") {
+    requireExactKeys(bootstrap, [], [], bootstrapPath);
+    binding = { kind, packageId, credentialEnv, access, bootstrap: {} };
+  } else {
+    requireExactKeys(bootstrap, ["endpointId", "catalog", "transport"], ["endpointId", "catalog", "transport"], bootstrapPath);
+    binding = {
+      kind,
+      packageId,
+      credentialEnv,
+      access,
+      bootstrap: {
+        endpointId: requireAlias(bootstrap.endpointId, "".concat(bootstrapPath, ".endpointId")),
+        catalog: parseCatalog(bootstrap.catalog, "".concat(bootstrapPath, ".catalog")),
+        transport: parseTransport(bootstrap.transport, "".concat(bootstrapPath, ".transport"))
+      }
+    };
+  }
+  assertPackageAdmission(binding, bundle, admission, index);
+  if (binding.kind === "alertmanager") {
+    for (const [endpointIndex, endpointId] of binding.bootstrap.endpointIds.entries()) {
+      assertEndpointAdmission(endpointId, binding.packageId, bundle, "".concat(bootstrapPath, ".endpointIds[").concat(endpointIndex, "]"));
+    }
+  } else if (binding.kind !== "git" && binding.kind !== "fixture") {
+    assertEndpointAdmission(binding.bootstrap.endpointId, binding.packageId, bundle, "".concat(bootstrapPath, ".endpointId"));
+  }
+  assertOperationSourceBinding(binding, bundle, path);
+  const expectedCredentials = expectedCredentialEnvironment(binding, bundle);
+  const configuredCredentials = [...binding.credentialEnv].sort();
+  if (JSON.stringify(configuredCredentials) !== JSON.stringify(expectedCredentials)) {
+    throw new ConfigurationError(
+      "CREDENTIAL_ENV_NOT_MINIMAL",
+      "".concat(path, ".credentialEnv must exactly match credential references of kind env for this binding")
+    );
+  }
+  const requiredScopes = requiredProviderScopesForBinding(binding, bundle);
+  const approvedScopes = [...binding.access.effectiveProviderScopes].sort();
+  if (requiredScopes.some((scope) => !approvedScopes.includes(scope))) {
+    throw new ConfigurationError(
+      "SCOPE_APPROVAL_INCOMPLETE",
+      "".concat(path, ".access is missing a required provider scope")
+    );
+  }
+  if (approvedScopes.some((scope) => !requiredScopes.includes(scope))) {
+    throw new ConfigurationError(
+      "OVER_SCOPED_IDENTITY",
+      "".concat(path, ".access declares provider authority beyond the active operation ledger")
+    );
+  }
+  return binding;
+}
+function parseProviderRuntimeConfiguration(text, bundle) {
+  const object4 = requireObject(parseStrictYaml(text, "provider runtime configuration"), "provider-runtime");
+  requireExactKeys(
+    object4,
+    ["schemaVersion", "metadata", "workerAdmission", "adapters"],
+    ["schemaVersion", "metadata", "workerAdmission", "adapters"],
+    "provider-runtime"
+  );
+  if (object4.schemaVersion !== "1.0.0") {
+    throw new ConfigurationError("UNSUPPORTED_VERSION", "provider-runtime.schemaVersion must be 1.0.0");
+  }
+  if (!Array.isArray(object4.adapters) || object4.adapters.length === 0 || object4.adapters.length > 64) {
+    throw new ConfigurationError("INVALID_ARRAY", "provider-runtime.adapters must contain one to 64 bindings");
+  }
+  const workerAdmission = parseWorkerAdmission(object4.workerAdmission);
+  const adapters = object4.adapters.map((binding, index) => parseBinding(binding, index, bundle, workerAdmission));
+  if (new Set(adapters.map((binding) => binding.packageId)).size !== adapters.length) {
+    throw new ConfigurationError("DUPLICATE_ADAPTER", "provider-runtime.adapters contains a duplicate package binding");
+  }
+  return deepFreeze2({
+    schemaVersion: "1.0.0",
+    metadata: parseMetadata(object4.metadata),
+    workerAdmission,
+    adapters
+  });
+}
+
+// packages/config/src/trust-root.ts
+var ajv = new import__.Ajv2020({ allErrors: true, allowUnionTypes: true, strict: true });
+var addFormats = import_ajv_formats.default;
+addFormats(ajv);
+for (const schema of loadSchemaRegistry().values()) ajv.addSchema(schema);
+var resolvedTrustBundleValidator = ajv.getSchema(SCHEMA_IDS.trustBundle);
+if (resolvedTrustBundleValidator === void 0) throw new Error("Trust bundle schema is not registered");
+var validateTrustBundle = resolvedTrustBundleValidator;
+function modeBits(mode) {
+  return mode & 511;
+}
+function expectedUid(options) {
+  if (options.expectedOwnerUid !== void 0) return options.expectedOwnerUid;
+  return typeof process.geteuid === "function" ? process.geteuid() : void 0;
+}
+function assertOwner(stat, uid, path) {
+  if (uid !== void 0 && stat.uid !== uid) {
+    throw new ConfigurationError("UNTRUSTED_OWNER", "".concat(path, " is not owned by the trusted launcher user"));
+  }
+}
+function assertPrivateDirectory(path, uid) {
+  const stat = (0, import_node_fs.lstatSync)(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new ConfigurationError("UNSAFE_TRUST_ROOT", "".concat(path, " must be a real directory"));
+  }
+  assertOwner(stat, uid, path);
+  const mode = modeBits(stat.mode);
+  if ((mode & 320) !== 320 || (mode & 63) !== 0) {
+    throw new ConfigurationError("UNSAFE_MODE", "".concat(path, " must be owner-only and owner-readable/searchable"));
+  }
+}
+function assertSafeRelativePath(path) {
+  if (path.length === 0 || (0, import_node_path2.isAbsolute)(path) || path.includes("\\") || path.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    throw new ConfigurationError("UNSAFE_PATH", "Unsafe trust-root manifest path: ".concat(path));
+  }
+}
+function securelyReadPrivateFile(path, uid) {
+  const before = (0, import_node_fs.lstatSync)(path);
+  if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1) {
+    throw new ConfigurationError("UNSAFE_FILE", "".concat(path, " must be one regular, unlinked file"));
+  }
+  assertOwner(before, uid, path);
+  const mode = modeBits(before.mode);
+  if ((mode & 256) === 0 || (mode & 63) !== 0) {
+    throw new ConfigurationError("UNSAFE_MODE", "".concat(path, " must be owner-readable and owner-only"));
+  }
+  const noFollow = typeof import_node_fs.constants.O_NOFOLLOW === "number" ? import_node_fs.constants.O_NOFOLLOW : 0;
+  let descriptor3;
+  try {
+    descriptor3 = (0, import_node_fs.openSync)(path, import_node_fs.constants.O_RDONLY | noFollow);
+    const opened = (0, import_node_fs.fstatSync)(descriptor3);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new ConfigurationError("FILE_IDENTITY_CHANGED", "".concat(path, " changed while opening"));
+    }
+    const content = (0, import_node_fs.readFileSync)(descriptor3);
+    const after = (0, import_node_fs.fstatSync)(descriptor3);
+    if (after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+      throw new ConfigurationError("FILE_IDENTITY_CHANGED", "".concat(path, " changed while reading"));
+    }
+    return content;
+  } finally {
+    if (descriptor3 !== void 0) (0, import_node_fs.closeSync)(descriptor3);
+  }
+}
+function parseManifest(text) {
+  const object4 = requireObject(parseStrictYaml(text, "trust-root manifest"), "manifest");
+  requireExactKeys(
+    object4,
+    ["schemaVersion", "rootId", "createdAt", "files"],
+    ["schemaVersion", "rootId", "createdAt", "files"],
+    "manifest"
+  );
+  if (object4.schemaVersion !== "1.0.0") {
+    throw new ConfigurationError("UNSUPPORTED_VERSION", "manifest.schemaVersion must be 1.0.0");
+  }
+  const rootId = requireString(object4.rootId, "manifest.rootId");
+  const createdAt = requireString(object4.createdAt, "manifest.createdAt");
+  if (!Number.isFinite(Date.parse(createdAt))) {
+    throw new ConfigurationError("INVALID_TIME", "manifest.createdAt must be an RFC 3339 timestamp");
+  }
+  if (!Array.isArray(object4.files) || object4.files.length < 1 || object4.files.length > 66) {
+    throw new ConfigurationError("INVALID_MANIFEST", "manifest must contain one trust bundle, at most one provider runtime, and at most 64 signing keys");
+  }
+  const files = object4.files.map((rawEntry, index) => {
+    const entryPath = "manifest.files[".concat(index, "]");
+    const entryObject = requireObject(rawEntry, entryPath);
+    requireExactKeys(entryObject, ["role", "path", "bytes", "sha256"], ["role", "path", "bytes", "sha256"], entryPath);
+    if (entryObject.role !== "TRUST_BUNDLE" && entryObject.role !== "PROVIDER_RUNTIME" && entryObject.role !== "SIGNING_KEY") {
+      throw new ConfigurationError("INVALID_ROLE", "".concat(entryPath, ".role is not supported"));
+    }
+    const path = requireString(entryObject.path, "".concat(entryPath, ".path"));
+    assertSafeRelativePath(path);
+    if (!Number.isSafeInteger(entryObject.bytes) || entryObject.bytes < 1) {
+      throw new ConfigurationError("INVALID_SIZE", "".concat(entryPath, ".bytes must be a positive safe integer"));
+    }
+    const sha256 = requireString(entryObject.sha256, "".concat(entryPath, ".sha256"));
+    if (!/^[a-f0-9]{64}$/u.test(sha256)) {
+      throw new ConfigurationError("INVALID_DIGEST", "".concat(entryPath, ".sha256 must be lowercase SHA-256"));
+    }
+    return {
+      role: entryObject.role,
+      path,
+      bytes: entryObject.bytes,
+      sha256
+    };
+  });
+  if (files.filter((entry) => entry.role === "TRUST_BUNDLE").length !== 1) {
+    throw new ConfigurationError("INVALID_MANIFEST", "manifest must contain exactly one trust bundle");
+  }
+  if (files.filter((entry) => entry.role === "PROVIDER_RUNTIME").length > 1) {
+    throw new ConfigurationError("INVALID_MANIFEST", "manifest may contain at most one provider runtime file");
+  }
+  if (files.filter((entry) => entry.role === "SIGNING_KEY").length > 64) {
+    throw new ConfigurationError("INVALID_MANIFEST", "manifest may contain at most 64 signing keys");
+  }
+  if (new Set(files.map((entry) => entry.path)).size !== files.length) {
+    throw new ConfigurationError("DUPLICATE_PATH", "manifest paths must be unique");
+  }
+  return {
+    schemaVersion: "1.0.0",
+    rootId,
+    createdAt,
+    files
+  };
+}
+function isWithin(path, parent) {
+  const relation = (0, import_node_path2.relative)(parent, path);
+  return relation === "" || !relation.startsWith("..".concat(import_node_path2.sep)) && relation !== ".." && !(0, import_node_path2.isAbsolute)(relation);
+}
+function loadWorkerSigningKeys(configuration, manifest, rootPath, uid) {
+  const signingEntries = manifest.files.filter((entry) => entry.role === "SIGNING_KEY");
+  const configuredPaths = new Set(
+    configuration.workerAdmission.trustedSigningKeys.map((reference) => reference.manifestPath)
+  );
+  if (signingEntries.length !== configuredPaths.size) {
+    throw new ConfigurationError(
+      "SIGNING_KEY_MANIFEST_MISMATCH",
+      "Every signing key manifest entry must be referenced exactly once by the provider runtime"
+    );
+  }
+  const entriesByPath = new Map(signingEntries.map((entry) => [entry.path, entry]));
+  return configuration.workerAdmission.trustedSigningKeys.map((reference) => {
+    const entry = entriesByPath.get(reference.manifestPath);
+    if (entry === void 0 || !configuredPaths.has(entry.path)) {
+      throw new ConfigurationError(
+        "SIGNING_KEY_NOT_MANIFESTED",
+        "Signing key ".concat(reference.keyId, " is not a manifest-hashed file")
+      );
+    }
+    const path = (0, import_node_path2.resolve)(rootPath, entry.path);
+    if (!isWithin(path, rootPath)) {
+      throw new ConfigurationError("UNSAFE_PATH", "A signing key file escapes the active root");
+    }
+    const bytes = securelyReadPrivateFile(path, uid);
+    if (bytes.byteLength !== entry.bytes) {
+      throw new ConfigurationError("SIZE_MISMATCH", "Signing key ".concat(reference.keyId, " byte length does not match its manifest"));
+    }
+    if (sha256Bytes(bytes) !== entry.sha256) {
+      throw new ConfigurationError("DIGEST_MISMATCH", "Signing key ".concat(reference.keyId, " digest does not match its manifest"));
+    }
+    if (bytes.byteLength > 16384 || bytes.includes(0)) {
+      throw new ConfigurationError("INVALID_SIGNING_KEY", "Signing key ".concat(reference.keyId, " is not a bounded PEM public key"));
+    }
+    const pem = bytes.toString("utf8");
+    if (/PRIVATE KEY/u.test(pem)) {
+      throw new ConfigurationError("PRIVATE_KEY_FORBIDDEN", "Private signing keys must never be placed in the trust root");
+    }
+    try {
+      const key = (0, import_node_crypto2.createPublicKey)(pem);
+      if (key.type !== "public" || key.asymmetricKeyType !== "ed25519") {
+        throw new Error("not Ed25519");
+      }
+    } catch {
+      throw new ConfigurationError("INVALID_SIGNING_KEY", "Signing key ".concat(reference.keyId, " is not an Ed25519 public key"));
+    }
+    return Object.freeze({
+      keyId: reference.keyId,
+      sourcePath: reference.manifestPath,
+      sourceSha256: entry.sha256,
+      publicKeyPem: pem
+    });
+  });
+}
+function computeTrustedProfileConfigHash(profile) {
+  return sha256Canonical({
+    schemaVersion: profile.schemaVersion,
+    profileAlias: profile.profileAlias,
+    capabilityProfile: profile.capabilityProfile,
+    allowedOrigins: profile.allowedOrigins,
+    scopes: profile.scopes,
+    endpointIds: profile.endpointIds,
+    operationIds: profile.operationIds,
+    ...profile.capabilityPackIds === void 0 ? {} : { capabilityPackIds: profile.capabilityPackIds },
+    ...profile.capabilityPackCatalogSha256 === void 0 ? {} : { capabilityPackCatalogSha256: profile.capabilityPackCatalogSha256 },
+    ...profile.defaultVerificationPolicyAlias === void 0 ? {} : { defaultVerificationPolicyAlias: profile.defaultVerificationPolicyAlias },
+    ...profile.verificationPolicies === void 0 ? {} : { verificationPolicies: profile.verificationPolicies },
+    policy: profile.policy
+  });
+}
+function assertBundleBindings(bundle) {
+  const endpointIds = /* @__PURE__ */ new Set();
+  for (const endpoint of bundle.endpoints) {
+    if (endpointIds.has(endpoint.endpointId)) {
+      throw new ConfigurationError("DUPLICATE_ENDPOINT", "Duplicate endpoint: ".concat(endpoint.endpointId));
+    }
+    endpointIds.add(endpoint.endpointId);
+    const normalized = normalizeTrustedEndpoint(endpoint);
+    if (normalized.baseUrl !== endpoint.baseUrl) {
+      throw new ConfigurationError(
+        "NON_CANONICAL_ENDPOINT",
+        "Endpoint ".concat(endpoint.endpointId, " must be stored in canonical form: ").concat(normalized.baseUrl)
+      );
+    }
+  }
+  const adapters = /* @__PURE__ */ new Set();
+  for (const adapter of bundle.adapters) {
+    if (adapters.has(adapter.packageId)) {
+      throw new ConfigurationError("DUPLICATE_ADAPTER", "Duplicate adapter: ".concat(adapter.packageId));
+    }
+    adapters.add(adapter.packageId);
+  }
+  for (const endpoint of bundle.endpoints) {
+    if (!adapters.has(endpoint.adapterId)) {
+      throw new ConfigurationError(
+        "UNKNOWN_ADAPTER",
+        "Endpoint ".concat(endpoint.endpointId, " references an unadmitted adapter")
+      );
+    }
+  }
+  const operations = /* @__PURE__ */ new Map();
+  for (const operation2 of bundle.operations) {
+    if (operations.has(operation2.operationId)) {
+      throw new ConfigurationError("DUPLICATE_OPERATION", "Duplicate operation: ".concat(operation2.operationId));
+    }
+    if (computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new ConfigurationError(
+        "OPERATION_DIGEST_MISMATCH",
+        "Operation ".concat(operation2.operationId, " definition digest does not match")
+      );
+    }
+    if (!adapters.has(operation2.definition.adapterPackageId)) {
+      throw new ConfigurationError(
+        "UNKNOWN_ADAPTER",
+        "Operation ".concat(operation2.operationId, " references an unadmitted adapter")
+      );
+    }
+    if (!endpointIds.has(operation2.definition.sourceAlias)) {
+      throw new ConfigurationError(
+        "UNKNOWN_ENDPOINT",
+        "Operation ".concat(operation2.operationId, " references an unknown source alias")
+      );
+    }
+    const source = bundle.endpoints.find(
+      (endpoint) => endpoint.endpointId === operation2.definition.sourceAlias
+    );
+    if (source?.adapterId !== operation2.definition.adapterPackageId) {
+      throw new ConfigurationError(
+        "ADAPTER_ENDPOINT_MISMATCH",
+        "Operation ".concat(operation2.operationId, " adapter does not match its endpoint")
+      );
+    }
+    operations.set(operation2.operationId, operation2.definitionSha256);
+  }
+  for (const endpointId of bundle.profile.endpointIds) {
+    if (!endpointIds.has(endpointId)) {
+      throw new ConfigurationError("UNKNOWN_ENDPOINT", "Profile references unknown endpoint ".concat(endpointId));
+    }
+  }
+  for (const operationId of bundle.profile.operationIds) {
+    if (!operations.has(operationId)) {
+      throw new ConfigurationError("UNKNOWN_OPERATION", "Profile references unknown operation ".concat(operationId));
+    }
+  }
+  const capabilityPacks = bundle.capabilityPacks ?? [];
+  const capabilityPackIds = /* @__PURE__ */ new Set();
+  for (const pack of capabilityPacks) {
+    if (capabilityPackIds.has(pack.packId)) {
+      throw new ConfigurationError("DUPLICATE_CAPABILITY_PACK", "Duplicate capability pack: ".concat(pack.packId));
+    }
+    try {
+      validateCapabilityPack(pack);
+    } catch {
+      throw new ConfigurationError(
+        "CAPABILITY_PACK_DIGEST_MISMATCH",
+        "Capability pack ".concat(pack.packId, " is not a valid reviewed pack")
+      );
+    }
+    for (const operationId of pack.requiredOperationIds) {
+      if (!bundle.profile.operationIds.includes(operationId) || !operations.has(operationId)) {
+        throw new ConfigurationError(
+          "CAPABILITY_PACK_OPERATION_MISSING",
+          "Capability pack ".concat(pack.packId, " requires unavailable operation ").concat(operationId)
+        );
+      }
+    }
+    capabilityPackIds.add(pack.packId);
+  }
+  const profileCapabilityPackIds = bundle.profile.capabilityPackIds ?? [];
+  if (profileCapabilityPackIds.length !== capabilityPackIds.size || profileCapabilityPackIds.some((packId3) => !capabilityPackIds.has(packId3))) {
+    throw new ConfigurationError(
+      "CAPABILITY_PACK_CATALOG_MISMATCH",
+      "Profile capability pack IDs do not match the activated pack catalog"
+    );
+  }
+  if (capabilityPacks.length === 0) {
+    if (bundle.profile.capabilityPackCatalogSha256 !== void 0) {
+      throw new ConfigurationError(
+        "CAPABILITY_PACK_CATALOG_MISMATCH",
+        "An empty capability pack catalog cannot carry a digest"
+      );
+    }
+  } else if (bundle.profile.capabilityPackCatalogSha256 !== sha256Canonical(capabilityPacks)) {
+    throw new ConfigurationError(
+      "CAPABILITY_PACK_CATALOG_MISMATCH",
+      "Capability pack catalog digest does not match"
+    );
+  }
+  const verificationPolicies = bundle.profile.verificationPolicies ?? {};
+  if (bundle.profile.defaultVerificationPolicyAlias !== void 0 && verificationPolicies[bundle.profile.defaultVerificationPolicyAlias] === void 0) {
+    throw new ConfigurationError("UNKNOWN_VERIFICATION_POLICY", "Default verification policy alias is not defined");
+  }
+  for (const [alias2, policy] of Object.entries(verificationPolicies)) {
+    if (policy.policyAlias !== alias2 || policy.passCount > policy.requiredSamples) {
+      throw new ConfigurationError("INVALID_VERIFICATION_POLICY", "Verification policy ".concat(alias2, " is internally inconsistent"));
+    }
+    const criterionIds = /* @__PURE__ */ new Set();
+    for (const criterion of policy.criteria) {
+      if (criterionIds.has(criterion.criterionId)) {
+        throw new ConfigurationError("INVALID_VERIFICATION_POLICY", "Verification policy ".concat(alias2, " repeats a criterion ID"));
+      }
+      criterionIds.add(criterion.criterionId);
+      if (!bundle.profile.operationIds.includes(criterion.operationId)) {
+        throw new ConfigurationError("UNKNOWN_OPERATION", "Verification policy ".concat(alias2, " references an unapproved operation"));
+      }
+      const operation2 = bundle.operations.find((candidate) => candidate.operationId === criterion.operationId);
+      const numericExpectedInvalid = (/* @__PURE__ */ new Set(["LT", "LTE", "GT", "GTE"])).has(criterion.comparator) && (typeof criterion.expected !== "number" || !Number.isFinite(criterion.expected));
+      const activityExpectedInvalid = (/* @__PURE__ */ new Set(["ACTIVE", "INACTIVE"])).has(criterion.comparator) && criterion.expected !== true;
+      if (criterion.maxEvidenceAgeMs > operation2.definition.limits.maxAgeMs || criterion.valueSelector.kind !== operation2.definition.normalization.resultKind || numericExpectedInvalid || activityExpectedInvalid || criterion.valueSelector.reducer === "ALL" && criterion.valueSelector.kind !== "TIMESERIES" || policy.requiredSamples > 1 && criterion.valueSelector.kind === "SCALAR" || criterion.requiredDurationSeconds !== void 0 && criterion.requiredDurationSeconds > policy.windowDurationSeconds || operation2.definition.normalization.targetUnit !== void 0 && criterion.unit !== operation2.definition.normalization.targetUnit) {
+        throw new ConfigurationError("INVALID_VERIFICATION_POLICY", "Verification policy ".concat(alias2, " conflicts with its operation contract"));
+      }
+    }
+  }
+  if (bundle.profile.configSha256 !== computeTrustedProfileConfigHash(bundle.profile)) {
+    throw new ConfigurationError("PROFILE_DIGEST_MISMATCH", "Profile configuration digest does not match");
+  }
+  if (bundle.profile.endpointRegistrySha256 !== sha256Canonical(bundle.endpoints)) {
+    throw new ConfigurationError("ENDPOINT_DIGEST_MISMATCH", "Endpoint registry digest does not match");
+  }
+  if (bundle.profile.catalogSha256 !== sha256Canonical(bundle.operations)) {
+    throw new ConfigurationError("CATALOG_DIGEST_MISMATCH", "Operation catalog digest does not match");
+  }
+}
+function loadTrustedRoot(options) {
+  if (!(0, import_node_path2.isAbsolute)(options.rootPath)) {
+    throw new ConfigurationError("RELATIVE_TRUST_ROOT", "The trust-root path must be absolute");
+  }
+  const requestedRoot = (0, import_node_path2.resolve)(options.rootPath);
+  assertPrivateDirectory(requestedRoot, expectedUid(options));
+  const rootPath = (0, import_node_fs.realpathSync)(requestedRoot);
+  for (const forbiddenRoot of options.forbiddenWorkspaceRoots ?? []) {
+    const workspace = (0, import_node_fs.realpathSync)((0, import_node_path2.resolve)(forbiddenRoot));
+    if (isWithin(rootPath, workspace)) {
+      throw new ConfigurationError("TRUST_ROOT_IN_WORKSPACE", "The active trust root cannot live in an inspected workspace");
+    }
+  }
+  const uid = expectedUid(options);
+  const manifestPath = (0, import_node_path2.resolve)(rootPath, "manifest.yaml");
+  const manifestBytes = securelyReadPrivateFile(manifestPath, uid);
+  const manifest = parseManifest(manifestBytes.toString("utf8"));
+  const listed = /* @__PURE__ */ new Set(["manifest.yaml", ...manifest.files.map((entry) => entry.path)]);
+  for (const entry of (0, import_node_fs.readdirSync)(rootPath, { withFileTypes: true })) {
+    if (!listed.has(entry.name)) {
+      throw new ConfigurationError(
+        entry.name === ".env" ? "DOTENV_FORBIDDEN" : "UNMANIFESTED_ENTRY",
+        "The active trust root contains an unmanifested entry: ".concat(entry.name)
+      );
+    }
+    if (!entry.isFile()) {
+      throw new ConfigurationError("UNSAFE_FILE", "The active trust root entry is not a regular file: ".concat(entry.name));
+    }
+  }
+  const bundleEntry = manifest.files.find((entry) => entry.role === "TRUST_BUNDLE");
+  const bundlePath = (0, import_node_path2.resolve)(rootPath, bundleEntry.path);
+  if (!isWithin(bundlePath, rootPath)) {
+    throw new ConfigurationError("UNSAFE_PATH", "The trust bundle escapes the active root");
+  }
+  const bundleBytes = securelyReadPrivateFile(bundlePath, uid);
+  if (bundleBytes.byteLength !== bundleEntry.bytes) {
+    throw new ConfigurationError("SIZE_MISMATCH", "The trust bundle byte length does not match its manifest");
+  }
+  if (sha256Bytes(bundleBytes) !== bundleEntry.sha256) {
+    throw new ConfigurationError("DIGEST_MISMATCH", "The trust bundle digest does not match its manifest");
+  }
+  const bundleValue = parseStrictYaml(bundleBytes.toString("utf8"), bundleEntry.path);
+  if (!validateTrustBundle(bundleValue)) {
+    throw new ConfigurationError(
+      "INVALID_TRUST_BUNDLE",
+      "Trust bundle does not satisfy its contract: ".concat(ajv.errorsText(validateTrustBundle.errors))
+    );
+  }
+  const bundle = bundleValue;
+  if (!verifyIntegrity(bundle)) {
+    throw new ConfigurationError("TRUST_BUNDLE_INTEGRITY", "Trust bundle integrity does not match");
+  }
+  assertBundleBindings(bundle);
+  const runtimeEntry = manifest.files.find((entry) => entry.role === "PROVIDER_RUNTIME");
+  let providerRuntime;
+  if (runtimeEntry !== void 0) {
+    const runtimePath = (0, import_node_path2.resolve)(rootPath, runtimeEntry.path);
+    if (!isWithin(runtimePath, rootPath)) {
+      throw new ConfigurationError("UNSAFE_PATH", "The provider runtime file escapes the active root");
+    }
+    const runtimeBytes = securelyReadPrivateFile(runtimePath, uid);
+    if (runtimeBytes.byteLength !== runtimeEntry.bytes) {
+      throw new ConfigurationError("SIZE_MISMATCH", "The provider runtime byte length does not match its manifest");
+    }
+    if (sha256Bytes(runtimeBytes) !== runtimeEntry.sha256) {
+      throw new ConfigurationError("DIGEST_MISMATCH", "The provider runtime digest does not match its manifest");
+    }
+    const configuration = parseProviderRuntimeConfiguration(runtimeBytes.toString("utf8"), bundle);
+    providerRuntime = {
+      sourcePath: runtimeEntry.path,
+      sourceSha256: runtimeEntry.sha256,
+      configuration,
+      signingKeys: loadWorkerSigningKeys(configuration, manifest, rootPath, uid)
+    };
+  } else if (manifest.files.some((entry) => entry.role === "SIGNING_KEY")) {
+    throw new ConfigurationError(
+      "ORPHANED_SIGNING_KEY",
+      "Signing key files require a manifest-hashed provider runtime configuration"
+    );
+  }
+  return deepFreeze2({
+    rootPath,
+    rootManifestSourceSha256: sha256Bytes(manifestBytes),
+    trustBundleSourceSha256: bundleEntry.sha256,
+    rootManifestSha256: sha256Canonical(manifest),
+    trustBundleSha256: bundle.integrity.contentSha256,
+    bundle,
+    ...providerRuntime === void 0 ? {} : { providerRuntime }
+  });
+}
+
+// packages/config/src/activation.ts
+var import_node_fs2 = require("node:fs");
+var import_node_path3 = require("node:path");
+var RECEIPT_KIND = "production-monitoring-activation-v1";
+var RECEIPT_MAXIMUM_BYTES = 64 * 1024;
+var SAFE_RECEIPT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/u;
+var SHA256 = /^[a-f0-9]{64}$/u;
+function expectedUid2(options) {
+  if (options.expectedOwnerUid !== void 0) return options.expectedOwnerUid;
+  return typeof process.geteuid === "function" ? process.geteuid() : void 0;
+}
+function modeBits2(mode) {
+  return mode & 511;
+}
+function assertOwner2(stat, uid, label) {
+  if (uid !== void 0 && stat.uid !== uid) {
+    throw new ConfigurationError("UNTRUSTED_OWNER", "".concat(label, " is not owned by the trusted launcher user"));
+  }
+}
+function isWithin2(path, parent) {
+  const relation = (0, import_node_path3.relative)(parent, path);
+  return relation === "" || !relation.startsWith("..".concat(import_node_path3.sep)) && relation !== ".." && !(0, import_node_path3.isAbsolute)(relation);
+}
+function workspaceRoots(options) {
+  return (options.forbiddenWorkspaceRoots ?? [process.cwd()]).map((root) => (0, import_node_fs2.realpathSync)((0, import_node_path3.resolve)(root)));
+}
+function assertOutsideWorkspaces(path, options, label) {
+  for (const workspace of workspaceRoots(options)) {
+    if (isWithin2(path, workspace)) {
+      throw new ConfigurationError("ACTIVATION_IN_WORKSPACE", "".concat(label, " cannot live in an inspected workspace"));
+    }
+  }
+}
+function assertPrivateDirectory2(path, uid, label) {
+  const requested = (0, import_node_path3.resolve)(path);
+  const stat = (0, import_node_fs2.lstatSync)(requested);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new ConfigurationError("UNSAFE_ACTIVATION_PATH", "".concat(label, " must be a real directory"));
+  }
+  assertOwner2(stat, uid, label);
+  if ((modeBits2(stat.mode) & 63) !== 0 || (modeBits2(stat.mode) & 448) !== 448) {
+    throw new ConfigurationError("UNSAFE_MODE", "".concat(label, " must be owner-only and owner-readable/writable/searchable"));
+  }
+  const canonical = (0, import_node_fs2.realpathSync)(requested);
+  if (canonical !== requested) {
+    throw new ConfigurationError("UNSAFE_ACTIVATION_PATH", "".concat(label, " cannot use symlinked ancestor aliases"));
+  }
+  return canonical;
+}
+function receiptTarget(pathInput, options) {
+  if (!(0, import_node_path3.isAbsolute)(pathInput)) {
+    throw new ConfigurationError("RELATIVE_ACTIVATION_RECEIPT", "Activation receipt path must be absolute");
+  }
+  const requested = (0, import_node_path3.resolve)(pathInput);
+  if (!SAFE_RECEIPT_NAME.test((0, import_node_path3.basename)(requested))) {
+    throw new ConfigurationError("UNSAFE_ACTIVATION_PATH", "Activation receipt filename is invalid");
+  }
+  const parent = assertPrivateDirectory2((0, import_node_path3.dirname)(requested), expectedUid2(options), "Activation receipt directory");
+  const path = (0, import_node_path3.resolve)(parent, (0, import_node_path3.basename)(requested));
+  assertOutsideWorkspaces(path, options, "Activation receipt");
+  return { path, parent };
+}
+function assertReceiptFile(path, uid) {
+  const stat = (0, import_node_fs2.lstatSync)(path);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
+    throw new ConfigurationError("UNSAFE_ACTIVATION_RECEIPT", "Activation receipt must be one regular, non-linked file");
+  }
+  assertOwner2(stat, uid, "Activation receipt");
+  if ((modeBits2(stat.mode) & 63) !== 0 || (modeBits2(stat.mode) & 256) === 0) {
+    throw new ConfigurationError("UNSAFE_MODE", "Activation receipt must be owner-readable and owner-only");
+  }
+  if (stat.size < 1 || stat.size > RECEIPT_MAXIMUM_BYTES) {
+    throw new ConfigurationError("ACTIVATION_RECEIPT_SIZE", "Activation receipt is outside its byte limit");
+  }
+  return stat;
+}
+function secureReadReceipt(path, uid) {
+  const before = assertReceiptFile(path, uid);
+  const noFollow = typeof import_node_fs2.constants.O_NOFOLLOW === "number" ? import_node_fs2.constants.O_NOFOLLOW : 0;
+  let descriptor3;
+  try {
+    descriptor3 = (0, import_node_fs2.openSync)(path, import_node_fs2.constants.O_RDONLY | noFollow);
+    const opened = (0, import_node_fs2.fstatSync)(descriptor3);
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new ConfigurationError("ACTIVATION_RECEIPT_CHANGED", "Activation receipt changed while opening");
+    }
+    const content = (0, import_node_fs2.readFileSync)(descriptor3);
+    const after = (0, import_node_fs2.fstatSync)(descriptor3);
+    if (after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs) {
+      throw new ConfigurationError("ACTIVATION_RECEIPT_CHANGED", "Activation receipt changed while reading");
+    }
+    return content;
+  } finally {
+    if (descriptor3 !== void 0) (0, import_node_fs2.closeSync)(descriptor3);
+  }
+}
+function parseReceipt(bytes) {
+  let value;
+  try {
+    value = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new ConfigurationError("ACTIVATION_RECEIPT_INVALID", "Activation receipt is not valid JSON");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new ConfigurationError("ACTIVATION_RECEIPT_INVALID", "Activation receipt has an invalid shape");
+  }
+  const object4 = value;
+  const expected = /* @__PURE__ */ new Set([
+    "schemaVersion",
+    "kind",
+    "activatedAt",
+    "trustRootPath",
+    "rootManifestSha256",
+    "trustBundleSha256",
+    "providerRuntimeSha256",
+    "integrity"
+  ]);
+  if (Object.keys(object4).length !== expected.size || Object.keys(object4).some((key) => !expected.has(key))) {
+    throw new ConfigurationError("ACTIVATION_RECEIPT_INVALID", "Activation receipt contains unknown or missing fields");
+  }
+  if (object4.schemaVersion !== "1.0.0" || object4.kind !== RECEIPT_KIND || typeof object4.activatedAt !== "string" || !Number.isFinite(Date.parse(object4.activatedAt)) || new Date(object4.activatedAt).toISOString() !== object4.activatedAt || typeof object4.trustRootPath !== "string" || !(0, import_node_path3.isAbsolute)(object4.trustRootPath) || typeof object4.rootManifestSha256 !== "string" || !SHA256.test(object4.rootManifestSha256) || typeof object4.trustBundleSha256 !== "string" || !SHA256.test(object4.trustBundleSha256) || !(object4.providerRuntimeSha256 === null || typeof object4.providerRuntimeSha256 === "string" && SHA256.test(object4.providerRuntimeSha256)) || !verifyIntegrity(value)) {
+    throw new ConfigurationError("ACTIVATION_RECEIPT_INVALID", "Activation receipt failed validation");
+  }
+  return value;
+}
+function loadForActivation(trustRootPath, options) {
+  const roots = workspaceRoots(options);
+  const loaded = loadTrustedRoot({
+    rootPath: trustRootPath,
+    forbiddenWorkspaceRoots: roots,
+    ...options.expectedOwnerUid === void 0 ? {} : { expectedOwnerUid: options.expectedOwnerUid }
+  });
+  if ((0, import_node_path3.resolve)(trustRootPath) !== loaded.rootPath) {
+    throw new ConfigurationError(
+      "UNSAFE_TRUST_ROOT",
+      "Trust-root path cannot use symlinked ancestor aliases"
+    );
+  }
+  assertOutsideWorkspaces(loaded.rootPath, options, "Trust root");
+  return loaded;
+}
+function loadActivatedTrustRoot(options) {
+  const target = receiptTarget(options.receiptPath, options);
+  const receipt = parseReceipt(secureReadReceipt(target.path, expectedUid2(options)));
+  const requestedRoot = options.trustRootPath === void 0 ? void 0 : (0, import_node_path3.resolve)(options.trustRootPath);
+  if (requestedRoot !== void 0 && requestedRoot !== receipt.trustRootPath) {
+    throw new ConfigurationError("ACTIVATION_ROOT_MISMATCH", "Requested trust root does not match the activation receipt");
+  }
+  const loaded = loadForActivation(receipt.trustRootPath, options);
+  if (loaded.rootPath !== receipt.trustRootPath || (loaded.rootManifestSourceSha256 ?? loaded.rootManifestSha256) !== receipt.rootManifestSha256 || (loaded.trustBundleSourceSha256 ?? loaded.trustBundleSha256) !== receipt.trustBundleSha256 || (loaded.providerRuntime?.sourceSha256 ?? null) !== receipt.providerRuntimeSha256) {
+    throw new ConfigurationError("ACTIVATION_DIGEST_MISMATCH", "Active trust-root material changed after activation");
+  }
+  return loaded;
+}
+
+// packages/grafana-credential-profile/src/profile.ts
+var import_node_net2 = require("node:net");
+var PROFILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+var CREDENTIAL_REFERENCE = /^grafana:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):bearer(?::v([1-9][0-9]{0,15}))?$/u;
+var SECRET_LIKE_PROFILE_NAME = /(?:\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\bglsa_[A-Za-z0-9_-]{8,}|\b(?:password|passwd|secret|token|api[_ -]?key)\s*[:=])/iu;
+var MAX_PROFILES = 64;
+var GrafanaProfileError = class extends Error {
+  code;
+  constructor(code) {
+    super("Shared Grafana profile data is invalid or unavailable");
+    this.name = "GrafanaProfileError";
+    this.code = code;
+  }
+};
+function object2(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return value;
+}
+function exact(value, keys, code) {
+  const expected = new Set(keys);
+  if (Object.keys(value).length !== expected.size || Object.keys(value).some((key) => !expected.has(key))) {
+    throw new GrafanaProfileError(code);
+  }
+}
+function unwrappedHost(hostname3) {
+  return hostname3.startsWith("[") && hostname3.endsWith("]") ? hostname3.slice(1, -1).toLowerCase() : hostname3.toLowerCase();
+}
+function privateIpv4(hostname3) {
+  const octets = hostname3.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  return octets[0] === 10 || octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31 || octets[0] === 192 && octets[1] === 168;
+}
+function classifyGrafanaOriginHost(hostname3) {
+  const host = unwrappedHost(hostname3);
+  if (host === "localhost" || host === "::1" || host.startsWith("127.")) return "loopback";
+  if ((0, import_node_net2.isIP)(host) === 4) return privateIpv4(host) ? "private" : "public";
+  if ((0, import_node_net2.isIP)(host) === 6) {
+    const first = Number.parseInt(host.split(":", 1)[0] ?? "", 16);
+    return Number.isFinite(first) && (first & 65024) === 64512 ? "private" : "public";
+  }
+  return "public";
+}
+function normalizeGrafanaOrigin(value) {
+  if (value.length === 0 || value.length > 2048 || value.trim() !== value) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  let url2;
+  try {
+    url2 = new URL(value);
+  } catch {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  if (url2.protocol !== "https:" && url2.protocol !== "http:" || url2.username !== "" || url2.password !== "" || url2.search !== "" || url2.hash !== "" || url2.pathname !== "/") {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  const networkClass = classifyGrafanaOriginHost(url2.hostname);
+  if (url2.protocol === "http:" && networkClass !== "loopback") {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return { grafanaOrigin: url2.origin, networkClass };
+}
+function normalizeGrafanaProfileName(value) {
+  const normalized = value.trim();
+  if (normalized !== value || normalized.length < 1 || normalized.length > 80 || SECRET_LIKE_PROFILE_NAME.test(normalized) || [...normalized].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint < 32 || codePoint === 127;
+  })) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return normalized;
+}
+function grafanaCredentialReference(profileId, slot = 1) {
+  if (!PROFILE_ID.test(profileId) || !Number.isSafeInteger(slot) || slot < 1) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return Object.freeze({ kind: "broker", key: "grafana:".concat(profileId, ":bearer:v").concat(String(slot)) });
+}
+function legacyGrafanaCredentialReference(profileId) {
+  if (!PROFILE_ID.test(profileId)) throw new GrafanaProfileError("INVALID_PROFILE");
+  return Object.freeze({ kind: "broker", key: "grafana:".concat(profileId, ":bearer") });
+}
+function parseGrafanaCredentialReference(reference) {
+  if (reference.kind !== "broker") return void 0;
+  const match = CREDENTIAL_REFERENCE.exec(reference.key);
+  if (match === null) return void 0;
+  const profileId = match[1];
+  if (match[2] === void 0) {
+    return { profileId, slot: null, reference: legacyGrafanaCredentialReference(profileId) };
+  }
+  const slot = Number(match[2]);
+  if (!Number.isSafeInteger(slot) || slot < 1) return void 0;
+  return { profileId, slot, reference: grafanaCredentialReference(profileId, slot) };
+}
+function grafanaKeyringAccount(reference) {
+  const parsed = parseGrafanaCredentialReference(reference);
+  return parsed === void 0 ? void 0 : parsed.slot === null ? "profile/".concat(parsed.profileId, "/bearer") : "profile/".concat(parsed.profileId, "/bearer/v").concat(String(parsed.slot));
+}
+function parseSharedGrafanaProfile(value) {
+  const profile = object2(value);
+  exact(profile, [
+    "schemaVersion",
+    "profileId",
+    "profileName",
+    "grafanaOrigin",
+    "networkClass",
+    "credentialRef",
+    "revision"
+  ], "INVALID_PROFILE");
+  if (profile.schemaVersion !== "1.0.0" || typeof profile.profileId !== "string" || !PROFILE_ID.test(profile.profileId)) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  if (typeof profile.profileName !== "string") throw new GrafanaProfileError("INVALID_PROFILE");
+  const profileName = normalizeGrafanaProfileName(profile.profileName);
+  if (typeof profile.grafanaOrigin !== "string") throw new GrafanaProfileError("INVALID_PROFILE");
+  const origin = normalizeGrafanaOrigin(profile.grafanaOrigin);
+  if (profile.networkClass !== origin.networkClass || profile.grafanaOrigin !== origin.grafanaOrigin) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  if (!Number.isSafeInteger(profile.revision) || profile.revision < 1) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  const revision = profile.revision;
+  const credentialRef = object2(profile.credentialRef);
+  exact(credentialRef, ["kind", "key"], "INVALID_PROFILE");
+  if (typeof credentialRef.kind !== "string" || typeof credentialRef.key !== "string") {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  const parsedReference = parseGrafanaCredentialReference({
+    kind: credentialRef.kind,
+    key: credentialRef.key
+  });
+  if (parsedReference === void 0 || parsedReference.profileId !== profile.profileId || parsedReference.slot !== null && parsedReference.slot > revision) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return {
+    schemaVersion: "1.0.0",
+    profileId: profile.profileId,
+    profileName,
+    ...origin,
+    credentialRef: parsedReference.reference,
+    revision
+  };
+}
+function emptySharedGrafanaProfileRegistry() {
+  return { schemaVersion: "1.0.0", activeProfileId: null, profiles: [] };
+}
+function parseSharedGrafanaProfileRegistry(value) {
+  let registry2;
+  try {
+    registry2 = object2(value);
+    exact(registry2, ["schemaVersion", "activeProfileId", "profiles"], "INVALID_REGISTRY");
+  } catch {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  if (registry2.schemaVersion !== "1.0.0" || !Array.isArray(registry2.profiles) || registry2.profiles.length > MAX_PROFILES) {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  let profiles;
+  try {
+    profiles = registry2.profiles.map(parseSharedGrafanaProfile);
+  } catch {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  const ids = new Set(profiles.map((profile) => profile.profileId));
+  const names = new Set(profiles.map((profile) => profile.profileName.toLowerCase()));
+  if (ids.size !== profiles.length || names.size !== profiles.length) {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  const activeProfileId = registry2.activeProfileId;
+  if (activeProfileId !== null && (typeof activeProfileId !== "string" || !ids.has(activeProfileId))) {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  return { schemaVersion: "1.0.0", activeProfileId, profiles };
+}
+
+// packages/grafana-credential-profile/src/lifecycle-journal.ts
+function invalidJournal() {
+  throw new Error("Grafana credential lifecycle journal is invalid");
+}
+function exactObject(value, keys) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) invalidJournal();
+  const record4 = value;
+  const expected = new Set(keys);
+  if (Object.keys(record4).length !== expected.size || Object.keys(record4).some((key) => !expected.has(key))) {
+    invalidJournal();
+  }
+  return record4;
+}
+function nullableRevision(value) {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 1) invalidJournal();
+  return value;
+}
+function nullableReference(value, profileId, revision) {
+  if (value === null) {
+    if (revision !== null) invalidJournal();
+    return null;
+  }
+  if (revision === null) invalidJournal();
+  const record4 = exactObject(value, ["kind", "key"]);
+  if (typeof record4.kind !== "string" || typeof record4.key !== "string") invalidJournal();
+  const parsed = parseGrafanaCredentialReference({ kind: record4.kind, key: record4.key });
+  if (parsed === void 0 || parsed.profileId !== profileId || parsed.slot !== null && parsed.slot > revision) {
+    invalidJournal();
+  }
+  return parsed.reference;
+}
+function parseGrafanaCredentialLifecycleJournal(value) {
+  const journal = exactObject(value, [
+    "schemaVersion",
+    "operation",
+    "phase",
+    "profileId",
+    "previousRevision",
+    "previousCredentialRef",
+    "nextRevision",
+    "nextCredentialRef"
+  ]);
+  if (journal.schemaVersion !== "1.0.0" || journal.operation !== "CONNECT" && journal.operation !== "ROTATE" && journal.operation !== "DELETE" || journal.phase !== "PREPARED" && journal.phase !== "COMMITTED" || typeof journal.profileId !== "string") {
+    invalidJournal();
+  }
+  const profileId = journal.profileId;
+  const previousRevision = nullableRevision(journal.previousRevision);
+  const nextRevision = nullableRevision(journal.nextRevision);
+  const previousCredentialRef = nullableReference(
+    journal.previousCredentialRef,
+    profileId,
+    previousRevision
+  );
+  const nextCredentialRef = nullableReference(
+    journal.nextCredentialRef,
+    profileId,
+    nextRevision
+  );
+  const nextSlot = nextCredentialRef === null ? null : parseGrafanaCredentialReference(nextCredentialRef)?.slot ?? null;
+  if (journal.operation === "CONNECT" && (previousRevision !== null || previousCredentialRef !== null || nextRevision !== 1 || nextCredentialRef === null || nextSlot !== nextRevision) || journal.operation === "ROTATE" && (previousRevision === null || previousCredentialRef === null || nextRevision === null || nextCredentialRef === null || nextRevision !== previousRevision + 1 || nextSlot !== nextRevision || nextCredentialRef.key === previousCredentialRef.key) || journal.operation === "DELETE" && (previousRevision === null || previousCredentialRef === null || nextRevision !== null || nextCredentialRef !== null)) {
+    invalidJournal();
+  }
+  return {
+    schemaVersion: "1.0.0",
+    operation: journal.operation,
+    phase: journal.phase,
+    profileId,
+    previousRevision,
+    previousCredentialRef,
+    nextRevision,
+    nextCredentialRef
+  };
+}
+function committedGrafanaCredentialLifecycleJournal(journal) {
+  return parseGrafanaCredentialLifecycleJournal({ ...journal, phase: "COMMITTED" });
+}
+function sameCredentialReference(left, right) {
+  return left.kind === right.kind && left.key === right.key;
+}
+function grafanaCredentialLifecycleAuthority(registry2, journal) {
+  const parsedRegistry = parseSharedGrafanaProfileRegistry(registry2);
+  const parsedJournal = parseGrafanaCredentialLifecycleJournal(journal);
+  const profile = parsedRegistry.profiles.find(
+    (candidate) => candidate.profileId === parsedJournal.profileId
+  );
+  const matches2 = (revision, reference) => revision !== null && reference !== null && profile !== void 0 && profile.revision === revision && sameCredentialReference(profile.credentialRef, reference);
+  if (parsedJournal.operation === "CONNECT") {
+    if (profile === void 0) return "PREVIOUS";
+    return matches2(parsedJournal.nextRevision, parsedJournal.nextCredentialRef) ? "NEXT" : "INVALID";
+  }
+  if (parsedJournal.operation === "ROTATE") {
+    if (matches2(parsedJournal.previousRevision, parsedJournal.previousCredentialRef)) return "PREVIOUS";
+    return matches2(parsedJournal.nextRevision, parsedJournal.nextCredentialRef) ? "NEXT" : "INVALID";
+  }
+  if (matches2(parsedJournal.previousRevision, parsedJournal.previousCredentialRef)) return "PREVIOUS";
+  return profile === void 0 ? "NEXT" : "INVALID";
+}
+
+// packages/grafana-credential-profile/src/keyring.ts
+var GRAFANA_KEYRING_SERVICE = "com.openai.codex.observability.grafana";
+var MAX_GRAFANA_BEARER_BYTES = 16384;
+var GrafanaKeyringError = class extends Error {
+  code;
+  constructor(code) {
+    super("The shared Grafana credential is unavailable");
+    this.name = "GrafanaKeyringError";
+    this.code = code;
+  }
+};
+function validBearerSecret(secret) {
+  if (secret.byteLength < 1 || secret.byteLength > MAX_GRAFANA_BEARER_BYTES) return false;
+  for (const byte of secret) {
+    if (byte < 33 || byte > 126) return false;
+  }
+  return true;
+}
+var BufferSecretLease = class {
+  bytes;
+  #disposed = false;
+  constructor(secret) {
+    this.bytes = Uint8Array.from(secret);
+  }
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.bytes.fill(0);
+  }
+};
+var GrafanaCredentialKeyring = class {
+  #backend;
+  constructor(backend) {
+    this.#backend = backend;
+  }
+  async acquire(reference) {
+    const account = grafanaKeyringAccount(reference);
+    if (account === void 0) return void 0;
+    let backendSecret;
+    try {
+      backendSecret = await this.#backend.getSecret(GRAFANA_KEYRING_SERVICE, account);
+      if (backendSecret === void 0 || !validBearerSecret(backendSecret)) return void 0;
+      return new BufferSecretLease(backendSecret);
+    } catch {
+      return void 0;
+    } finally {
+      backendSecret?.fill(0);
+    }
+  }
+  async set(reference, secret) {
+    const account = grafanaKeyringAccount(reference);
+    if (account === void 0) throw new GrafanaKeyringError("INVALID_REFERENCE");
+    if (!validBearerSecret(secret)) throw new GrafanaKeyringError("INVALID_SECRET");
+    const copy = Uint8Array.from(secret);
+    try {
+      await this.#backend.setSecret(GRAFANA_KEYRING_SERVICE, account, copy);
+    } catch {
+      throw new GrafanaKeyringError("KEYRING_UNAVAILABLE");
+    } finally {
+      copy.fill(0);
+    }
+  }
+  async status(reference) {
+    const lease = await this.acquire(reference);
+    if (lease === void 0) return "MISSING_OR_UNAVAILABLE";
+    lease.dispose();
+    return "AVAILABLE";
+  }
+  async delete(reference) {
+    const account = grafanaKeyringAccount(reference);
+    if (account === void 0) throw new GrafanaKeyringError("INVALID_REFERENCE");
+    try {
+      return await this.#backend.deleteSecret(GRAFANA_KEYRING_SERVICE, account);
+    } catch {
+      throw new GrafanaKeyringError("KEYRING_UNAVAILABLE");
+    }
+  }
+};
+var SharedGrafanaProfileCredentialSource = class {
+  #credentialStore;
+  #profileStore;
+  constructor(credentialStore, profileStore) {
+    this.#credentialStore = credentialStore;
+    this.#profileStore = profileStore;
+  }
+  async acquire(reference) {
+    const reviewed = parseGrafanaCredentialReference(reference);
+    if (reviewed === void 0) return void 0;
+    try {
+      return await this.#profileStore.withExclusiveLifecycle(async (transaction) => {
+        const journal = transaction.readCredentialLifecycleJournal();
+        if (journal !== void 0) {
+          const authority = grafanaCredentialLifecycleAuthority(transaction.read(), journal);
+          if (authority === "INVALID" || journal.phase === "COMMITTED" && authority !== "NEXT") {
+            return void 0;
+          }
+        }
+        const profile = transaction.read().profiles.find(
+          (candidate) => candidate.profileId === reviewed.profileId
+        );
+        if (profile === void 0) return void 0;
+        return this.#credentialStore.acquire(profile.credentialRef);
+      });
+    } catch {
+      return void 0;
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/macos-keychain-loader.ts
+var import_node_crypto3 = require("node:crypto");
+var import_node_fs3 = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_os = require("node:os");
+var import_node_path4 = require("node:path");
+var import_node_url = require("node:url");
+
+// packages/grafana-credential-profile/src/native-keyring.ts
+var NativeKeyringUnavailableError = class extends Error {
+  constructor() {
+    super("The native OS keyring backend is unavailable");
+    this.name = "NativeKeyringUnavailableError";
+  }
+};
+var NativeGrafanaKeyringBackend = class {
+  #platform;
+  #loader;
+  #loaded;
+  constructor(options) {
+    const platform = options.platform ?? process.platform;
+    if (platform !== "darwin" && platform !== "linux") throw new NativeKeyringUnavailableError();
+    this.#platform = platform;
+    this.#loader = options.loader;
+  }
+  async #module() {
+    if (this.#platform === "linux") throw new NativeKeyringUnavailableError();
+    this.#loaded ??= this.#loader.load().then((module2) => {
+      if (module2.backendKind !== "MACOS_KEYCHAIN" || typeof module2.createEntry !== "function") {
+        throw new NativeKeyringUnavailableError();
+      }
+      return module2;
+    }).catch(() => {
+      this.#loaded = void 0;
+      throw new NativeKeyringUnavailableError();
+    });
+    return this.#loaded;
+  }
+  async #entry(service, account) {
+    if (service.length === 0 || service.length > 256 || account.length === 0 || account.length > 256) {
+      throw new NativeKeyringUnavailableError();
+    }
+    try {
+      return (await this.#module()).createEntry(service, account);
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    }
+  }
+  async getSecret(service, account) {
+    let secret;
+    try {
+      secret = await (await this.#entry(service, account)).getSecret();
+      return secret === void 0 ? void 0 : Uint8Array.from(secret);
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    } finally {
+      secret?.fill(0);
+    }
+  }
+  async setSecret(service, account, secret) {
+    const copy = Uint8Array.from(secret);
+    try {
+      await (await this.#entry(service, account)).setSecret(copy);
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    } finally {
+      copy.fill(0);
+    }
+  }
+  async deleteSecret(service, account) {
+    try {
+      return await (await this.#entry(service, account)).deleteCredential();
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/macos-keychain-loader.ts
+var SHA2562 = /^[a-f0-9]{64}$/u;
+var MAX_NATIVE_ASSET_BYTES = 64 * 1024 * 1024;
+var MAX_NATIVE_SECRET_BYTES = 16384;
+function defaultNativeAddonImporter(absolutePath) {
+  const nativeModule = { exports: {} };
+  process.dlopen(nativeModule, absolutePath);
+  return nativeModule.exports;
+}
+function record2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function copyNativeSecret(value) {
+  if (value === void 0 || value === null) return void 0;
+  if (value instanceof Uint8Array) {
+    if (value.byteLength < 1 || value.byteLength > MAX_NATIVE_SECRET_BYTES) throw new NativeKeyringUnavailableError();
+    return Uint8Array.from(value);
+  }
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_NATIVE_SECRET_BYTES || Object.getOwnPropertyNames(value).length !== value.length + 1 || Object.getOwnPropertySymbols(value).length !== 0) {
+    throw new NativeKeyringUnavailableError();
+  }
+  const bytes = new Uint8Array(value.length);
+  try {
+    for (let index = 0; index < value.length; index += 1) {
+      const property = Object.getOwnPropertyDescriptor(value, String(index));
+      if (property === void 0 || !("value" in property) || property.writable !== true || typeof property.value !== "number" || !Number.isInteger(property.value) || property.value < 0 || property.value > 255) {
+        throw new NativeKeyringUnavailableError();
+      }
+      bytes[index] = property.value;
+    }
+    return bytes;
+  } catch (error2) {
+    bytes.fill(0);
+    throw error2;
+  }
+}
+function eraseNativeSecret(value) {
+  try {
+    if (value instanceof Uint8Array) {
+      Uint8Array.prototype.fill.call(value, 0);
+    } else if (Array.isArray(value)) {
+      for (const name of Object.getOwnPropertyNames(value)) {
+        if (!/^(?:0|[1-9][0-9]*)$/u.test(name) || Number(name) >= value.length) continue;
+        const property = Object.getOwnPropertyDescriptor(value, name);
+        if (property !== void 0 && "value" in property && property.writable === true) {
+          Object.defineProperty(value, name, { ...property, value: 0 });
+        }
+      }
+    }
+  } catch {
+  }
+}
+function adaptMacOsKeychainAddon(value) {
+  const AsyncEntry = record2(value)?.AsyncEntry;
+  if (typeof AsyncEntry !== "function") throw new NativeKeyringUnavailableError();
+  const Entry = AsyncEntry;
+  return Object.freeze({
+    backendKind: "MACOS_KEYCHAIN",
+    createEntry(service, account) {
+      const entry = new Entry(service, account);
+      if (typeof entry.getSecret !== "function" || typeof entry.setSecret !== "function" || typeof entry.deleteCredential !== "function") {
+        throw new NativeKeyringUnavailableError();
+      }
+      return {
+        async getSecret(signal) {
+          let nativeSecret;
+          try {
+            nativeSecret = await entry.getSecret(signal);
+            return copyNativeSecret(nativeSecret);
+          } finally {
+            eraseNativeSecret(nativeSecret);
+          }
+        },
+        async setSecret(secret, signal) {
+          await entry.setSecret(secret, signal);
+        },
+        async deleteCredential(signal) {
+          const deleted = await entry.deleteCredential(signal);
+          if (typeof deleted !== "boolean") throw new NativeKeyringUnavailableError();
+          return deleted;
+        }
+      };
+    }
+  });
+}
+async function readAll(handle, contents) {
+  let offset = 0;
+  while (offset < contents.byteLength) {
+    const { bytesRead } = await handle.read(contents, offset, contents.byteLength - offset, offset);
+    if (bytesRead === 0) throw new NativeKeyringUnavailableError();
+    offset += bytesRead;
+  }
+}
+async function writeAll(handle, contents) {
+  let offset = 0;
+  while (offset < contents.byteLength) {
+    const { bytesWritten } = await handle.write(contents, offset, contents.byteLength - offset, offset);
+    if (bytesWritten === 0) throw new NativeKeyringUnavailableError();
+    offset += bytesWritten;
+  }
+}
+async function readVerifiedAsset(absolutePath, expectedBytes, expectedSha256) {
+  let contents;
+  let handle;
+  try {
+    handle = await (0, import_promises.open)(absolutePath, import_node_fs3.constants.O_RDONLY | import_node_fs3.constants.O_NOFOLLOW);
+    const before = await handle.stat();
+    if (!before.isFile() || before.nlink !== 1 || before.size !== expectedBytes) {
+      throw new NativeKeyringUnavailableError();
+    }
+    contents = Buffer.alloc(expectedBytes);
+    await readAll(handle, contents);
+    const trailing = Buffer.alloc(1);
+    const [{ bytesRead }, after] = await Promise.all([
+      handle.read(trailing, 0, 1, expectedBytes),
+      handle.stat()
+    ]);
+    if (bytesRead !== 0 || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || (0, import_node_crypto3.createHash)("sha256").update(contents).digest("hex") !== expectedSha256) {
+      throw new NativeKeyringUnavailableError();
+    }
+    return contents;
+  } catch {
+    contents?.fill(0);
+    throw new NativeKeyringUnavailableError();
+  } finally {
+    await handle?.close().catch(() => void 0);
+  }
+}
+async function importPrivateVerifiedCopy(source, filename, expectedSha256, importer) {
+  let directory;
+  let stagedPath;
+  let handle;
+  try {
+    directory = await (0, import_promises.mkdtemp)((0, import_node_path4.join)((0, import_node_os.tmpdir)(), "codex-observability-keyring-"));
+    await (0, import_promises.chmod)(directory, 448);
+    const directoryStat = await (0, import_promises.lstat)(directory);
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || (directoryStat.mode & 63) !== 0 || typeof process.getuid === "function" && directoryStat.uid !== process.getuid()) {
+      throw new NativeKeyringUnavailableError();
+    }
+    stagedPath = (0, import_node_path4.join)(directory, filename);
+    handle = await (0, import_promises.open)(
+      stagedPath,
+      import_node_fs3.constants.O_CREAT | import_node_fs3.constants.O_EXCL | import_node_fs3.constants.O_RDWR | import_node_fs3.constants.O_NOFOLLOW,
+      256
+    );
+    await writeAll(handle, source);
+    await handle.sync();
+    await handle.chmod(256);
+    const before = await handle.stat();
+    if (!before.isFile() || before.nlink !== 1 || before.size !== source.byteLength) {
+      throw new NativeKeyringUnavailableError();
+    }
+    const verified = Buffer.alloc(source.byteLength);
+    try {
+      await readAll(handle, verified);
+      const after = await handle.stat();
+      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || (0, import_node_crypto3.createHash)("sha256").update(verified).digest("hex") !== expectedSha256) {
+        throw new NativeKeyringUnavailableError();
+      }
+    } finally {
+      verified.fill(0);
+    }
+    return await importer("/dev/fd/".concat(String(handle.fd)));
+  } catch {
+    throw new NativeKeyringUnavailableError();
+  } finally {
+    await handle?.close().catch(() => void 0);
+    if (stagedPath !== void 0) await (0, import_promises.unlink)(stagedPath).catch(() => void 0);
+    if (directory !== void 0) await (0, import_promises.rmdir)(directory).catch(() => void 0);
+  }
+}
+var HashPinnedMacOsKeychainLoader = class {
+  #absolutePath;
+  #filename;
+  #bytes;
+  #sha256;
+  #importer;
+  #platform;
+  #architecture;
+  #loaded;
+  constructor(options) {
+    this.#platform = options.platform ?? process.platform;
+    this.#architecture = options.architecture ?? process.arch;
+    try {
+      this.#absolutePath = (0, import_node_url.fileURLToPath)(new import_node_url.URL(options.asset.fileUrl.href));
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    }
+    this.#filename = (0, import_node_path4.basename)(this.#absolutePath);
+    this.#bytes = options.asset.bytes;
+    this.#sha256 = options.asset.sha256;
+    this.#importer = options.importer ?? defaultNativeAddonImporter;
+    const expectedFilenames = /* @__PURE__ */ new Set([
+      "keyring.darwin-universal.node",
+      "keyring.darwin-".concat(this.#architecture, ".node")
+    ]);
+    if (this.#platform !== "darwin" || this.#architecture !== "arm64" && this.#architecture !== "x64" || !(0, import_node_path4.isAbsolute)(this.#absolutePath) || !expectedFilenames.has(this.#filename) || !Number.isSafeInteger(this.#bytes) || this.#bytes < 1 || this.#bytes > MAX_NATIVE_ASSET_BYTES || !SHA2562.test(this.#sha256)) {
+      throw new NativeKeyringUnavailableError();
+    }
+  }
+  async load() {
+    this.#loaded ??= this.#load().catch(() => {
+      this.#loaded = void 0;
+      throw new NativeKeyringUnavailableError();
+    });
+    return this.#loaded;
+  }
+  async #load() {
+    const source = await readVerifiedAsset(this.#absolutePath, this.#bytes, this.#sha256);
+    try {
+      const addon = await importPrivateVerifiedCopy(
+        source,
+        this.#filename,
+        this.#sha256,
+        this.#importer
+      );
+      return adaptMacOsKeychainAddon(addon);
+    } finally {
+      source.fill(0);
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/profile-store.ts
+var import_node_fs6 = require("node:fs");
+var import_promises2 = require("node:fs/promises");
+var import_node_os2 = require("node:os");
+var import_node_path7 = require("node:path");
+
+// packages/run-store/src/durable-store.ts
+var import_node_fs5 = require("node:fs");
+var import_node_crypto6 = require("node:crypto");
+var import_node_path6 = require("node:path");
+
+// packages/run-store/src/secure-state.ts
+var import_node_fs4 = require("node:fs");
+var import_node_crypto5 = require("node:crypto");
+var import_node_path5 = require("node:path");
+
+// packages/run-store/src/store.ts
+var import_node_crypto4 = require("node:crypto");
+
+// packages/run-store/src/types.ts
+var MAXIMUM_AUTHORITY_COMPONENT_REVISION = 536870911;
+var MAXIMUM_RUN_CREATION_SEQUENCE = 2e6;
+
+// packages/run-store/src/store.ts
+var RunStoreError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "RunStoreError";
+    this.code = code;
+  }
+};
+var HANDLE_DOMAIN = "pm-run-handle-v1\0";
+var LEASE_DOMAIN = "pm-run-lease-v1\0";
+var IDEMPOTENCY_DOMAIN = "pm-run-idempotency-v1\0";
+var PRINCIPAL_DOMAIN = "pm-principal-v1\0";
+var DEFAULT_MINIMUM_TTL_MS = 1e3;
+var DEFAULT_MAXIMUM_TTL_MS = 24 * 60 * 60 * 1e3;
+var DEFAULT_MAXIMUM_LEASE_MS = (5 * 60 + 30) * 1e3;
+var DEFAULT_RUN_INVENTORY_LIMIT = 20;
+var MAXIMUM_RUN_INVENTORY_LIMIT = 32;
+var RUN_ID_V3 = /^pmrun_q([0-9a-z]{8})_([A-Za-z0-9_-]{16})$/u;
+function deepFreeze3(value, seen = /* @__PURE__ */ new Set()) {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze3(child, seen);
+  return Object.freeze(value);
+}
+function cloneFrozen(value) {
+  return deepFreeze3(structuredClone(value));
+}
+function safeEqual(left, right) {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+  return leftBuffer.length === rightBuffer.length && (0, import_node_crypto4.timingSafeEqual)(leftBuffer, rightBuffer);
+}
+function assertNonEmpty(value, label, maximum = 512) {
+  const hasControlCharacter = [...value].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint <= 31 || codePoint === 127;
+  });
+  if (value.length === 0 || value.length > maximum || hasControlCharacter) {
+    throw new RunStoreError("INVALID_INPUT", "".concat(label, " is invalid"));
+  }
+}
+var InMemoryRunStore = class {
+  #runs = /* @__PURE__ */ new Map();
+  #handleIndex = /* @__PURE__ */ new Map();
+  #recoveryHandleIndex = /* @__PURE__ */ new Map();
+  #idempotencyIndex = /* @__PURE__ */ new Map();
+  #evidenceOwners = /* @__PURE__ */ new Map();
+  #contradictionOwners = /* @__PURE__ */ new Map();
+  #now;
+  #randomBytes;
+  #minimumTtlMs;
+  #maximumTtlMs;
+  #maximumLeaseMs;
+  constructor(options = {}) {
+    this.#now = options.now ?? Date.now;
+    this.#randomBytes = options.randomBytes ?? import_node_crypto4.randomBytes;
+    this.#minimumTtlMs = options.minimumTtlMs ?? DEFAULT_MINIMUM_TTL_MS;
+    this.#maximumTtlMs = options.maximumTtlMs ?? DEFAULT_MAXIMUM_TTL_MS;
+    this.#maximumLeaseMs = options.maximumLeaseMs ?? DEFAULT_MAXIMUM_LEASE_MS;
+    if (options.snapshot !== void 0) this.#importSnapshot(options.snapshot);
+  }
+  beginRun(input) {
+    if (input.request.workflow === "verify" || input.request.parentRunId !== void 0) {
+      throw new RunStoreError(
+        "INVALID_CHILD",
+        "Verification requests must use the sealed-parent verification flow"
+      );
+    }
+    return this.#begin(input);
+  }
+  beginChildVerification(input) {
+    if (input.request.workflow !== "verify" || input.request.parentRunId !== input.parentRunId) {
+      throw new RunStoreError("INVALID_CHILD", "A child verification request must name its parent run");
+    }
+    const parent = this.#runs.get(input.parentRunId);
+    if (parent === void 0 || parent.record.state !== "SEALED") {
+      throw new RunStoreError("PARENT_NOT_AVAILABLE", "The sealed parent run is not available");
+    }
+    const childPrincipal = this.#principalBinding(input.principal);
+    if (!safeEqual(parent.record.principal.issuerAlias, childPrincipal.issuerAlias) || !safeEqual(parent.record.principal.subjectSha256, childPrincipal.subjectSha256) || !safeEqual(parent.record.principal.tenantSha256, childPrincipal.tenantSha256)) {
+      throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    }
+    if (parent.verificationContractSha256 === void 0 || !safeEqual(parent.verificationContractSha256, input.verificationContractSha256)) {
+      throw new RunStoreError("VERIFICATION_BINDING_MISMATCH", "The parent verification contract does not match");
+    }
+    if (parent.record.profileAlias !== input.policy.profileAlias) {
+      throw new RunStoreError("VERIFICATION_BINDING_MISMATCH", "The child profile differs from its parent");
+    }
+    if (sha256Canonical(parent.record.scope) !== sha256Canonical(input.policy.scope)) {
+      throw new RunStoreError("VERIFICATION_BINDING_MISMATCH", "The child scope differs from its parent");
+    }
+    const childHashes = Object.fromEntries(
+      Object.values(input.policy.operations).map((operation2) => [
+        operation2.operationId,
+        operation2.definitionSha256
+      ])
+    );
+    if (sha256Canonical(parent.record.allowedOperationHashes) !== sha256Canonical(childHashes)) {
+      throw new RunStoreError("VERIFICATION_BINDING_MISMATCH", "The child operation snapshot differs from its parent");
+    }
+    return this.#begin(input, {
+      runId: input.parentRunId,
+      verificationContractSha256: input.verificationContractSha256
+    });
+  }
+  resumeRun(input) {
+    const run = this.#runs.get(input.runId);
+    if (run === void 0) throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    this.#expireIfNeeded(input.runId, run);
+    this.#authorizePrincipalAndBindings(
+      run,
+      input.principal,
+      input.expectedProfileAlias,
+      input.expectedTrustBundleSha256
+    );
+    this.#assertRevision(run, input.expectedRevision);
+    if (run.record.state !== "OPEN" && run.record.state !== "FINALIZING") {
+      throw new RunStoreError("RUN_TERMINAL", "A terminal run cannot be resumed");
+    }
+    this.#clearExpiredLease(run);
+    if (run.lease !== void 0) throw new RunStoreError("LEASE_HELD", "The run has an active lease");
+    this.#assertRevisionCapacity(run);
+    this.#rememberRecoveryHandle(input.runId, run, run.record.handleSha256);
+    this.#handleIndex.delete(run.record.handleSha256);
+    const handle = this.#newUniqueRunHandle();
+    const handleSha256 = this.#hashToken(HANDLE_DOMAIN, handle);
+    run.record = this.#updateRecord(run.record, { handleSha256 });
+    this.#incrementRevision(run);
+    this.#handleIndex.set(handleSha256, input.runId);
+    return { runId: input.runId, revision: run.revision, replayed: false, handle };
+  }
+  resumeRunWithHandle(input) {
+    const { runId, run } = this.#authorizeRetainedHandle(input);
+    if (run.record.state !== "OPEN" && run.record.state !== "FINALIZING") {
+      throw new RunStoreError("RUN_TERMINAL", "A terminal run cannot be resumed");
+    }
+    this.#clearExpiredLease(run);
+    if (run.lease !== void 0) throw new RunStoreError("LEASE_HELD", "The run has an active lease");
+    this.#assertRevisionCapacity(run);
+    this.#rememberRecoveryHandle(runId, run, run.record.handleSha256);
+    this.#handleIndex.delete(run.record.handleSha256);
+    const handle = this.#newUniqueRunHandle();
+    const replacementHash = this.#hashToken(HANDLE_DOMAIN, handle);
+    run.record = this.#updateRecord(run.record, { handleSha256: replacementHash });
+    this.#incrementRevision(run);
+    this.#handleIndex.set(replacementHash, runId);
+    return { runId, revision: run.revision, replayed: false, handle };
+  }
+  getRunWithHandle(input) {
+    const { run } = this.#authorizeRetainedHandle(input);
+    this.#clearExpiredLease(run);
+    return this.#view(run);
+  }
+  acknowledgeResume(access) {
+    const { run } = this.#authorize(access);
+    this.#assertRevisionCapacity(run);
+    for (const hash3 of run.recoveryHandleSha256s ?? []) this.#recoveryHandleIndex.delete(hash3);
+    delete run.recoveryHandleSha256s;
+    this.#incrementRevision(run);
+    return this.#view(run);
+  }
+  #authorizeRetainedHandle(input) {
+    const handleSha256 = this.#hashToken(HANDLE_DOMAIN, input.handle);
+    const runId = this.#handleIndex.get(handleSha256) ?? this.#recoveryHandleIndex.get(handleSha256);
+    if (runId === void 0) throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    const run = this.#runs.get(runId);
+    const active = run !== void 0 && safeEqual(run.record.handleSha256, handleSha256);
+    const recovery = run?.recoveryHandleSha256s?.some((hash3) => safeEqual(hash3, handleSha256)) === true;
+    if (run === void 0 || !active && !recovery) {
+      throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    }
+    if (this.#expireIfNeeded(runId, run)) {
+      throw new RunStoreError("RUN_EXPIRED", "The run has expired");
+    }
+    this.#authorizePrincipalAndBindings(
+      run,
+      input.principal,
+      input.expectedProfileAlias,
+      input.expectedTrustBundleSha256
+    );
+    if (input.expectedRevision !== void 0) this.#assertRevision(run, input.expectedRevision);
+    return { runId, run };
+  }
+  getRun(access) {
+    const { run } = this.#authorize(access);
+    return this.#view(run);
+  }
+  assertLease(access, leaseHandle) {
+    const { run } = this.#authorize(access);
+    this.#assertLease(run, leaseHandle);
+    return this.#view(run);
+  }
+  getRecoveryContext(access) {
+    const { run } = this.#authorize(access);
+    return cloneFrozen({ request: run.request, policy: run.policy });
+  }
+  getSealedParent(input) {
+    const run = this.#runs.get(input.runId);
+    if (run === void 0 || run.record.state !== "SEALED" || run.verificationContractSha256 === void 0) {
+      throw new RunStoreError("PARENT_NOT_AVAILABLE", "The sealed parent run is not available");
+    }
+    const principal = this.#principalBinding(input.principal);
+    if (!safeEqual(run.record.principal.issuerAlias, principal.issuerAlias) || !safeEqual(run.record.principal.subjectSha256, principal.subjectSha256) || !safeEqual(run.record.principal.tenantSha256, principal.tenantSha256) || !safeEqual(run.record.profileAlias, input.expectedProfileAlias) || !safeEqual(run.record.trustBundleSha256, input.expectedTrustBundleSha256)) {
+      throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    }
+    return cloneFrozen({
+      record: run.record,
+      revision: run.revision,
+      verificationContractSha256: run.verificationContractSha256
+    });
+  }
+  listOwnedRuns(input) {
+    assertNonEmpty(input.expectedProfileAlias, "profile alias", 128);
+    const limit = input.limit ?? DEFAULT_RUN_INVENTORY_LIMIT;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAXIMUM_RUN_INVENTORY_LIMIT) {
+      throw new RunStoreError(
+        "INVALID_INPUT",
+        "run inventory limit must be between 1 and ".concat(MAXIMUM_RUN_INVENTORY_LIMIT)
+      );
+    }
+    const principal = this.#principalBinding(input.principal);
+    const now = this.#now();
+    const owned = [...this.#runs.values()].filter(
+      (run) => safeEqual(run.record.principal.issuerAlias, principal.issuerAlias) && safeEqual(run.record.principal.subjectSha256, principal.subjectSha256) && safeEqual(run.record.principal.tenantSha256, principal.tenantSha256) && safeEqual(run.record.principal.sessionSha256, principal.sessionSha256) && safeEqual(run.record.profileAlias, input.expectedProfileAlias) && safeEqual(run.record.trustBundleSha256, input.expectedTrustBundleSha256)
+    ).sort(
+      (left, right) => right.creationSequence - left.creationSequence || right.record.runId.localeCompare(left.record.runId)
+    );
+    const runs = owned.slice(0, limit).map((run) => {
+      const expired = (run.record.state === "OPEN" || run.record.state === "FINALIZING") && now >= Date.parse(run.record.expiresAt);
+      const activeLease = !expired && run.lease !== void 0 && now < run.lease.expiresAtMs;
+      return cloneFrozen({
+        runId: run.record.runId,
+        creationSequence: run.creationSequence,
+        state: expired ? "EXPIRED" : run.record.state,
+        workflow: run.record.workflow,
+        origin: run.record.origin,
+        scope: run.record.scope,
+        window: run.record.window,
+        ...run.record.baselineWindow === void 0 ? {} : { baselineWindow: run.record.baselineWindow },
+        ...run.record.parent === void 0 ? {} : { parent: run.record.parent },
+        evidenceIds: run.record.evidenceIds,
+        contradictionIds: run.record.contradictionIds,
+        audit: run.record.audit,
+        createdAt: run.record.createdAt,
+        expiresAt: run.record.expiresAt,
+        ...run.record.finalizedAt === void 0 ? {} : { finalizedAt: run.record.finalizedAt },
+        ...run.record.abortedAt === void 0 ? {} : { abortedAt: run.record.abortedAt },
+        revision: run.revision,
+        hasLease: activeLease,
+        ...activeLease ? { leaseExpiresAt: new Date(run.lease.expiresAtMs).toISOString() } : {}
+      });
+    });
+    return cloneFrozen({ runs, omittedCount: owned.length - runs.length });
+  }
+  claimLease(access, ownerId, ttlMs) {
+    assertNonEmpty(ownerId, "lease owner", 256);
+    this.#validateLeaseTtl(ttlMs);
+    const { run } = this.#authorize(access);
+    if (run.record.state !== "OPEN" && run.record.state !== "FINALIZING") {
+      throw new RunStoreError("RUN_TERMINAL", "A terminal run cannot be leased");
+    }
+    this.#clearExpiredLease(run);
+    if (run.lease !== void 0) throw new RunStoreError("LEASE_HELD", "The run has an active lease");
+    this.#assertRevisionCapacity(run);
+    const leaseHandle = this.#newToken("pmls_");
+    const expiresAtMs = this.#now() + ttlMs;
+    run.lease = {
+      handleSha256: this.#hashToken(LEASE_DOMAIN, leaseHandle),
+      ownerSha256: sha256Bytes("".concat(LEASE_DOMAIN).concat(ownerId)),
+      expiresAtMs
+    };
+    this.#incrementRevision(run);
+    return { leaseHandle, revision: run.revision, expiresAt: new Date(expiresAtMs).toISOString() };
+  }
+  renewLease(access, leaseHandle, ttlMs) {
+    this.#validateLeaseTtl(ttlMs);
+    const { run } = this.#authorize(access);
+    const now = this.#now();
+    const lease = this.#assertLease(run, leaseHandle, now);
+    this.#assertRevisionCapacity(run);
+    const expiresAtMs = Math.max(lease.expiresAtMs, now + ttlMs);
+    run.lease = { ...lease, expiresAtMs };
+    this.#incrementRevision(run);
+    return { leaseHandle, revision: run.revision, expiresAt: new Date(expiresAtMs).toISOString() };
+  }
+  releaseLease(access, leaseHandle) {
+    const { run } = this.#authorize(access);
+    this.#assertLease(run, leaseHandle);
+    this.#assertRevisionCapacity(run);
+    delete run.lease;
+    this.#incrementRevision(run);
+    return this.#view(run);
+  }
+  allocateEvidence(access, leaseHandle) {
+    const { runId, run } = this.#authorize(access);
+    this.#assertMutable(run, "OPEN");
+    this.#assertLease(run, leaseHandle);
+    this.#assertRevisionCapacity(run);
+    const evidenceId = this.#newOwnedId("pmev_", this.#evidenceOwners);
+    this.#evidenceOwners.set(evidenceId, runId);
+    run.record = this.#updateRecord(run.record, {
+      evidenceIds: [...run.record.evidenceIds, evidenceId]
+    });
+    this.#incrementRevision(run);
+    return { evidenceId, revision: run.revision, record: this.#view(run).record };
+  }
+  allocateContradiction(access, leaseHandle) {
+    const { runId, run } = this.#authorize(access);
+    this.#assertMutable(run, "OPEN");
+    this.#assertLease(run, leaseHandle);
+    this.#assertRevisionCapacity(run);
+    const contradictionId = this.#newOwnedId("pmcon_", this.#contradictionOwners);
+    this.#contradictionOwners.set(contradictionId, runId);
+    run.record = this.#updateRecord(run.record, {
+      contradictionIds: [...run.record.contradictionIds, contradictionId]
+    });
+    this.#incrementRevision(run);
+    return { contradictionId, revision: run.revision, record: this.#view(run).record };
+  }
+  assertEvidenceOwnership(access, evidenceId) {
+    const { runId } = this.#authorize(access);
+    if (this.#evidenceOwners.get(evidenceId) !== runId) {
+      throw new RunStoreError("EVIDENCE_NOT_OWNED", "Evidence is not owned by this run");
+    }
+  }
+  assertContradictionOwnership(access, contradictionId) {
+    const { runId } = this.#authorize(access);
+    if (this.#contradictionOwners.get(contradictionId) !== runId) {
+      throw new RunStoreError("CONTRADICTION_NOT_OWNED", "Contradiction is not owned by this run");
+    }
+  }
+  updateAudit(input) {
+    const { run } = this.#authorize(input.access);
+    this.#assertLease(run, input.leaseHandle);
+    this.#assertMutable(run, "OPEN", "FINALIZING");
+    this.#assertRevisionCapacity(run);
+    run.record = this.#updateRecord(run.record, {
+      audit: { ...run.record.audit, state: input.state }
+    });
+    this.#incrementRevision(run);
+    return { revision: run.revision, record: this.#view(run).record };
+  }
+  beginFinalize(access, leaseHandle) {
+    const { run } = this.#authorize(access);
+    this.#assertMutable(run, "OPEN");
+    this.#assertLease(run, leaseHandle);
+    if (run.record.audit.required && run.record.audit.state !== "HEALTHY") {
+      throw new RunStoreError("AUDIT_NOT_DURABLE", "Required audit state is not healthy");
+    }
+    this.#assertRevisionCapacity(run);
+    run.record = this.#updateRecord(run.record, { state: "FINALIZING" });
+    this.#incrementRevision(run);
+    return { revision: run.revision, record: this.#view(run).record };
+  }
+  finalizeRun(input) {
+    const { runId, run } = this.#authorize(input.access);
+    this.#assertMutable(run, "FINALIZING");
+    this.#assertLease(run, input.leaseHandle);
+    if (run.record.audit.required && run.record.audit.state !== "HEALTHY") {
+      throw new RunStoreError("AUDIT_NOT_DURABLE", "Required audit state is not healthy");
+    }
+    this.#assertRevisionCapacity(run);
+    const finalizedAt = new Date(this.#now()).toISOString();
+    run.record = this.#updateRecord(run.record, { state: "SEALED", finalizedAt });
+    run.verificationContractSha256 = input.verificationContractSha256;
+    this.#incrementRevision(run);
+    this.#invalidateAccess(runId, run);
+    return { revision: run.revision, record: this.#view(run).record };
+  }
+  abortRun(access, leaseHandle, reason) {
+    assertNonEmpty(reason, "abort reason", 128);
+    const { runId, run } = this.#authorize(access);
+    this.#assertMutable(run, "OPEN", "FINALIZING");
+    this.#assertLease(run, leaseHandle);
+    this.#assertRevisionCapacity(run);
+    run.record = this.#updateRecord(run.record, {
+      state: "ABORTED",
+      abortedAt: new Date(this.#now()).toISOString()
+    });
+    run.abortReason = reason;
+    this.#incrementRevision(run);
+    this.#invalidateAccess(runId, run);
+    return { revision: run.revision, record: this.#view(run).record };
+  }
+  sweepExpired() {
+    let expired = 0;
+    for (const [runId, run] of this.#runs) {
+      if (this.#expireIfNeeded(runId, run)) expired += 1;
+    }
+    return expired;
+  }
+  #begin(input, parent) {
+    this.#validateTtl(input.ttlMs);
+    assertNonEmpty(input.idempotencyKey, "idempotency key", 256);
+    if (input.request.profileAlias !== input.policy.profileAlias) {
+      throw new RunStoreError("POLICY_BINDING_MISMATCH", "Request and policy profile differ");
+    }
+    if (input.request.origin !== input.policy.origin) {
+      throw new RunStoreError("POLICY_BINDING_MISMATCH", "Request and policy origin differ");
+    }
+    const requestSha256 = sha256Canonical(input.request);
+    if (requestSha256 !== input.policy.requestSha256) {
+      throw new RunStoreError("POLICY_BINDING_MISMATCH", "Request hash differs from compiled policy");
+    }
+    const principal = this.#principalBinding(input.principal);
+    const idempotencySha256 = sha256Canonical({
+      domain: IDEMPOTENCY_DOMAIN,
+      principal,
+      key: input.idempotencyKey
+    });
+    const existingId = this.#idempotencyIndex.get(idempotencySha256);
+    if (existingId !== void 0) {
+      const existing = this.#runs.get(existingId);
+      if (existing.record.requestSha256 !== requestSha256 || existing.record.trustBundleSha256 !== input.policy.trustBundleSha256 || existing.record.profileAlias !== input.policy.profileAlias) {
+        throw new RunStoreError("IDEMPOTENCY_CONFLICT", "The idempotency key is bound to another request");
+      }
+      return { runId: existingId, revision: existing.revision, replayed: true };
+    }
+    const now = this.#now();
+    const creationSequence = this.#nextRunCreationSequence(
+      principal,
+      input.policy.profileAlias,
+      input.policy.trustBundleSha256
+    );
+    const runId = this.#newRunId(creationSequence);
+    const handle = this.#newUniqueRunHandle();
+    const handleSha256 = this.#hashToken(HANDLE_DOMAIN, handle);
+    const allowedOperationHashes = Object.fromEntries(
+      Object.values(input.policy.operations).map((operation2) => [
+        operation2.operationId,
+        operation2.definitionSha256
+      ])
+    );
+    const baseRecord = {
+      schemaVersion: "1.0.0",
+      runId,
+      state: "OPEN",
+      workflow: input.request.workflow,
+      origin: input.request.origin,
+      principal,
+      handleSha256,
+      requestSha256,
+      trustBundleSha256: input.policy.trustBundleSha256,
+      profileAlias: input.policy.profileAlias,
+      scope: { ...input.policy.scope },
+      window: { ...input.request.window },
+      ...input.request.baselineWindow === void 0 ? {} : { baselineWindow: { ...input.request.baselineWindow } },
+      ...input.request.incidentAlias === void 0 ? {} : { incidentAlias: input.request.incidentAlias },
+      ...parent === void 0 ? {} : { parent },
+      allowedOperationHashes,
+      evidenceIds: [],
+      contradictionIds: [],
+      audit: {
+        required: input.policy.auditRequired,
+        state: input.policy.auditRequired ? "DEGRADED" : "HEALTHY"
+      },
+      createdAt: new Date(now).toISOString(),
+      expiresAt: new Date(now + input.ttlMs).toISOString(),
+      integrity: {
+        hashContractVersion: "sha256-jcs-v1",
+        algorithm: "sha256",
+        canonicalization: "RFC8785",
+        contentSha256: "0".repeat(64)
+      }
+    };
+    const run = {
+      record: this.#updateRecord(baseRecord, {}),
+      creationSequence,
+      revision: 1,
+      idempotencySha256,
+      request: structuredClone(input.request),
+      policy: structuredClone(input.policy)
+    };
+    this.#runs.set(runId, run);
+    this.#handleIndex.set(handleSha256, runId);
+    this.#idempotencyIndex.set(idempotencySha256, runId);
+    return { runId, revision: 1, replayed: false, handle };
+  }
+  #authorize(access) {
+    const handleSha256 = this.#hashToken(HANDLE_DOMAIN, access.handle);
+    const runId = this.#handleIndex.get(handleSha256);
+    if (runId === void 0) throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    const run = this.#runs.get(runId);
+    if (run === void 0 || !safeEqual(run.record.handleSha256, handleSha256)) {
+      throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    }
+    if (this.#expireIfNeeded(runId, run)) {
+      throw new RunStoreError("RUN_EXPIRED", "The run has expired");
+    }
+    this.#authorizePrincipalAndBindings(
+      run,
+      access.principal,
+      access.expectedProfileAlias,
+      access.expectedTrustBundleSha256
+    );
+    this.#assertRevision(run, access.expectedRevision);
+    return { runId, run };
+  }
+  #authorizePrincipalAndBindings(run, identity, profileAlias, trustBundleSha256) {
+    const principal = this.#principalBinding(identity);
+    if (!safeEqual(run.record.principal.issuerAlias, principal.issuerAlias) || !safeEqual(run.record.principal.subjectSha256, principal.subjectSha256) || !safeEqual(run.record.principal.tenantSha256, principal.tenantSha256) || !safeEqual(run.record.principal.sessionSha256, principal.sessionSha256) || !safeEqual(run.record.profileAlias, profileAlias) || !safeEqual(run.record.trustBundleSha256, trustBundleSha256)) {
+      throw new RunStoreError("ACCESS_DENIED", "Run access denied");
+    }
+  }
+  #principalBinding(identity) {
+    assertNonEmpty(identity.issuerAlias, "principal issuer", 128);
+    assertNonEmpty(identity.subject, "principal subject");
+    assertNonEmpty(identity.tenant, "principal tenant");
+    assertNonEmpty(identity.session, "principal session");
+    return {
+      issuerAlias: identity.issuerAlias,
+      subjectSha256: sha256Bytes("".concat(PRINCIPAL_DOMAIN, "subject\0").concat(identity.subject)),
+      tenantSha256: sha256Bytes("".concat(PRINCIPAL_DOMAIN, "tenant\0").concat(identity.tenant)),
+      sessionSha256: sha256Bytes("".concat(PRINCIPAL_DOMAIN, "session\0").concat(identity.session))
+    };
+  }
+  #assertRevision(run, expectedRevision) {
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision !== run.revision) {
+      throw new RunStoreError("STALE_REVISION", "The run revision has changed");
+    }
+  }
+  #incrementRevision(run) {
+    this.#assertRevisionCapacity(run);
+    run.revision += 1;
+  }
+  #assertRevisionCapacity(run) {
+    if (run.revision >= MAXIMUM_AUTHORITY_COMPONENT_REVISION) {
+      throw new RunStoreError(
+        "RUNTIME_CAPACITY",
+        "Run authority reached its bounded revision capacity"
+      );
+    }
+  }
+  #assertLease(run, leaseHandle, now = this.#now()) {
+    this.#clearExpiredLease(run, now);
+    if (run.lease === void 0 || !safeEqual(run.lease.handleSha256, this.#hashToken(LEASE_DOMAIN, leaseHandle))) {
+      throw new RunStoreError("LEASE_REQUIRED", "A current run lease is required");
+    }
+    return run.lease;
+  }
+  #clearExpiredLease(run, now = this.#now()) {
+    if (run.lease !== void 0 && now >= run.lease.expiresAtMs) delete run.lease;
+  }
+  #assertMutable(run, ...states) {
+    if (!states.includes(run.record.state)) {
+      throw new RunStoreError("INVALID_STATE", "Run state ".concat(run.record.state, " does not permit this transition"));
+    }
+  }
+  #validateTtl(ttlMs) {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < this.#minimumTtlMs || ttlMs > this.#maximumTtlMs) {
+      throw new RunStoreError("INVALID_TTL", "Run TTL is outside the approved range");
+    }
+  }
+  #validateLeaseTtl(ttlMs) {
+    if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > this.#maximumLeaseMs) {
+      throw new RunStoreError("INVALID_LEASE_TTL", "Lease TTL is outside the approved range");
+    }
+  }
+  #hashToken(domain2, token) {
+    assertNonEmpty(token, "token", 512);
+    return sha256Bytes("".concat(domain2).concat(token));
+  }
+  #newToken(prefix) {
+    const entropy = this.#randomBytes(32);
+    if (entropy.byteLength !== 32) {
+      throw new RunStoreError("ENTROPY_FAILURE", "The random source returned an invalid byte count");
+    }
+    return "".concat(prefix).concat(entropy.toString("base64url"));
+  }
+  #newUniqueRunHandle() {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const handle = this.#newToken("pmh_");
+      const hash3 = this.#hashToken(HANDLE_DOMAIN, handle);
+      if (!this.#handleIndex.has(hash3) && !this.#recoveryHandleIndex.has(hash3)) return handle;
+    }
+    throw new RunStoreError("RANDOM_COLLISION", "Unable to allocate a unique run handle");
+  }
+  #nextRunCreationSequence(principal, profileAlias, trustBundleSha256) {
+    const sequences = [...this.#runs.values()].filter(
+      (run) => safeEqual(run.record.principal.issuerAlias, principal.issuerAlias) && safeEqual(run.record.principal.subjectSha256, principal.subjectSha256) && safeEqual(run.record.principal.tenantSha256, principal.tenantSha256) && safeEqual(run.record.principal.sessionSha256, principal.sessionSha256) && safeEqual(run.record.profileAlias, profileAlias) && safeEqual(run.record.trustBundleSha256, trustBundleSha256)
+    ).map((run) => run.creationSequence);
+    const sequence = sequences.length === 0 ? 0 : Math.max(...sequences) + 1;
+    if (sequence > MAXIMUM_RUN_CREATION_SEQUENCE) {
+      throw new RunStoreError(
+        "RUNTIME_CAPACITY",
+        "Run creation exceeded the bounded authority sequence"
+      );
+    }
+    return sequence;
+  }
+  #newRunId(creationSequence) {
+    const encodedSequence = creationSequence.toString(36).padStart(8, "0");
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const entropy = this.#randomBytes(12);
+      if (entropy.byteLength !== 12) {
+        throw new RunStoreError("ENTROPY_FAILURE", "The random source returned an invalid byte count");
+      }
+      const runId = "pmrun_q".concat(encodedSequence, "_").concat(entropy.toString("base64url"));
+      if (!this.#runs.has(runId)) return runId;
+    }
+    throw new RunStoreError("RANDOM_COLLISION", "Unable to allocate a globally unique run ID");
+  }
+  #newOwnedId(prefix, map2) {
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const value = "".concat(prefix).concat(this.#randomBytes(18).toString("base64url"));
+      if (!map2.has(value)) return value;
+    }
+    throw new RunStoreError("RANDOM_COLLISION", "Unable to allocate a globally unique identifier");
+  }
+  #updateRecord(record4, updates) {
+    const provisional = { ...record4, ...updates };
+    return { ...provisional, integrity: computeIntegrity(provisional) };
+  }
+  #view(run) {
+    return cloneFrozen({
+      record: run.record,
+      revision: run.revision,
+      hasLease: run.lease !== void 0,
+      ...run.lease === void 0 ? {} : { leaseExpiresAt: new Date(run.lease.expiresAtMs).toISOString() }
+    });
+  }
+  #expireIfNeeded(runId, run) {
+    if (run.record.state !== "OPEN" && run.record.state !== "FINALIZING" || this.#now() < Date.parse(run.record.expiresAt)) {
+      return false;
+    }
+    this.#assertRevisionCapacity(run);
+    run.record = this.#updateRecord(run.record, { state: "EXPIRED" });
+    this.#incrementRevision(run);
+    this.#invalidateAccess(runId, run);
+    return true;
+  }
+  #invalidateAccess(_runId, run) {
+    this.#handleIndex.delete(run.record.handleSha256);
+    for (const hash3 of run.recoveryHandleSha256s ?? []) this.#recoveryHandleIndex.delete(hash3);
+    delete run.recoveryHandleSha256s;
+    delete run.lease;
+  }
+  exportSnapshot() {
+    return structuredClone({
+      schemaVersion: "1.0.0",
+      runs: [...this.#runs.values()].map((run) => ({
+        record: run.record,
+        revision: run.revision,
+        idempotencySha256: run.idempotencySha256,
+        request: run.request,
+        policy: run.policy,
+        ...run.lease === void 0 ? {} : { lease: run.lease },
+        ...run.verificationContractSha256 === void 0 ? {} : { verificationContractSha256: run.verificationContractSha256 },
+        ...run.abortReason === void 0 ? {} : { abortReason: run.abortReason },
+        ...run.recoveryHandleSha256s === void 0 ? {} : { recoveryHandleSha256s: run.recoveryHandleSha256s }
+      })).sort((left, right) => left.record.runId.localeCompare(right.record.runId))
+    });
+  }
+  #importSnapshot(snapshot) {
+    if (snapshot.schemaVersion !== "1.0.0" || !Array.isArray(snapshot.runs)) {
+      throw new RunStoreError("STATE_CORRUPT", "Run-store snapshot is invalid");
+    }
+    const creationSequences = this.#creationSequencesForSnapshot(snapshot);
+    for (const entry of snapshot.runs) {
+      const runId = entry.record?.runId;
+      if (typeof runId !== "string" || !runId.startsWith("pmrun_") || this.#runs.has(runId) || !Number.isSafeInteger(entry.revision) || entry.revision < 1 || entry.revision > MAXIMUM_AUTHORITY_COMPONENT_REVISION || !verifyIntegrity(entry.record) || sha256Canonical(entry.request) !== entry.record.requestSha256 || entry.policy.requestSha256 !== entry.record.requestSha256 || entry.policy.trustBundleSha256 !== entry.record.trustBundleSha256 || entry.policy.profileAlias !== entry.record.profileAlias || entry.policy.origin !== entry.record.origin || sha256Canonical(entry.policy.scope) !== sha256Canonical(entry.record.scope) || !/^[a-f0-9]{64}$/u.test(entry.idempotencySha256)) {
+        throw new RunStoreError("STATE_CORRUPT", "Run-store entry integrity verification failed");
+      }
+      if (entry.lease !== void 0 && (!/^[a-f0-9]{64}$/u.test(entry.lease.handleSha256) || !/^[a-f0-9]{64}$/u.test(entry.lease.ownerSha256) || !Number.isSafeInteger(entry.lease.expiresAtMs) || entry.lease.expiresAtMs < 0)) {
+        throw new RunStoreError("STATE_CORRUPT", "Persisted lease is invalid");
+      }
+      if (this.#idempotencyIndex.has(entry.idempotencySha256)) {
+        throw new RunStoreError("STATE_CORRUPT", "Duplicate idempotency binding in run-store state");
+      }
+      const internal = {
+        ...structuredClone(entry),
+        creationSequence: creationSequences.get(runId)
+      };
+      this.#runs.set(runId, internal);
+      this.#idempotencyIndex.set(entry.idempotencySha256, runId);
+      if (entry.record.state === "OPEN" || entry.record.state === "FINALIZING") {
+        if (this.#handleIndex.has(entry.record.handleSha256) || this.#recoveryHandleIndex.has(entry.record.handleSha256)) {
+          throw new RunStoreError("STATE_CORRUPT", "Duplicate handle binding in run-store state");
+        }
+        this.#handleIndex.set(entry.record.handleSha256, runId);
+        for (const recoveryHash of entry.recoveryHandleSha256s ?? []) {
+          if (!/^[a-f0-9]{64}$/u.test(recoveryHash) || recoveryHash === entry.record.handleSha256 || this.#recoveryHandleIndex.has(recoveryHash) || this.#handleIndex.has(recoveryHash) || (entry.recoveryHandleSha256s?.length ?? 0) > 4) {
+            throw new RunStoreError("STATE_CORRUPT", "Invalid recovery handle binding in run-store state");
+          }
+          this.#recoveryHandleIndex.set(recoveryHash, runId);
+        }
+      }
+      for (const evidenceId of entry.record.evidenceIds) {
+        if (this.#evidenceOwners.has(evidenceId)) {
+          throw new RunStoreError("STATE_CORRUPT", "Duplicate evidence ownership in run-store state");
+        }
+        this.#evidenceOwners.set(evidenceId, runId);
+      }
+      for (const contradictionId of entry.record.contradictionIds) {
+        if (this.#contradictionOwners.has(contradictionId)) {
+          throw new RunStoreError("STATE_CORRUPT", "Duplicate contradiction ownership in run-store state");
+        }
+        this.#contradictionOwners.set(contradictionId, runId);
+      }
+    }
+  }
+  #creationSequencesForSnapshot(snapshot) {
+    const result = /* @__PURE__ */ new Map();
+    const groups = /* @__PURE__ */ new Map();
+    for (const entry of snapshot.runs) {
+      const record4 = entry.record;
+      if (record4?.principal === void 0 || typeof record4.principal.issuerAlias !== "string" || typeof record4.principal.subjectSha256 !== "string" || typeof record4.principal.tenantSha256 !== "string" || typeof record4.principal.sessionSha256 !== "string" || typeof record4.profileAlias !== "string" || typeof record4.trustBundleSha256 !== "string" || typeof record4.runId !== "string" || !Number.isSafeInteger(Date.parse(record4.createdAt))) {
+        throw new RunStoreError("STATE_CORRUPT", "Run creation authority is invalid");
+      }
+      const authority = sha256Canonical({
+        domain: "pm-run-creation-authority-v1",
+        principal: record4.principal,
+        profileAlias: record4.profileAlias,
+        trustBundleSha256: record4.trustBundleSha256
+      });
+      const group = groups.get(authority) ?? [];
+      group.push(entry);
+      groups.set(authority, group);
+    }
+    for (const entries of groups.values()) {
+      const used = /* @__PURE__ */ new Set();
+      const legacy = [];
+      for (const entry of entries) {
+        const match = RUN_ID_V3.exec(entry.record.runId);
+        if (match === null) {
+          legacy.push(entry);
+          continue;
+        }
+        const sequence = Number.parseInt(match[1], 36);
+        if (!Number.isSafeInteger(sequence) || sequence < 0 || sequence > MAXIMUM_RUN_CREATION_SEQUENCE || used.has(sequence)) {
+          throw new RunStoreError("STATE_CORRUPT", "Run creation authority sequence is invalid");
+        }
+        used.add(sequence);
+        result.set(entry.record.runId, sequence);
+      }
+      let candidate = 0;
+      for (const entry of legacy.sort(
+        (left, right) => left.record.createdAt.localeCompare(right.record.createdAt) || left.record.runId.localeCompare(right.record.runId)
+      )) {
+        while (used.has(candidate)) candidate += 1;
+        if (candidate > MAXIMUM_RUN_CREATION_SEQUENCE) {
+          throw new RunStoreError("STATE_CORRUPT", "Run creation authority sequence is exhausted");
+        }
+        used.add(candidate);
+        result.set(entry.record.runId, candidate);
+        candidate += 1;
+      }
+    }
+    return result;
+  }
+  #rememberRecoveryHandle(runId, run, hash3) {
+    const hashes = [.../* @__PURE__ */ new Set([...run.recoveryHandleSha256s ?? [], hash3])].slice(-4);
+    for (const previous of run.recoveryHandleSha256s ?? []) {
+      if (!hashes.includes(previous)) this.#recoveryHandleIndex.delete(previous);
+    }
+    run.recoveryHandleSha256s = hashes;
+    for (const value of hashes) this.#recoveryHandleIndex.set(value, runId);
+  }
+};
+
+// packages/run-store/src/secure-state.ts
+var DEFAULT_MAXIMUM_STATE_BYTES = 32 * 1024 * 1024;
+var SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/u;
+var LOCK_MAXIMUM_BYTES = 1024;
+var GUARD_RETRY_ATTEMPTS = 50;
+var GUARD_RETRY_MS = 2;
+var GUARD_WAIT = new Int32Array(new SharedArrayBuffer(4));
+function currentUid() {
+  return typeof process.getuid === "function" ? process.getuid() : void 0;
+}
+function assertOwner3(stat, label) {
+  const uid = currentUid();
+  if (uid !== void 0 && stat.uid !== uid) {
+    throw new RunStoreError("STATE_OWNER_INVALID", "".concat(label, " is not owned by the current user"));
+  }
+  if ((stat.mode & 63) !== 0) {
+    throw new RunStoreError("STATE_PERMISSIONS_INVALID", "".concat(label, " grants group or other access"));
+  }
+}
+function assertRoot(path) {
+  const stat = (0, import_node_fs4.lstatSync)(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new RunStoreError("STATE_ROOT_INVALID", "State root must be a real directory");
+  }
+  assertOwner3(stat, "State root");
+}
+function assertRegularFile(path, label, maximumBytes = DEFAULT_MAXIMUM_STATE_BYTES) {
+  const stat = (0, import_node_fs4.lstatSync)(path);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
+    throw new RunStoreError("STATE_FILE_INVALID", "".concat(label, " must be one regular non-linked file"));
+  }
+  assertOwner3(stat, label);
+  if (stat.size > maximumBytes) {
+    throw new RunStoreError("STATE_TOO_LARGE", "".concat(label, " exceeds the state size limit"));
+  }
+  return stat;
+}
+function parseEnvelope(text, kind) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new RunStoreError("STATE_CORRUPT", "State is not valid JSON");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RunStoreError("STATE_CORRUPT", "State envelope is invalid");
+  }
+  const record4 = value;
+  const keys = Object.keys(record4).sort();
+  if (canonicalJson(keys) !== canonicalJson(["generation", "integrity", "kind", "payload", "schemaVersion"])) {
+    throw new RunStoreError("STATE_CORRUPT", "State envelope has unexpected fields");
+  }
+  if (record4.schemaVersion !== "1.0.0" || record4.kind !== kind || !Number.isSafeInteger(record4.generation) || record4.generation < 1 || !verifyIntegrity(value)) {
+    throw new RunStoreError("STATE_CORRUPT", "State integrity verification failed");
+  }
+  return value;
+}
+var AtomicStateFile = class {
+  root;
+  path;
+  #lockPath;
+  #reclaimPath;
+  #kind;
+  #maximumBytes;
+  #filename;
+  #temporaryPath;
+  constructor(options) {
+    if (!(0, import_node_path5.isAbsolute)(options.stateRoot)) {
+      throw new RunStoreError("STATE_ROOT_INVALID", "State root must be absolute");
+    }
+    if (!SAFE_FILENAME.test(options.filename)) {
+      throw new RunStoreError("STATE_FILE_INVALID", "State filename is invalid");
+    }
+    const maximumBytes = options.maximumBytes ?? DEFAULT_MAXIMUM_STATE_BYTES;
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > DEFAULT_MAXIMUM_STATE_BYTES) {
+      throw new RunStoreError("STATE_FILE_INVALID", "State size limit is invalid");
+    }
+    this.root = (0, import_node_path5.resolve)(options.stateRoot);
+    this.path = (0, import_node_path5.resolve)(this.root, options.filename);
+    this.#lockPath = (0, import_node_path5.resolve)(this.root, "".concat(options.filename, ".lock"));
+    this.#reclaimPath = (0, import_node_path5.resolve)(this.root, "".concat(options.filename, ".lock.reclaim"));
+    this.#kind = options.kind;
+    this.#maximumBytes = maximumBytes;
+    this.#filename = options.filename;
+    this.#temporaryPath = (0, import_node_path5.resolve)(this.root, ".state-".concat(options.filename, ".tmp"));
+    if (!(0, import_node_fs4.existsSync)(this.root)) (0, import_node_fs4.mkdirSync)(this.root, { mode: 448, recursive: false });
+    assertRoot(this.root);
+    if (import_node_fs4.realpathSync.native(this.root) !== this.root) {
+      throw new RunStoreError("STATE_ROOT_INVALID", "State root cannot use symlinked ancestor aliases");
+    }
+    if ((0, import_node_fs4.existsSync)(this.path)) this.#readEnvelope();
+  }
+  read() {
+    assertRoot(this.root);
+    return (0, import_node_fs4.existsSync)(this.path) ? structuredClone(this.#readEnvelope().payload) : void 0;
+  }
+  write(payload) {
+    this.transact(() => ({ payload, result: void 0 }));
+  }
+  /** Read and evaluate under the same exclusion lock without rewriting state. */
+  inspect(callback) {
+    assertRoot(this.root);
+    const acquired = this.#acquireLock();
+    try {
+      this.#removeOwnedTemporaryFile();
+      const previous = (0, import_node_fs4.existsSync)(this.path) ? this.#readEnvelope() : void 0;
+      return callback(previous === void 0 ? void 0 : structuredClone(previous.payload));
+    } finally {
+      (0, import_node_fs4.closeSync)(acquired.descriptor);
+      this.#withReclaimGuard(() => {
+        this.#unlinkExact(this.#lockPath, acquired.stat, acquired.nonce, "State lock release");
+      });
+    }
+  }
+  /** Read and evaluate asynchronously while retaining the same exclusion lock. */
+  async inspectAsync(callback) {
+    assertRoot(this.root);
+    const acquired = this.#acquireLock();
+    try {
+      this.#removeOwnedTemporaryFile();
+      const previous = (0, import_node_fs4.existsSync)(this.path) ? this.#readEnvelope() : void 0;
+      return await callback(previous === void 0 ? void 0 : structuredClone(previous.payload));
+    } finally {
+      (0, import_node_fs4.closeSync)(acquired.descriptor);
+      this.#withReclaimGuard(() => {
+        this.#unlinkExact(this.#lockPath, acquired.stat, acquired.nonce, "State lock release");
+      });
+    }
+  }
+  /** Recover only receipts provably abandoned by a dead process. */
+  recoverAbandonedArtifacts() {
+    assertRoot(this.root);
+    this.#withReclaimGuard(() => {
+      this.#recoverExactArtifactsUnderGuard();
+      this.#removeLegacyOwnedTemporaryFiles();
+    });
+  }
+  /** Recover only the deterministic lock/temp names without scanning the root. */
+  recoverAbandonedExactArtifacts() {
+    assertRoot(this.root);
+    this.#withReclaimGuard(() => this.#recoverExactArtifactsUnderGuard());
+  }
+  /**
+   * Explicit operator recovery for a dead reclaim guard. Call only after
+   * quiescing this authority and reviewing the owner-only receipt.
+   */
+  recoverAbandonedReclaimGuard() {
+    assertRoot(this.root);
+    if (!(0, import_node_fs4.existsSync)(this.#reclaimPath)) return;
+    const stat = assertRegularFile(this.#reclaimPath, "State lock reclaim mutex", LOCK_MAXIMUM_BYTES);
+    const lock = this.#parseLock(this.#reclaimPath);
+    try {
+      process.kill(lock.pid, 0);
+      throw new RunStoreError("STATE_LOCKED", "State lock guard belongs to a live process");
+    } catch (error2) {
+      if (error2 instanceof RunStoreError) throw error2;
+      if (error2.code !== "ESRCH") {
+        throw new RunStoreError("STATE_LOCKED", "State lock guard liveness is uncertain");
+      }
+    }
+    this.#unlinkExact(this.#reclaimPath, stat, lock.nonce, "Abandoned state lock reclaim mutex");
+  }
+  transact(callback) {
+    assertRoot(this.root);
+    const acquired = this.#acquireLock();
+    try {
+      this.#removeOwnedTemporaryFile();
+      const previous = (0, import_node_fs4.existsSync)(this.path) ? this.#readEnvelope() : void 0;
+      const transaction = callback(previous === void 0 ? void 0 : structuredClone(previous.payload));
+      this.#assertSupportedPayload(previous?.payload, transaction.payload);
+      const withoutIntegrity = {
+        schemaVersion: "1.0.0",
+        kind: this.#kind,
+        generation: (previous?.generation ?? 0) + 1,
+        payload: transaction.payload
+      };
+      const envelope = {
+        ...withoutIntegrity,
+        integrity: computeIntegrity(withoutIntegrity)
+      };
+      this.#atomicWrite("".concat(canonicalJson(envelope), "\n"));
+      return transaction.result;
+    } finally {
+      (0, import_node_fs4.closeSync)(acquired.descriptor);
+      this.#withReclaimGuard(() => {
+        this.#unlinkExact(this.#lockPath, acquired.stat, acquired.nonce, "State lock release");
+      });
+    }
+  }
+  #assertSupportedPayload(previous, next) {
+    if (previous === void 0 || previous === null || next === null || typeof previous !== "object" || typeof next !== "object") return;
+    const previousVersion = previous.schemaVersion;
+    const nextVersion = next.schemaVersion;
+    if (previousVersion === "2.0.0" && nextVersion === "1.0.0") {
+      throw new RunStoreError("STATE_CORRUPT", "State format cannot be downgraded after migration");
+    }
+  }
+  #acquireLock() {
+    return this.#withReclaimGuard(() => {
+      let descriptor3;
+      try {
+        descriptor3 = (0, import_node_fs4.openSync)(
+          this.#lockPath,
+          import_node_fs4.constants.O_CREAT | import_node_fs4.constants.O_EXCL | import_node_fs4.constants.O_WRONLY | import_node_fs4.constants.O_NOFOLLOW,
+          384
+        );
+      } catch (error2) {
+        if (error2.code !== "EEXIST" || !this.#removeProvablyAbandonedLockUnderGuard()) {
+          throw new RunStoreError("STATE_LOCKED", "State is being updated by another process");
+        }
+        descriptor3 = (0, import_node_fs4.openSync)(
+          this.#lockPath,
+          import_node_fs4.constants.O_CREAT | import_node_fs4.constants.O_EXCL | import_node_fs4.constants.O_WRONLY | import_node_fs4.constants.O_NOFOLLOW,
+          384
+        );
+      }
+      const stat = (0, import_node_fs4.fstatSync)(descriptor3);
+      const nonce = (0, import_node_crypto5.randomUUID)();
+      assertOwner3(stat, "State lock");
+      (0, import_node_fs4.writeFileSync)(descriptor3, canonicalJson({
+        schemaVersion: "1.0.0",
+        pid: process.pid,
+        createdAtMs: Date.now(),
+        nonce
+      }), { encoding: "utf8" });
+      (0, import_node_fs4.fsyncSync)(descriptor3);
+      return { descriptor: descriptor3, stat, nonce };
+    });
+  }
+  #removeProvablyAbandonedLockUnderGuard() {
+    const stat = assertRegularFile(this.#lockPath, "State lock", LOCK_MAXIMUM_BYTES);
+    const lock = this.#parseLock(this.#lockPath);
+    try {
+      process.kill(lock.pid, 0);
+      return false;
+    } catch (error2) {
+      if (error2.code !== "ESRCH") return false;
+    }
+    this.#unlinkExact(this.#lockPath, stat, lock.nonce, "Abandoned state lock");
+    return true;
+  }
+  #withReclaimGuard(callback) {
+    const descriptor3 = this.#acquireReclaimMutex();
+    const stat = (0, import_node_fs4.fstatSync)(descriptor3);
+    const nonce = (0, import_node_crypto5.randomUUID)();
+    try {
+      assertOwner3(stat, "State lock reclaim mutex");
+      (0, import_node_fs4.writeFileSync)(descriptor3, canonicalJson({
+        schemaVersion: "1.0.0",
+        pid: process.pid,
+        createdAtMs: Date.now(),
+        nonce
+      }), { encoding: "utf8" });
+      (0, import_node_fs4.fsyncSync)(descriptor3);
+      return callback();
+    } finally {
+      (0, import_node_fs4.closeSync)(descriptor3);
+      this.#unlinkExact(this.#reclaimPath, stat, nonce, "State lock reclaim mutex release");
+    }
+  }
+  #acquireReclaimMutex() {
+    for (let attempt = 0; attempt < GUARD_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        return (0, import_node_fs4.openSync)(
+          this.#reclaimPath,
+          import_node_fs4.constants.O_CREAT | import_node_fs4.constants.O_EXCL | import_node_fs4.constants.O_WRONLY | import_node_fs4.constants.O_NOFOLLOW,
+          384
+        );
+      } catch (error2) {
+        if (error2.code !== "EEXIST") {
+          throw new RunStoreError("STATE_LOCKED", "State lock guard could not be acquired");
+        }
+      }
+      let lock;
+      try {
+        assertRegularFile(this.#reclaimPath, "State lock reclaim mutex", LOCK_MAXIMUM_BYTES);
+        lock = this.#parseLock(this.#reclaimPath);
+      } catch (error2) {
+        if (attempt === GUARD_RETRY_ATTEMPTS - 1) throw error2;
+      }
+      if (lock !== void 0) {
+        try {
+          process.kill(lock.pid, 0);
+        } catch (error2) {
+          if (error2.code === "ESRCH") {
+            throw new RunStoreError(
+              "STATE_LOCKED",
+              "State lock guard was abandoned; operator review is required"
+            );
+          }
+        }
+      }
+      Atomics.wait(GUARD_WAIT, 0, 0, GUARD_RETRY_MS);
+    }
+    throw new RunStoreError("STATE_LOCKED", "State lock guard is held by another process");
+  }
+  #parseLock(path) {
+    let lock;
+    try {
+      lock = JSON.parse((0, import_node_fs4.readFileSync)(path, "utf8"));
+    } catch {
+      throw new RunStoreError("STATE_LOCK_INVALID", "State lock is malformed");
+    }
+    if (lock === null || typeof lock !== "object" || Array.isArray(lock) || lock.schemaVersion !== "1.0.0" || !Number.isSafeInteger(lock.pid) || lock.pid <= 0 || !Number.isSafeInteger(lock.createdAtMs) || typeof lock.nonce !== "string" || !/^[a-f0-9-]{36}$/u.test(lock.nonce)) {
+      throw new RunStoreError("STATE_LOCK_INVALID", "State lock is malformed");
+    }
+    return { pid: lock.pid, nonce: lock.nonce };
+  }
+  #unlinkExact(path, expected, nonce, label) {
+    const current = assertRegularFile(path, label, LOCK_MAXIMUM_BYTES);
+    const receipt = this.#parseLock(path);
+    if (current.dev !== expected.dev || current.ino !== expected.ino || receipt.nonce !== nonce) {
+      throw new RunStoreError("STATE_LOCK_INVALID", "".concat(label, " no longer names the exact acquired lock"));
+    }
+    (0, import_node_fs4.unlinkSync)(path);
+  }
+  #removeOwnedTemporaryFile() {
+    if (!(0, import_node_fs4.existsSync)(this.#temporaryPath)) return;
+    assertRegularFile(this.#temporaryPath, "Abandoned temporary state file", this.#maximumBytes);
+    (0, import_node_fs4.unlinkSync)(this.#temporaryPath);
+  }
+  #recoverExactArtifactsUnderGuard() {
+    if ((0, import_node_fs4.existsSync)(this.#lockPath) && !this.#removeProvablyAbandonedLockUnderGuard()) {
+      throw new RunStoreError("STATE_LOCKED", "State is being updated by another process");
+    }
+    this.#removeOwnedTemporaryFile();
+  }
+  #removeLegacyOwnedTemporaryFiles() {
+    const prefix = ".state-".concat(this.#filename, "-");
+    for (const name of (0, import_node_fs4.readdirSync)(this.root)) {
+      if (/^\.state-[a-f0-9-]{36}\.tmp$/u.test(name)) {
+        throw new RunStoreError("STATE_FILE_INVALID", "Legacy unowned state temporary file requires operator review");
+      }
+      if (!name.startsWith(prefix)) continue;
+      if (!new RegExp("^".concat(prefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "[a-f0-9-]{36}\\.tmp$"), "u").test(name)) {
+        throw new RunStoreError("STATE_FILE_INVALID", "State temporary filename is invalid");
+      }
+      const temporary = (0, import_node_path5.resolve)(this.root, name);
+      assertRegularFile(temporary, "Abandoned temporary state file", this.#maximumBytes);
+      (0, import_node_fs4.unlinkSync)(temporary);
+    }
+  }
+  #readEnvelope() {
+    assertRegularFile(this.path, "State file", this.#maximumBytes);
+    return parseEnvelope((0, import_node_fs4.readFileSync)(this.path, "utf8"), this.#kind);
+  }
+  #atomicWrite(content) {
+    const temporary = this.#temporaryPath;
+    let descriptor3;
+    try {
+      descriptor3 = (0, import_node_fs4.openSync)(
+        temporary,
+        import_node_fs4.constants.O_CREAT | import_node_fs4.constants.O_EXCL | import_node_fs4.constants.O_WRONLY | import_node_fs4.constants.O_NOFOLLOW,
+        384
+      );
+      (0, import_node_fs4.writeFileSync)(descriptor3, content, { encoding: "utf8" });
+      (0, import_node_fs4.fsyncSync)(descriptor3);
+      (0, import_node_fs4.closeSync)(descriptor3);
+      descriptor3 = void 0;
+      assertRegularFile(temporary, "Temporary state file", this.#maximumBytes);
+      if ((0, import_node_fs4.existsSync)(this.path)) assertRegularFile(this.path, "State file", this.#maximumBytes);
+      (0, import_node_fs4.renameSync)(temporary, this.path);
+      const directoryDescriptor = (0, import_node_fs4.openSync)(this.root, import_node_fs4.constants.O_RDONLY | import_node_fs4.constants.O_DIRECTORY);
+      try {
+        (0, import_node_fs4.fsyncSync)(directoryDescriptor);
+      } finally {
+        (0, import_node_fs4.closeSync)(directoryDescriptor);
+      }
+    } finally {
+      if (descriptor3 !== void 0) (0, import_node_fs4.closeSync)(descriptor3);
+      if ((0, import_node_fs4.existsSync)(temporary)) (0, import_node_fs4.unlinkSync)(temporary);
+    }
+  }
+};
+
+// packages/run-store/src/durable-store.ts
+var EMPTY_SNAPSHOT = { schemaVersion: "1.0.0", runs: [] };
+var LEGACY_FILENAME = "run-store.json";
+var RETAINED_LEGACY_FILENAME = "run-store-v1-retained.json";
+var INDEX_FILENAME = "run-store-index.json";
+var BUCKET_COUNT = 256;
+var INDEX_MAXIMUM_BYTES = 256 * 1024;
+var BUCKET_FILENAME = /^run-bucket-(\d{3})-([ab])\.json$/u;
+var BUCKET_LOCK_FILENAME = /^run-bucket-(\d{3})-([ab])\.json\.lock(?:\.reclaim)?$/u;
+var BUCKET_TEMP_FILENAME = /^\.state-run-bucket-(\d{3})-([ab])\.json(?:-[a-f0-9-]{36})?\.tmp$/u;
+var ZERO_SHA256 = "0".repeat(64);
+var PendingSweepObserved = class extends Error {
+};
+function exactKeys(value, expected) {
+  return canonicalJson(Object.keys(value).sort()) === canonicalJson([...expected].sort());
+}
+function bucketKey(bucket) {
+  return bucket.toString().padStart(3, "0");
+}
+function bucketForRun(runId) {
+  return Number.parseInt(sha256Bytes(runId).slice(0, 2), 16);
+}
+function inactiveSlot(slot) {
+  return slot === "a" ? "b" : "a";
+}
+function unlinkAndSyncDirectory(path, directory) {
+  (0, import_node_fs5.unlinkSync)(path);
+  const descriptor3 = (0, import_node_fs5.openSync)(directory, import_node_fs5.constants.O_RDONLY | import_node_fs5.constants.O_DIRECTORY);
+  try {
+    (0, import_node_fs5.fsyncSync)(descriptor3);
+  } finally {
+    (0, import_node_fs5.closeSync)(descriptor3);
+  }
+}
+function validateDescriptor(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys(value, ["generation", "payloadSha256", "runCount", "slot"])) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store bucket descriptor is invalid");
+  }
+  const descriptor3 = value;
+  if (!["a", "b"].includes(descriptor3.slot) || !Number.isSafeInteger(descriptor3.generation) || descriptor3.generation < 1 || !/^[a-f0-9]{64}$/u.test(descriptor3.payloadSha256) || !Number.isSafeInteger(descriptor3.runCount) || descriptor3.runCount < 1) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store bucket descriptor is invalid");
+  }
+  return structuredClone(descriptor3);
+}
+function validateMigration(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys(value, ["sourceFilename", "sourcePayloadSha256", "sourceRunCount"])) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store migration marker is invalid");
+  }
+  const migration = value;
+  if (migration.sourceFilename !== RETAINED_LEGACY_FILENAME || !/^[a-f0-9]{64}$/u.test(migration.sourcePayloadSha256) || !Number.isSafeInteger(migration.sourceRunCount) || migration.sourceRunCount < 0) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store migration marker is invalid");
+  }
+  return structuredClone(migration);
+}
+function validateSweep(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys(value, ["atMs", "expiredCount", "id", "nextTargetIndex", "targetBuckets"])) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store sweep journal is invalid");
+  }
+  const sweep = value;
+  if (!/^[a-f0-9-]{36}$/u.test(sweep.id) || !Number.isSafeInteger(sweep.atMs) || sweep.atMs < 0 || !Number.isSafeInteger(sweep.expiredCount) || sweep.expiredCount < 1 || !Array.isArray(sweep.targetBuckets) || sweep.targetBuckets.length < 1 || sweep.targetBuckets.length > BUCKET_COUNT || sweep.targetBuckets.some((bucket, index) => !Number.isSafeInteger(bucket) || bucket < 0 || bucket >= BUCKET_COUNT || index > 0 && sweep.targetBuckets[index - 1] >= bucket) || !Number.isSafeInteger(sweep.nextTargetIndex) || sweep.nextTargetIndex < 0 || sweep.nextTargetIndex > sweep.targetBuckets.length) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store sweep journal is invalid");
+  }
+  return structuredClone(sweep);
+}
+function validateIndex(value) {
+  if (value === void 0 || value === null || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== "2.0.0" || value.format !== "bucketed-a-b" || value.bucketCount !== BUCKET_COUNT || value.buckets === null || typeof value.buckets !== "object" || Array.isArray(value.buckets) || !exactKeys(value, [
+    "bucketCount",
+    "buckets",
+    "format",
+    ...value.legacyMigration === void 0 ? [] : ["legacyMigration"],
+    ...value.pendingSweep === void 0 ? [] : ["pendingSweep"],
+    "schemaVersion"
+  ])) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store v2 index is invalid");
+  }
+  const buckets = {};
+  for (const [key, descriptor3] of Object.entries(value.buckets)) {
+    if (!/^\d{3}$/u.test(key)) {
+      throw new RunStoreError("STATE_CORRUPT", "Run-store index contains an invalid bucket key");
+    }
+    const bucket = Number.parseInt(key, 10);
+    if (bucket < 0 || bucket >= BUCKET_COUNT || key !== bucketKey(bucket)) {
+      throw new RunStoreError("STATE_CORRUPT", "Run-store index contains an invalid bucket key");
+    }
+    buckets[key] = validateDescriptor(descriptor3);
+  }
+  return {
+    schemaVersion: "2.0.0",
+    format: "bucketed-a-b",
+    bucketCount: BUCKET_COUNT,
+    buckets,
+    ...value.legacyMigration === void 0 ? {} : { legacyMigration: validateMigration(value.legacyMigration) },
+    ...value.pendingSweep === void 0 ? {} : { pendingSweep: validateSweep(value.pendingSweep) }
+  };
+}
+function validateMutation(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys(value, ["id", "kind"])) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store bucket mutation marker is invalid");
+  }
+  const mutation = value;
+  if (!["ordinary", "migration", "sweep"].includes(mutation.kind) || mutation.id.length === 0 || mutation.id.length > 128) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store bucket mutation marker is invalid");
+  }
+  return structuredClone(mutation);
+}
+function validateBucket(value, expectedBucket) {
+  if (value === void 0 || value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys(value, ["bucket", "generation", "mutation", "previousGenerationSha256", "runs", "schemaVersion"]) || value.schemaVersion !== "2.0.0" || value.bucket !== expectedBucket || !Number.isSafeInteger(value.generation) || value.generation < 1 || !/^[a-f0-9]{64}$/u.test(value.previousGenerationSha256) || !Array.isArray(value.runs) || value.runs.length < 1) {
+    throw new RunStoreError("STATE_CORRUPT", "Run-store bucket is invalid");
+  }
+  validateMutation(value.mutation);
+  let priorRunId = "";
+  for (const entry of value.runs) {
+    const runId = entry?.record?.runId;
+    if (typeof runId !== "string" || bucketForRun(runId) !== expectedBucket || runId.localeCompare(priorRunId) <= 0) {
+      throw new RunStoreError("STATE_CORRUPT", "Run-store bucket ordering is invalid");
+    }
+    priorRunId = runId;
+  }
+  return structuredClone(value);
+}
+function validateTombstone(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys(value, ["migratedTo", "retainedFilename", "schemaVersion", "sourcePayloadSha256", "sourceRunCount"])) {
+    throw new RunStoreError("STATE_CORRUPT", "Legacy run-store migration tombstone is invalid");
+  }
+  const tombstone = value;
+  if (tombstone.schemaVersion !== "2.0.0" || tombstone.migratedTo !== INDEX_FILENAME || tombstone.retainedFilename !== RETAINED_LEGACY_FILENAME || !/^[a-f0-9]{64}$/u.test(tombstone.sourcePayloadSha256) || !Number.isSafeInteger(tombstone.sourceRunCount) || tombstone.sourceRunCount < 0) {
+    throw new RunStoreError("STATE_CORRUPT", "Legacy run-store migration tombstone is invalid");
+  }
+  return structuredClone(tombstone);
+}
+var DurableRunStore = class {
+  stateRoot;
+  #index;
+  #options;
+  constructor(options) {
+    this.stateRoot = options.stateRoot;
+    this.#options = {
+      ...options.now === void 0 ? {} : { now: options.now },
+      ...options.randomBytes === void 0 ? {} : { randomBytes: options.randomBytes },
+      ...options.minimumTtlMs === void 0 ? {} : { minimumTtlMs: options.minimumTtlMs },
+      ...options.maximumTtlMs === void 0 ? {} : { maximumTtlMs: options.maximumTtlMs },
+      ...options.maximumLeaseMs === void 0 ? {} : { maximumLeaseMs: options.maximumLeaseMs }
+    };
+    this.#index = new AtomicStateFile({
+      stateRoot: options.stateRoot,
+      filename: INDEX_FILENAME,
+      kind: "production-monitoring-run-store-index-v2",
+      maximumBytes: INDEX_MAXIMUM_BYTES
+    });
+    this.#index.recoverAbandonedArtifacts();
+    this.#index.transact((current) => {
+      if (current !== void 0) {
+        const index = validateIndex(current);
+        this.#verifyMigration(index);
+        this.#loadSnapshot(index, true);
+        return { payload: index, result: void 0 };
+      }
+      return this.#legacyFile().transact((legacyCurrent) => {
+        const migration = this.#prepareLegacyMigrationLocked(legacyCurrent);
+        const buckets = this.#writeMigrationBuckets(migration.snapshot, migration.marker.sourcePayloadSha256);
+        return {
+          payload: this.#legacyTombstone(migration.marker),
+          result: {
+            payload: { ...this.#emptyIndex(), buckets, legacyMigration: migration.marker },
+            result: void 0
+          }
+        };
+      });
+    });
+    this.#recoverPendingSweep();
+  }
+  beginRun(input) {
+    return this.#mutate((store) => store.beginRun(input));
+  }
+  beginChildVerification(input) {
+    return this.#mutate((store) => store.beginChildVerification(input));
+  }
+  resumeRun(input) {
+    return this.#mutate((store) => store.resumeRun(input));
+  }
+  resumeRunWithHandle(input) {
+    return this.#mutate((store) => store.resumeRunWithHandle(input));
+  }
+  getRunWithHandle(input) {
+    return this.#read((store) => store.getRunWithHandle(input));
+  }
+  acknowledgeResume(access) {
+    return this.#mutate((store) => store.acknowledgeResume(access));
+  }
+  getRun(access) {
+    return this.#read((store) => store.getRun(access));
+  }
+  assertLease(access, leaseHandle) {
+    return this.#read((store) => store.assertLease(access, leaseHandle));
+  }
+  getRecoveryContext(access) {
+    return this.#read((store) => store.getRecoveryContext(access));
+  }
+  getSealedParent(input) {
+    return this.#read((store) => store.getSealedParent(input));
+  }
+  listOwnedRuns(input) {
+    return this.#read((store) => store.listOwnedRuns(input));
+  }
+  claimLease(access, ownerId, ttlMs) {
+    return this.#mutate((store) => store.claimLease(access, ownerId, ttlMs));
+  }
+  renewLease(access, leaseHandle, ttlMs) {
+    return this.#mutate((store) => store.renewLease(access, leaseHandle, ttlMs));
+  }
+  releaseLease(access, leaseHandle) {
+    return this.#mutate((store) => store.releaseLease(access, leaseHandle));
+  }
+  allocateEvidence(access, leaseHandle) {
+    return this.#mutate((store) => store.allocateEvidence(access, leaseHandle));
+  }
+  allocateContradiction(access, leaseHandle) {
+    return this.#mutate((store) => store.allocateContradiction(access, leaseHandle));
+  }
+  assertEvidenceOwnership(access, evidenceId) {
+    this.#read((store) => store.assertEvidenceOwnership(access, evidenceId));
+  }
+  assertContradictionOwnership(access, contradictionId) {
+    this.#read((store) => store.assertContradictionOwnership(access, contradictionId));
+  }
+  updateAudit(input) {
+    return this.#mutate((store) => store.updateAudit(input));
+  }
+  beginFinalize(access, leaseHandle) {
+    return this.#mutate((store) => store.beginFinalize(access, leaseHandle));
+  }
+  finalizeRun(input) {
+    return this.#mutate((store) => store.finalizeRun(input));
+  }
+  abortRun(access, leaseHandle, reason) {
+    return this.#mutate((store) => store.abortRun(access, leaseHandle, reason));
+  }
+  sweepExpired() {
+    while (true) {
+      this.#recoverPendingSweep();
+      try {
+        const prepared = this.#index.transact((current) => {
+          const index = validateIndex(current);
+          if (index.pendingSweep !== void 0) throw new PendingSweepObserved();
+          const before = this.#loadSnapshot(index);
+          const atMs = this.#options.now?.() ?? Date.now();
+          const store = this.#memory(before, atMs);
+          const expiredCount = store.sweepExpired();
+          if (expiredCount === 0) return { payload: index, result: void 0 };
+          const after = store.exportSnapshot();
+          const targetBuckets = this.#changedBuckets(before, after);
+          const pendingSweep = {
+            id: (0, import_node_crypto6.randomUUID)(),
+            atMs,
+            targetBuckets,
+            nextTargetIndex: 0,
+            expiredCount
+          };
+          return { payload: { ...index, pendingSweep }, result: pendingSweep };
+        });
+        if (prepared === void 0) return 0;
+        this.#recoverPendingSweep();
+        return prepared.expiredCount;
+      } catch (error2) {
+        if (!(error2 instanceof PendingSweepObserved)) throw error2;
+      }
+    }
+  }
+  #emptyIndex() {
+    return { schemaVersion: "2.0.0", format: "bucketed-a-b", bucketCount: BUCKET_COUNT, buckets: {} };
+  }
+  #memory(snapshot, fixedNow) {
+    return new InMemoryRunStore({
+      ...this.#options,
+      ...fixedNow === void 0 ? {} : { now: () => fixedNow },
+      snapshot
+    });
+  }
+  #read(callback) {
+    while (true) {
+      this.#recoverPendingSweep();
+      try {
+        return this.#index.inspect((current) => {
+          const index = validateIndex(current);
+          if (index.pendingSweep !== void 0) throw new PendingSweepObserved();
+          return callback(this.#memory(this.#loadSnapshot(index)));
+        });
+      } catch (error2) {
+        if (!(error2 instanceof PendingSweepObserved)) throw error2;
+      }
+    }
+  }
+  #mutate(callback) {
+    while (true) {
+      this.#recoverPendingSweep();
+      try {
+        return this.#index.transact((current) => {
+          const index = validateIndex(current);
+          if (index.pendingSweep !== void 0) throw new PendingSweepObserved();
+          const before = this.#loadSnapshot(index);
+          const store = this.#memory(before);
+          const result = callback(store);
+          const after = store.exportSnapshot();
+          const changed = this.#changedBuckets(before, after);
+          if (changed.length > 1) {
+            throw new RunStoreError("STATE_CORRUPT", "An ordinary run-store mutation changed multiple buckets");
+          }
+          if (changed.length === 0) return { payload: index, result };
+          const bucket = changed[0];
+          const buckets = { ...index.buckets };
+          buckets[bucketKey(bucket)] = this.#commitBucket(
+            index,
+            bucket,
+            this.#entriesForBucket(after, bucket),
+            { kind: "ordinary", id: (0, import_node_crypto6.randomUUID)() }
+          );
+          return { payload: { ...index, buckets }, result };
+        });
+      } catch (error2) {
+        if (!(error2 instanceof PendingSweepObserved)) throw error2;
+      }
+    }
+  }
+  #recoverPendingSweep() {
+    const pending = this.#index.inspect((current) => validateIndex(current).pendingSweep !== void 0);
+    if (!pending) return;
+    while (true) {
+      const complete = this.#index.transact((current) => {
+        const index = validateIndex(current);
+        const snapshot = this.#loadSnapshot(index);
+        const sweep = index.pendingSweep;
+        if (sweep === void 0) return { payload: index, result: true };
+        if (sweep.nextTargetIndex >= sweep.targetBuckets.length) {
+          const settled = { ...index };

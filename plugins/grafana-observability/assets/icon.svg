@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title description">
+  <title id="title">Grafana Observability for Codex</title>
+  <desc id="description">Five bounded evidence signals arranged around a central observation point</desc>
+  <defs>
+    <linearGradient id="background" x1="8" y1="5" x2="56" y2="59" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1C1538"/>
+      <stop offset="1" stop-color="#0B1222"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="16" y1="17" x2="49" y2="49" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A78BFA"/>
+      <stop offset="1" stop-color="#2DD4BF"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#background)"/>
+  <circle cx="32" cy="32" r="20" fill="none" stroke="#302957" stroke-width="2"/>
+  <path d="M18 23c5-8 17-12 27-5M48 25c4 9 0 20-9 25M30 52c-10-1-18-9-18-19" fill="none" stroke="url(#orbit)" stroke-linecap="round" stroke-width="2.5"/>
+  <circle cx="32" cy="32" r="8" fill="#171C35" stroke="#A78BFA" stroke-width="2.5"/>
+  <circle cx="32" cy="32" r="2.8" fill="#5EEAD4"/>
+  <circle cx="18" cy="23" r="3" fill="#C4B5FD"/>
+  <circle cx="45" cy="18" r="3" fill="#A78BFA"/>
+  <circle cx="48" cy="25" r="3" fill="#818CF8"/>
+  <circle cx="39" cy="50" r="3" fill="#5EEAD4"/>
+  <circle cx="12" cy="33" r="3" fill="#2DD4BF"/>
+</svg>

@@ -1,0 +1,59 @@
+apiVersion: 1
+deleteDatasources: []
+prune: true
+
+datasources:
+  - name: Live Matrix Prometheus
+    uid: live-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      manageAlerts: false
+      prometheusType: Prometheus
+      prometheusVersion: 3.5.0
+
+  - name: Live Matrix Loki
+    uid: live-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 100
+      derivedFields: []
+
+  - name: Live Matrix Tempo
+    uid: live-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      nodeGraph:
+        enabled: false
+      serviceMap:
+        datasourceUid: ""
+      tracesToLogsV2:
+        datasourceUid: live-loki
+        filterByTraceID: true
+        filterBySpanID: false
+
+  - name: Live Matrix PostgreSQL
+    uid: live-postgres
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: grafana_live_reader
+    database: observability
+    editable: false
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+      maxOpenConns: 2
+      maxIdleConns: 1
+      connMaxLifetime: 60

@@ -1,0 +1,1405 @@
+", "dot", "ident", "qcolumn$ebnf$1"], "postprocess": (x) => {
+                if (!x[3]) {
+                  return (0, lexer_2.track)(x, {
+                    table: (0, lexer_2.unbox)(x[0]),
+                    column: (0, lexer_2.unbox)(x[2])
+                  });
+                }
+                return (0, lexer_2.track)(x, {
+                  schema: (0, lexer_2.unbox)(x[0]),
+                  table: (0, lexer_2.unbox)(x[2]),
+                  column: (0, lexer_2.unbox)(x[3])
+                });
+              } },
+              { "name": "table_ref_aliased$ebnf$1", "symbols": ["ident_aliased"], "postprocess": id },
+              { "name": "table_ref_aliased$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "table_ref_aliased", "symbols": ["table_ref", "table_ref_aliased$ebnf$1"], "postprocess": (x) => {
+                const alias = unwrap(x[1]);
+                return (0, lexer_2.track)(x, {
+                  ...unwrap(x[0]),
+                  ...alias ? { alias } : {}
+                });
+              } },
+              { "name": "qualified_name", "symbols": ["qname_ident"], "postprocess": (x) => (0, lexer_2.track)(x, { name: toStr(x) }) },
+              { "name": "qualified_name", "symbols": ["ident", "dot", "ident_extended"], "postprocess": (x) => {
+                const schema = toStr(x[0]);
+                const name = toStr(x[2]);
+                return (0, lexer_2.track)(x, { schema, name });
+              } },
+              { "name": "qualified_name", "symbols": [lexer_1.lexerAny.has("kw_current_schema") ? { type: "kw_current_schema" } : kw_current_schema], "postprocess": (x) => (0, lexer_2.track)(x, { name: "current_schema" }) },
+              { "name": "qualified_name_mark_quotes", "symbols": ["qname_ident"], "postprocess": (x) => (0, lexer_2.track)(x, { name: toStr(x), ...(0, lexer_2.doubleQuoted)(x) }) },
+              { "name": "qualified_name_mark_quotes", "symbols": ["ident", "dot", "ident_extended"], "postprocess": (x) => {
+                const schema = toStr(x[0]);
+                const name = toStr(x[2]);
+                return (0, lexer_2.track)(x, { schema, name, ...(0, lexer_2.doubleQuoted)(x[2]) });
+              } },
+              { "name": "qualified_name_mark_quotes", "symbols": [lexer_1.lexerAny.has("kw_current_schema") ? { type: "kw_current_schema" } : kw_current_schema], "postprocess": (x) => (0, lexer_2.track)(x, { name: "current_schema" }) },
+              { "name": "qname_ident", "symbols": ["ident"] },
+              { "name": "qname_ident", "symbols": [lexer_1.lexerAny.has("kw_precision") ? { type: "kw_precision" } : kw_precision] },
+              { "name": "qname", "symbols": ["qualified_name"], "postprocess": unwrap },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_analyse") ? { type: "kw_analyse" } : kw_analyse] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_analyze") ? { type: "kw_analyze" } : kw_analyze] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_and") ? { type: "kw_and" } : kw_and] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_any") ? { type: "kw_any" } : kw_any] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_array") ? { type: "kw_array" } : kw_array] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_asc") ? { type: "kw_asc" } : kw_asc] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_asymmetric") ? { type: "kw_asymmetric" } : kw_asymmetric] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_authorization") ? { type: "kw_authorization" } : kw_authorization] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_binary") ? { type: "kw_binary" } : kw_binary] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_both") ? { type: "kw_both" } : kw_both] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_case") ? { type: "kw_case" } : kw_case] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_cast") ? { type: "kw_cast" } : kw_cast] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_check") ? { type: "kw_check" } : kw_check] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_collate") ? { type: "kw_collate" } : kw_collate] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_collation") ? { type: "kw_collation" } : kw_collation] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_concurrently") ? { type: "kw_concurrently" } : kw_concurrently] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_constraint") ? { type: "kw_constraint" } : kw_constraint] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_cross") ? { type: "kw_cross" } : kw_cross] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_catalog") ? { type: "kw_current_catalog" } : kw_current_catalog] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_date") ? { type: "kw_current_date" } : kw_current_date] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_role") ? { type: "kw_current_role" } : kw_current_role] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_schema") ? { type: "kw_current_schema" } : kw_current_schema] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_time") ? { type: "kw_current_time" } : kw_current_time] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_timestamp") ? { type: "kw_current_timestamp" } : kw_current_timestamp] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_user") ? { type: "kw_current_user" } : kw_current_user] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_deferrable") ? { type: "kw_deferrable" } : kw_deferrable] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_desc") ? { type: "kw_desc" } : kw_desc] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_distinct") ? { type: "kw_distinct" } : kw_distinct] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_do") ? { type: "kw_do" } : kw_do] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_else") ? { type: "kw_else" } : kw_else] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_end") ? { type: "kw_end" } : kw_end] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_except") ? { type: "kw_except" } : kw_except] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_false") ? { type: "kw_false" } : kw_false] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_fetch") ? { type: "kw_fetch" } : kw_fetch] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_for") ? { type: "kw_for" } : kw_for] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_foreign") ? { type: "kw_foreign" } : kw_foreign] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_freeze") ? { type: "kw_freeze" } : kw_freeze] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_full") ? { type: "kw_full" } : kw_full] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_grant") ? { type: "kw_grant" } : kw_grant] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_group") ? { type: "kw_group" } : kw_group] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_having") ? { type: "kw_having" } : kw_having] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_ilike") ? { type: "kw_ilike" } : kw_ilike] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_in") ? { type: "kw_in" } : kw_in] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_initially") ? { type: "kw_initially" } : kw_initially] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_inner") ? { type: "kw_inner" } : kw_inner] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_intersect") ? { type: "kw_intersect" } : kw_intersect] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_into") ? { type: "kw_into" } : kw_into] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_is") ? { type: "kw_is" } : kw_is] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_isnull") ? { type: "kw_isnull" } : kw_isnull] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_join") ? { type: "kw_join" } : kw_join] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_lateral") ? { type: "kw_lateral" } : kw_lateral] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_leading") ? { type: "kw_leading" } : kw_leading] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_left") ? { type: "kw_left" } : kw_left] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_like") ? { type: "kw_like" } : kw_like] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_limit") ? { type: "kw_limit" } : kw_limit] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_localtime") ? { type: "kw_localtime" } : kw_localtime] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_localtimestamp") ? { type: "kw_localtimestamp" } : kw_localtimestamp] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_natural") ? { type: "kw_natural" } : kw_natural] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_notnull") ? { type: "kw_notnull" } : kw_notnull] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_offset") ? { type: "kw_offset" } : kw_offset] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_only") ? { type: "kw_only" } : kw_only] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_or") ? { type: "kw_or" } : kw_or] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_order") ? { type: "kw_order" } : kw_order] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_outer") ? { type: "kw_outer" } : kw_outer] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_overlaps") ? { type: "kw_overlaps" } : kw_overlaps] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_placing") ? { type: "kw_placing" } : kw_placing] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_primary") ? { type: "kw_primary" } : kw_primary] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_references") ? { type: "kw_references" } : kw_references] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_returning") ? { type: "kw_returning" } : kw_returning] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_right") ? { type: "kw_right" } : kw_right] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_select") ? { type: "kw_select" } : kw_select] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_session_user") ? { type: "kw_session_user" } : kw_session_user] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_similar") ? { type: "kw_similar" } : kw_similar] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_some") ? { type: "kw_some" } : kw_some] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_symmetric") ? { type: "kw_symmetric" } : kw_symmetric] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_tablesample") ? { type: "kw_tablesample" } : kw_tablesample] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_then") ? { type: "kw_then" } : kw_then] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_trailing") ? { type: "kw_trailing" } : kw_trailing] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_true") ? { type: "kw_true" } : kw_true] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_union") ? { type: "kw_union" } : kw_union] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_unique") ? { type: "kw_unique" } : kw_unique] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_user") ? { type: "kw_user" } : kw_user] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_using") ? { type: "kw_using" } : kw_using] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_variadic") ? { type: "kw_variadic" } : kw_variadic] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_verbose") ? { type: "kw_verbose" } : kw_verbose] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_when") ? { type: "kw_when" } : kw_when] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_where") ? { type: "kw_where" } : kw_where] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_window") ? { type: "kw_window" } : kw_window] },
+              { "name": "any_keyword", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with] },
+              { "name": "ident_extended", "symbols": ["ident"] },
+              { "name": "ident_extended", "symbols": ["any_keyword"] },
+              { "name": "select_statement$ebnf$1", "symbols": ["select_from"], "postprocess": id },
+              { "name": "select_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$2", "symbols": ["select_where"], "postprocess": id },
+              { "name": "select_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$3$subexpression$1$ebnf$1", "symbols": ["select_having"], "postprocess": id },
+              { "name": "select_statement$ebnf$3$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$3$subexpression$1", "symbols": ["select_groupby", "select_statement$ebnf$3$subexpression$1$ebnf$1"] },
+              { "name": "select_statement$ebnf$3", "symbols": ["select_statement$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "select_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$4", "symbols": ["select_order_by"], "postprocess": id },
+              { "name": "select_statement$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$5", "symbols": ["select_limit_offset"], "postprocess": id },
+              { "name": "select_statement$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$6$subexpression$1$ebnf$1", "symbols": ["select_skip"], "postprocess": id },
+              { "name": "select_statement$ebnf$6$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement$ebnf$6$subexpression$1", "symbols": ["select_for", "select_statement$ebnf$6$subexpression$1$ebnf$1"] },
+              { "name": "select_statement$ebnf$6", "symbols": ["select_statement$ebnf$6$subexpression$1"], "postprocess": id },
+              { "name": "select_statement$ebnf$6", "symbols": [], "postprocess": () => null },
+              { "name": "select_statement", "symbols": ["select_what", "select_statement$ebnf$1", "select_statement$ebnf$2", "select_statement$ebnf$3", "select_statement$ebnf$4", "select_statement$ebnf$5", "select_statement$ebnf$6"], "postprocess": (x) => {
+                let [what, from, where, _groupBy, orderBy, limit, _selectFor] = x;
+                from = unwrap(from);
+                let groupBy = _groupBy && _groupBy[0];
+                let having = _groupBy && _groupBy[1];
+                groupBy = groupBy && (groupBy.length === 1 && groupBy[0].type === "list" ? groupBy[0].expressions : groupBy);
+                having = having && unwrap(having);
+                let selectFor = _selectFor && _selectFor[0];
+                let skip = _selectFor && _selectFor[1];
+                skip = unwrap(skip);
+                return (0, lexer_2.track)(x, {
+                  ...what,
+                  ...from ? { from: Array.isArray(from) ? from : [from] } : {},
+                  ...groupBy ? { groupBy } : {},
+                  ...having ? { having } : {},
+                  ...limit ? { limit: unwrap(limit) } : {},
+                  ...orderBy ? { orderBy } : {},
+                  ...where ? { where } : {},
+                  ...selectFor ? { for: selectFor[1] } : {},
+                  ...skip ? { skip } : {},
+                  type: "select"
+                });
+              } },
+              { "name": "select_from", "symbols": [lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from, "select_from_items"], "postprocess": last },
+              { "name": "select_from_items$ebnf$1", "symbols": [] },
+              { "name": "select_from_items$ebnf$1$subexpression$1", "symbols": ["comma", "select_from_item"], "postprocess": last },
+              { "name": "select_from_items$ebnf$1", "symbols": ["select_from_items$ebnf$1", "select_from_items$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "select_from_items", "symbols": ["select_from_item", "select_from_items$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [...head, ...flatten(tail) || []];
+              } },
+              { "name": "select_from_item", "symbols": ["select_from_subject"] },
+              { "name": "select_from_item", "symbols": ["select_from_item_joins"], "postprocess": get(0) },
+              { "name": "select_from_item_joins$subexpression$1", "symbols": ["select_from_item"], "postprocess": get(0) },
+              { "name": "select_from_item_joins", "symbols": ["select_from_item_joins$subexpression$1", "select_table_join"], "postprocess": flatten },
+              { "name": "select_from_item_joins", "symbols": ["lparen", "select_from_item_joins", "rparen"], "postprocess": get(1) },
+              { "name": "select_from_subject", "symbols": ["stb_table"], "postprocess": unwrap },
+              { "name": "select_from_subject", "symbols": ["stb_statement"], "postprocess": unwrap },
+              { "name": "select_from_subject", "symbols": ["stb_call"], "postprocess": unwrap },
+              { "name": "stb_opts$ebnf$1", "symbols": ["collist_paren"], "postprocess": id },
+              { "name": "stb_opts$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "stb_opts", "symbols": ["ident_aliased", "stb_opts$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                alias: toStr(x[0]),
+                ...x[1] && { columnNames: (0, lexer_2.unbox)(x[1]).map(asName) }
+              }) },
+              { "name": "stb_table$ebnf$1", "symbols": ["stb_opts"], "postprocess": id },
+              { "name": "stb_table$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "stb_table", "symbols": ["table_ref", "stb_table$ebnf$1"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  type: "table",
+                  name: (0, lexer_2.track)(x, {
+                    ...x[0],
+                    ...x[1]
+                  })
+                });
+              } },
+              { "name": "stb_statement$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_lateral") ? { type: "kw_lateral" } : kw_lateral], "postprocess": id },
+              { "name": "stb_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "stb_statement", "symbols": ["stb_statement$ebnf$1", "selection_paren", "stb_opts"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "statement",
+                statement: unwrap(x[1]),
+                ...x[0] && { lateral: true },
+                ...x[2]
+              }) },
+              { "name": "select_values", "symbols": ["kw_values", "insert_values"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "values",
+                values: x[1]
+              }) },
+              { "name": "stb_call$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_lateral") ? { type: "kw_lateral" } : kw_lateral], "postprocess": id },
+              { "name": "stb_call$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "stb_call$ebnf$2", "symbols": ["kw_withordinality"], "postprocess": id },
+              { "name": "stb_call$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "stb_call$ebnf$3", "symbols": ["stb_call_alias"], "postprocess": id },
+              { "name": "stb_call$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "stb_call", "symbols": ["stb_call$ebnf$1", "expr_function_call", "stb_call$ebnf$2", "stb_call$ebnf$3"], "postprocess": (x) => {
+                const lateral = x[0];
+                const withOrdinality = x[2];
+                const alias = x[3];
+                if (!withOrdinality && !alias) {
+                  return x[1];
+                }
+                return (0, lexer_2.track)(x, {
+                  ...x[1],
+                  ...lateral && { lateral: true },
+                  ...withOrdinality && { withOrdinality: true },
+                  alias: alias ? asNameWithColumns(alias[0], alias[1]) : void 0
+                });
+              } },
+              { "name": "stb_call_alias$subexpression$1$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as], "postprocess": id },
+              { "name": "stb_call_alias$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "stb_call_alias$subexpression$1", "symbols": ["stb_call_alias$subexpression$1$ebnf$1", "ident"], "postprocess": last },
+              { "name": "stb_call_alias$ebnf$1", "symbols": ["stb_call_alias_list"], "postprocess": id },
+              { "name": "stb_call_alias$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "stb_call_alias", "symbols": ["stb_call_alias$subexpression$1", "stb_call_alias$ebnf$1"] },
+              { "name": "stb_call_alias_list", "symbols": ["lparen", "stb_call_alias_list_raw", "rparen"], "postprocess": get(1) },
+              { "name": "stb_call_alias_list_raw$ebnf$1", "symbols": [] },
+              { "name": "stb_call_alias_list_raw$ebnf$1$subexpression$1", "symbols": ["comma", "ident"], "postprocess": last },
+              { "name": "stb_call_alias_list_raw$ebnf$1", "symbols": ["stb_call_alias_list_raw$ebnf$1", "stb_call_alias_list_raw$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "stb_call_alias_list_raw", "symbols": ["ident", "stb_call_alias_list_raw$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "select_table_join$ebnf$1", "symbols": ["select_table_join_clause"], "postprocess": id },
+              { "name": "select_table_join$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_table_join", "symbols": ["select_join_op", lexer_1.lexerAny.has("kw_join") ? { type: "kw_join" } : kw_join, "select_from_subject", "select_table_join$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                ...unwrap(x[2]),
+                join: {
+                  type: toStr(x[0], " "),
+                  ...x[3] && unwrap(x[3])
+                }
+              }) },
+              { "name": "select_table_join_clause", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "expr"], "postprocess": (x) => (0, lexer_2.track)(x, { on: last(x) }) },
+              { "name": "select_table_join_clause$macrocall$2", "symbols": ["ident"] },
+              { "name": "select_table_join_clause$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "select_table_join_clause$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "select_table_join_clause$macrocall$2"], "postprocess": last },
+              { "name": "select_table_join_clause$macrocall$1$ebnf$1", "symbols": ["select_table_join_clause$macrocall$1$ebnf$1", "select_table_join_clause$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "select_table_join_clause$macrocall$1", "symbols": ["select_table_join_clause$macrocall$2", "select_table_join_clause$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "select_table_join_clause", "symbols": [lexer_1.lexerAny.has("kw_using") ? { type: "kw_using" } : kw_using, "lparen", "select_table_join_clause$macrocall$1", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, { using: x[2].map(asName) }) },
+              { "name": "select_join_op$subexpression$1$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_inner") ? { type: "kw_inner" } : kw_inner], "postprocess": id },
+              { "name": "select_join_op$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_join_op$subexpression$1", "symbols": ["select_join_op$subexpression$1$ebnf$1"], "postprocess": (x) => (0, lexer_2.box)(x, "INNER JOIN") },
+              { "name": "select_join_op", "symbols": ["select_join_op$subexpression$1"] },
+              { "name": "select_join_op$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_cross") ? { type: "kw_cross" } : kw_cross], "postprocess": (x) => (0, lexer_2.box)(x, "CROSS JOIN") },
+              { "name": "select_join_op", "symbols": ["select_join_op$subexpression$2"] },
+              { "name": "select_join_op$subexpression$3$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_outer") ? { type: "kw_outer" } : kw_outer], "postprocess": id },
+              { "name": "select_join_op$subexpression$3$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_join_op$subexpression$3", "symbols": [lexer_1.lexerAny.has("kw_left") ? { type: "kw_left" } : kw_left, "select_join_op$subexpression$3$ebnf$1"], "postprocess": (x) => (0, lexer_2.box)(x, "LEFT JOIN") },
+              { "name": "select_join_op", "symbols": ["select_join_op$subexpression$3"] },
+              { "name": "select_join_op$subexpression$4$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_outer") ? { type: "kw_outer" } : kw_outer], "postprocess": id },
+              { "name": "select_join_op$subexpression$4$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_join_op$subexpression$4", "symbols": [lexer_1.lexerAny.has("kw_right") ? { type: "kw_right" } : kw_right, "select_join_op$subexpression$4$ebnf$1"], "postprocess": (x) => (0, lexer_2.box)(x, "RIGHT JOIN") },
+              { "name": "select_join_op", "symbols": ["select_join_op$subexpression$4"] },
+              { "name": "select_join_op$subexpression$5$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_outer") ? { type: "kw_outer" } : kw_outer], "postprocess": id },
+              { "name": "select_join_op$subexpression$5$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_join_op$subexpression$5", "symbols": [lexer_1.lexerAny.has("kw_full") ? { type: "kw_full" } : kw_full, "select_join_op$subexpression$5$ebnf$1"], "postprocess": (x) => (0, lexer_2.box)(x, "FULL JOIN") },
+              { "name": "select_join_op", "symbols": ["select_join_op$subexpression$5"] },
+              { "name": "select_what$ebnf$1", "symbols": ["select_distinct"], "postprocess": id },
+              { "name": "select_what$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_what$ebnf$2", "symbols": ["select_expr_list_aliased"], "postprocess": id },
+              { "name": "select_what$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "select_what", "symbols": [lexer_1.lexerAny.has("kw_select") ? { type: "kw_select" } : kw_select, "select_what$ebnf$1", "select_what$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                columns: x[2],
+                ...x[1] && { distinct: (0, lexer_2.unbox)(x[1]) }
+              }) },
+              { "name": "select_expr_list_aliased$ebnf$1", "symbols": [] },
+              { "name": "select_expr_list_aliased$ebnf$1$subexpression$1", "symbols": ["comma", "select_expr_list_item"], "postprocess": last },
+              { "name": "select_expr_list_aliased$ebnf$1", "symbols": ["select_expr_list_aliased$ebnf$1", "select_expr_list_aliased$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "select_expr_list_aliased", "symbols": ["select_expr_list_item", "select_expr_list_aliased$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "select_expr_list_item$ebnf$1", "symbols": ["ident_aliased"], "postprocess": id },
+              { "name": "select_expr_list_item$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_expr_list_item", "symbols": ["expr", "select_expr_list_item$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                expr: x[0],
+                ...x[1] ? { alias: asName(x[1]) } : {}
+              }) },
+              { "name": "select_distinct", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all], "postprocess": (x) => (0, lexer_2.box)(x, "all") },
+              { "name": "select_distinct$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "lparen", "expr_list_raw", "rparen"], "postprocess": get(2) },
+              { "name": "select_distinct$ebnf$1", "symbols": ["select_distinct$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "select_distinct$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_distinct", "symbols": [lexer_1.lexerAny.has("kw_distinct") ? { type: "kw_distinct" } : kw_distinct, "select_distinct$ebnf$1"], "postprocess": (x) => (0, lexer_2.box)(x, x[1] || "distinct") },
+              { "name": "select_where", "symbols": [lexer_1.lexerAny.has("kw_where") ? { type: "kw_where" } : kw_where, "expr"], "postprocess": last },
+              { "name": "select_groupby", "symbols": [lexer_1.lexerAny.has("kw_group") ? { type: "kw_group" } : kw_group, "kw_by", "expr_list_raw"], "postprocess": last },
+              { "name": "select_having", "symbols": [lexer_1.lexerAny.has("kw_having") ? { type: "kw_having" } : kw_having, "expr"], "postprocess": last },
+              { "name": "select_limit_offset$ebnf$1$subexpression$1", "symbols": ["select_offset"] },
+              { "name": "select_limit_offset$ebnf$1$subexpression$1", "symbols": ["select_limit"] },
+              { "name": "select_limit_offset$ebnf$1", "symbols": ["select_limit_offset$ebnf$1$subexpression$1"] },
+              { "name": "select_limit_offset$ebnf$1$subexpression$2", "symbols": ["select_offset"] },
+              { "name": "select_limit_offset$ebnf$1$subexpression$2", "symbols": ["select_limit"] },
+              { "name": "select_limit_offset$ebnf$1", "symbols": ["select_limit_offset$ebnf$1", "select_limit_offset$ebnf$1$subexpression$2"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "select_limit_offset", "symbols": ["select_limit_offset$ebnf$1"], "postprocess": (x, rej) => {
+                const value3 = unwrap(x);
+                if (!Array.isArray(value3)) {
+                  return (0, lexer_2.track)(x, value3);
+                }
+                if (value3.length != 2) {
+                  return rej;
+                }
+                const a = unwrap(value3[0]);
+                const b = unwrap(value3[1]);
+                if (a.offset && b.offset || a.limit && b.limit) {
+                  return rej;
+                }
+                return (0, lexer_2.track)(x, {
+                  ...a,
+                  ...b
+                });
+              } },
+              { "name": "select_offset$ebnf$1$subexpression$1", "symbols": ["kw_row"] },
+              { "name": "select_offset$ebnf$1$subexpression$1", "symbols": ["kw_rows"] },
+              { "name": "select_offset$ebnf$1", "symbols": ["select_offset$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "select_offset$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_offset", "symbols": [lexer_1.lexerAny.has("kw_offset") ? { type: "kw_offset" } : kw_offset, "expr_nostar", "select_offset$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, { offset: unwrap(x[1]) }) },
+              { "name": "select_limit$subexpression$1", "symbols": ["select_limit_1"] },
+              { "name": "select_limit$subexpression$1", "symbols": ["select_limit_2"] },
+              { "name": "select_limit", "symbols": ["select_limit$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { limit: unwrap(x) }) },
+              { "name": "select_limit_1", "symbols": [lexer_1.lexerAny.has("kw_limit") ? { type: "kw_limit" } : kw_limit, "expr_nostar"], "postprocess": last },
+              { "name": "select_limit_2$ebnf$1$subexpression$1", "symbols": ["kw_first"] },
+              { "name": "select_limit_2$ebnf$1$subexpression$1", "symbols": ["kw_next"] },
+              { "name": "select_limit_2$ebnf$1", "symbols": ["select_limit_2$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "select_limit_2$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_limit_2$subexpression$1", "symbols": ["kw_row"] },
+              { "name": "select_limit_2$subexpression$1", "symbols": ["kw_rows"] },
+              { "name": "select_limit_2", "symbols": [lexer_1.lexerAny.has("kw_fetch") ? { type: "kw_fetch" } : kw_fetch, "select_limit_2$ebnf$1", "expr_nostar", "select_limit_2$subexpression$1", lexer_1.lexerAny.has("kw_only") ? { type: "kw_only" } : kw_only], "postprocess": get(2) },
+              { "name": "select_for$subexpression$1", "symbols": ["kw_update"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "update" }) },
+              { "name": "select_for$subexpression$1", "symbols": ["kw_no", "kw_key", "kw_update"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "no key update" }) },
+              { "name": "select_for$subexpression$1", "symbols": ["kw_share"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "share" }) },
+              { "name": "select_for$subexpression$1", "symbols": ["kw_key", "kw_share"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "key share" }) },
+              { "name": "select_for", "symbols": [lexer_1.lexerAny.has("kw_for") ? { type: "kw_for" } : kw_for, "select_for$subexpression$1"] },
+              { "name": "select_skip$subexpression$1", "symbols": ["kw_nowait"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "nowait" }) },
+              { "name": "select_skip$subexpression$1", "symbols": ["kw_skip", "kw_locked"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "skip locked" }) },
+              { "name": "select_skip", "symbols": ["select_skip$subexpression$1"] },
+              { "name": "select_order_by$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_order") ? { type: "kw_order" } : kw_order, "kw_by"] },
+              { "name": "select_order_by$ebnf$1", "symbols": [] },
+              { "name": "select_order_by$ebnf$1$subexpression$1", "symbols": ["comma", "select_order_by_expr"], "postprocess": last },
+              { "name": "select_order_by$ebnf$1", "symbols": ["select_order_by$ebnf$1", "select_order_by$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "select_order_by", "symbols": ["select_order_by$subexpression$1", "select_order_by_expr", "select_order_by$ebnf$1"], "postprocess": ([_, head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "select_order_by_expr$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_asc") ? { type: "kw_asc" } : kw_asc] },
+              { "name": "select_order_by_expr$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_desc") ? { type: "kw_desc" } : kw_desc] },
+              { "name": "select_order_by_expr$ebnf$1", "symbols": ["select_order_by_expr$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "select_order_by_expr$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "select_order_by_expr$ebnf$2$subexpression$1$subexpression$1", "symbols": ["kw_first"] },
+              { "name": "select_order_by_expr$ebnf$2$subexpression$1$subexpression$1", "symbols": ["kw_last"] },
+              { "name": "select_order_by_expr$ebnf$2$subexpression$1", "symbols": ["kw_nulls", "select_order_by_expr$ebnf$2$subexpression$1$subexpression$1"], "postprocess": last },
+              { "name": "select_order_by_expr$ebnf$2", "symbols": ["select_order_by_expr$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "select_order_by_expr$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "select_order_by_expr", "symbols": ["expr", "select_order_by_expr$ebnf$1", "select_order_by_expr$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                by: x[0],
+                ...x[1] && { order: toStr(x[1]).toUpperCase() },
+                ...x[2] && { nulls: toStr(x[2]).toUpperCase() }
+              }) },
+              { "name": "expr", "symbols": ["expr_nostar"], "postprocess": unwrap },
+              { "name": "expr", "symbols": ["expr_star"], "postprocess": unwrap },
+              { "name": "expr_nostar", "symbols": ["expr_paren"], "postprocess": unwrap },
+              { "name": "expr_nostar", "symbols": ["expr_or"], "postprocess": unwrap },
+              { "name": "expr_paren$subexpression$1", "symbols": ["expr_or_select"] },
+              { "name": "expr_paren$subexpression$1", "symbols": ["expr_list_many"] },
+              { "name": "expr_paren", "symbols": ["lparen", "expr_paren$subexpression$1", "rparen"], "postprocess": get(1) },
+              { "name": "expr_or$macrocall$2$macrocall$2", "symbols": [lexer_1.lexerAny.has("kw_or") ? { type: "kw_or" } : kw_or] },
+              { "name": "expr_or$macrocall$2$macrocall$1", "symbols": ["expr_or$macrocall$2$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_or$macrocall$2", "symbols": ["expr_or$macrocall$2$macrocall$1"] },
+              { "name": "expr_or$macrocall$3", "symbols": ["expr_or"] },
+              { "name": "expr_or$macrocall$4", "symbols": ["expr_and"] },
+              { "name": "expr_or$macrocall$1$subexpression$1", "symbols": ["expr_or$macrocall$3"] },
+              { "name": "expr_or$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_or$macrocall$1$subexpression$2", "symbols": ["expr_or$macrocall$4"] },
+              { "name": "expr_or$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_or$macrocall$1", "symbols": ["expr_or$macrocall$1$subexpression$1", "expr_or$macrocall$2", "expr_or$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_or$macrocall$1", "symbols": ["expr_or$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_or", "symbols": ["expr_or$macrocall$1"] },
+              { "name": "expr_and$macrocall$2$macrocall$2", "symbols": [lexer_1.lexerAny.has("kw_and") ? { type: "kw_and" } : kw_and] },
+              { "name": "expr_and$macrocall$2$macrocall$1", "symbols": ["expr_and$macrocall$2$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_and$macrocall$2", "symbols": ["expr_and$macrocall$2$macrocall$1"] },
+              { "name": "expr_and$macrocall$3", "symbols": ["expr_and"] },
+              { "name": "expr_and$macrocall$4", "symbols": ["expr_not"] },
+              { "name": "expr_and$macrocall$1$subexpression$1", "symbols": ["expr_and$macrocall$3"] },
+              { "name": "expr_and$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_and$macrocall$1$subexpression$2", "symbols": ["expr_and$macrocall$4"] },
+              { "name": "expr_and$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_and$macrocall$1", "symbols": ["expr_and$macrocall$1$subexpression$1", "expr_and$macrocall$2", "expr_and$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_and$macrocall$1", "symbols": ["expr_and$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_and", "symbols": ["expr_and$macrocall$1"] },
+              { "name": "expr_not$macrocall$2$macrocall$2", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not] },
+              { "name": "expr_not$macrocall$2$macrocall$1", "symbols": ["expr_not$macrocall$2$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_not$macrocall$2", "symbols": ["expr_not$macrocall$2$macrocall$1"] },
+              { "name": "expr_not$macrocall$3", "symbols": ["expr_not"] },
+              { "name": "expr_not$macrocall$4", "symbols": ["expr_eq"] },
+              { "name": "expr_not$macrocall$1$subexpression$1", "symbols": ["expr_not$macrocall$3"] },
+              { "name": "expr_not$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_not$macrocall$1", "symbols": ["expr_not$macrocall$2", "expr_not$macrocall$1$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "unary",
+                ...unwrap(x[0]),
+                operand: unwrap(x[1])
+              }) },
+              { "name": "expr_not$macrocall$1", "symbols": ["expr_not$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_not", "symbols": ["expr_not$macrocall$1"] },
+              { "name": "expr_eq$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq] },
+              { "name": "expr_eq$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_neq") ? { type: "op_neq" } : op_neq] },
+              { "name": "expr_eq$macrocall$2$macrocall$2", "symbols": ["expr_eq$macrocall$2$macrocall$2$subexpression$1"] },
+              { "name": "expr_eq$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_eq$macrocall$2$macrocall$2"] },
+              { "name": "expr_eq$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_eq$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_eq$macrocall$2$macrocall$1", "symbols": ["expr_eq$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_eq$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_eq$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_eq$macrocall$2", "symbols": ["expr_eq$macrocall$2$macrocall$1"] },
+              { "name": "expr_eq$macrocall$3", "symbols": ["expr_eq"] },
+              { "name": "expr_eq$macrocall$4", "symbols": ["expr_is"] },
+              { "name": "expr_eq$macrocall$1$subexpression$1", "symbols": ["expr_eq$macrocall$3"] },
+              { "name": "expr_eq$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_eq$macrocall$1$subexpression$2", "symbols": ["expr_eq$macrocall$4"] },
+              { "name": "expr_eq$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_eq$macrocall$1", "symbols": ["expr_eq$macrocall$1$subexpression$1", "expr_eq$macrocall$2", "expr_eq$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_eq$macrocall$1", "symbols": ["expr_eq$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_eq", "symbols": ["expr_eq$macrocall$1"] },
+              { "name": "expr_star", "symbols": ["star"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "ref", name: "*" }) },
+              { "name": "expr_is$subexpression$1", "symbols": ["expr_is"] },
+              { "name": "expr_is$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_is$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_isnull") ? { type: "kw_isnull" } : kw_isnull] },
+              { "name": "expr_is$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_is") ? { type: "kw_is" } : kw_is, lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null] },
+              { "name": "expr_is", "symbols": ["expr_is$subexpression$1", "expr_is$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "unary", op: "IS NULL", operand: unwrap(x[0]) }) },
+              { "name": "expr_is$subexpression$3", "symbols": ["expr_is"] },
+              { "name": "expr_is$subexpression$3", "symbols": ["expr_paren"] },
+              { "name": "expr_is$subexpression$4", "symbols": [lexer_1.lexerAny.has("kw_notnull") ? { type: "kw_notnull" } : kw_notnull] },
+              { "name": "expr_is$subexpression$4", "symbols": [lexer_1.lexerAny.has("kw_is") ? { type: "kw_is" } : kw_is, "kw_not_null"] },
+              { "name": "expr_is", "symbols": ["expr_is$subexpression$3", "expr_is$subexpression$4"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "unary", op: "IS NOT NULL", operand: unwrap(x[0]) }) },
+              { "name": "expr_is$subexpression$5", "symbols": ["expr_is"] },
+              { "name": "expr_is$subexpression$5", "symbols": ["expr_paren"] },
+              { "name": "expr_is$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not], "postprocess": id },
+              { "name": "expr_is$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_is$subexpression$6", "symbols": [lexer_1.lexerAny.has("kw_true") ? { type: "kw_true" } : kw_true] },
+              { "name": "expr_is$subexpression$6", "symbols": [lexer_1.lexerAny.has("kw_false") ? { type: "kw_false" } : kw_false] },
+              { "name": "expr_is", "symbols": ["expr_is$subexpression$5", lexer_1.lexerAny.has("kw_is") ? { type: "kw_is" } : kw_is, "expr_is$ebnf$1", "expr_is$subexpression$6"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "unary",
+                op: "IS " + flattenStr([x[2], x[3]]).join(" ").toUpperCase(),
+                operand: unwrap(x[0])
+              }) },
+              { "name": "expr_is", "symbols": ["expr_compare"], "postprocess": unwrap },
+              { "name": "expr_compare$macrocall$2$macrocall$2", "symbols": [lexer_1.lexerAny.has("op_compare") ? { type: "op_compare" } : op_compare] },
+              { "name": "expr_compare$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_compare$macrocall$2$macrocall$2"] },
+              { "name": "expr_compare$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_compare$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_compare$macrocall$2$macrocall$1", "symbols": ["expr_compare$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_compare$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_compare$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_compare$macrocall$2", "symbols": ["expr_compare$macrocall$2$macrocall$1"] },
+              { "name": "expr_compare$macrocall$3", "symbols": ["expr_compare"] },
+              { "name": "expr_compare$macrocall$4", "symbols": ["expr_range"] },
+              { "name": "expr_compare$macrocall$1$subexpression$1", "symbols": ["expr_compare$macrocall$3"] },
+              { "name": "expr_compare$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_compare$macrocall$1$subexpression$2", "symbols": ["expr_compare$macrocall$4"] },
+              { "name": "expr_compare$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_compare$macrocall$1", "symbols": ["expr_compare$macrocall$1$subexpression$1", "expr_compare$macrocall$2", "expr_compare$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_compare$macrocall$1", "symbols": ["expr_compare$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_compare", "symbols": ["expr_compare$macrocall$1"] },
+              { "name": "expr_range$macrocall$2", "symbols": ["ops_between"] },
+              { "name": "expr_range$macrocall$3", "symbols": [lexer_1.lexerAny.has("kw_and") ? { type: "kw_and" } : kw_and] },
+              { "name": "expr_range$macrocall$4", "symbols": ["expr_range"] },
+              { "name": "expr_range$macrocall$5", "symbols": ["expr_others"] },
+              { "name": "expr_range$macrocall$1$subexpression$1", "symbols": ["expr_range$macrocall$4"] },
+              { "name": "expr_range$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_range$macrocall$1$subexpression$2", "symbols": ["expr_range$macrocall$4"] },
+              { "name": "expr_range$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_range$macrocall$1$subexpression$3", "symbols": ["expr_range$macrocall$5"] },
+              { "name": "expr_range$macrocall$1$subexpression$3", "symbols": ["expr_paren"] },
+              { "name": "expr_range$macrocall$1", "symbols": ["expr_range$macrocall$1$subexpression$1", "expr_range$macrocall$2", "expr_range$macrocall$1$subexpression$2", "expr_range$macrocall$3", "expr_range$macrocall$1$subexpression$3"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "ternary",
+                value: unwrap(x[0]),
+                lo: unwrap(x[2]),
+                hi: unwrap(x[4]),
+                op: (flattenStr(x[1]).join(" ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_range$macrocall$1", "symbols": ["expr_range$macrocall$5"], "postprocess": unwrap },
+              { "name": "expr_range", "symbols": ["expr_range$macrocall$1"] },
+              { "name": "expr_others$macrocall$2$macrocall$2", "symbols": [lexer_1.lexerAny.has("ops_others") ? { type: "ops_others" } : ops_others] },
+              { "name": "expr_others$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_others$macrocall$2$macrocall$2"] },
+              { "name": "expr_others$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_others$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_others$macrocall$2$macrocall$1", "symbols": ["expr_others$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_others$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_others$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_others$macrocall$2", "symbols": ["expr_others$macrocall$2$macrocall$1"] },
+              { "name": "expr_others$macrocall$3", "symbols": ["expr_others"] },
+              { "name": "expr_others$macrocall$4", "symbols": ["expr_like"] },
+              { "name": "expr_others$macrocall$1$subexpression$1", "symbols": ["expr_others$macrocall$3"] },
+              { "name": "expr_others$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_others$macrocall$1$subexpression$2", "symbols": ["expr_others$macrocall$4"] },
+              { "name": "expr_others$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_others$macrocall$1", "symbols": ["expr_others$macrocall$1$subexpression$1", "expr_others$macrocall$2", "expr_others$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_others$macrocall$1", "symbols": ["expr_others$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_others", "symbols": ["expr_others$macrocall$1"] },
+              { "name": "expr_like$macrocall$2$macrocall$2", "symbols": ["ops_like"] },
+              { "name": "expr_like$macrocall$2$macrocall$1", "symbols": ["expr_like$macrocall$2$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_like$macrocall$2", "symbols": ["expr_like$macrocall$2$macrocall$1"] },
+              { "name": "expr_like$macrocall$3", "symbols": ["expr_like"] },
+              { "name": "expr_like$macrocall$4", "symbols": ["expr_in"] },
+              { "name": "expr_like$macrocall$1$subexpression$1", "symbols": ["expr_like$macrocall$3"] },
+              { "name": "expr_like$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_like$macrocall$1$subexpression$2", "symbols": ["expr_like$macrocall$4"] },
+              { "name": "expr_like$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_like$macrocall$1", "symbols": ["expr_like$macrocall$1$subexpression$1", "expr_like$macrocall$2", "expr_like$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_like$macrocall$1", "symbols": ["expr_like$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_like", "symbols": ["expr_like$macrocall$1"] },
+              { "name": "expr_in$macrocall$2$macrocall$2", "symbols": ["ops_in"] },
+              { "name": "expr_in$macrocall$2$macrocall$1", "symbols": ["expr_in$macrocall$2$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_in$macrocall$2", "symbols": ["expr_in$macrocall$2$macrocall$1"] },
+              { "name": "expr_in$macrocall$3", "symbols": ["expr_in"] },
+              { "name": "expr_in$macrocall$4", "symbols": ["expr_add"] },
+              { "name": "expr_in$macrocall$1$subexpression$1", "symbols": ["expr_in$macrocall$3"] },
+              { "name": "expr_in$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_in$macrocall$1$subexpression$2", "symbols": ["expr_in$macrocall$4"] },
+              { "name": "expr_in$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_in$macrocall$1", "symbols": ["expr_in$macrocall$1$subexpression$1", "expr_in$macrocall$2", "expr_in$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_in$macrocall$1", "symbols": ["expr_in$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_in", "symbols": ["expr_in$macrocall$1"] },
+              { "name": "expr_add$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_plus") ? { type: "op_plus" } : op_plus] },
+              { "name": "expr_add$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_minus") ? { type: "op_minus" } : op_minus] },
+              { "name": "expr_add$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_additive") ? { type: "op_additive" } : op_additive] },
+              { "name": "expr_add$macrocall$2$macrocall$2", "symbols": ["expr_add$macrocall$2$macrocall$2$subexpression$1"] },
+              { "name": "expr_add$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_add$macrocall$2$macrocall$2"] },
+              { "name": "expr_add$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_add$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_add$macrocall$2$macrocall$1", "symbols": ["expr_add$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_add$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_add$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_add$macrocall$2", "symbols": ["expr_add$macrocall$2$macrocall$1"] },
+              { "name": "expr_add$macrocall$3", "symbols": ["expr_add"] },
+              { "name": "expr_add$macrocall$4", "symbols": ["expr_mult"] },
+              { "name": "expr_add$macrocall$1$subexpression$1", "symbols": ["expr_add$macrocall$3"] },
+              { "name": "expr_add$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_add$macrocall$1$subexpression$2", "symbols": ["expr_add$macrocall$4"] },
+              { "name": "expr_add$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_add$macrocall$1", "symbols": ["expr_add$macrocall$1$subexpression$1", "expr_add$macrocall$2", "expr_add$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_add$macrocall$1", "symbols": ["expr_add$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_add", "symbols": ["expr_add$macrocall$1"] },
+              { "name": "expr_mult$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("star") ? { type: "star" } : star] },
+              { "name": "expr_mult$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_div") ? { type: "op_div" } : op_div] },
+              { "name": "expr_mult$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_mod") ? { type: "op_mod" } : op_mod] },
+              { "name": "expr_mult$macrocall$2$macrocall$2", "symbols": ["expr_mult$macrocall$2$macrocall$2$subexpression$1"] },
+              { "name": "expr_mult$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_mult$macrocall$2$macrocall$2"] },
+              { "name": "expr_mult$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_mult$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_mult$macrocall$2$macrocall$1", "symbols": ["expr_mult$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_mult$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_mult$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_mult$macrocall$2", "symbols": ["expr_mult$macrocall$2$macrocall$1"] },
+              { "name": "expr_mult$macrocall$3", "symbols": ["expr_mult"] },
+              { "name": "expr_mult$macrocall$4", "symbols": ["expr_exp"] },
+              { "name": "expr_mult$macrocall$1$subexpression$1", "symbols": ["expr_mult$macrocall$3"] },
+              { "name": "expr_mult$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_mult$macrocall$1$subexpression$2", "symbols": ["expr_mult$macrocall$4"] },
+              { "name": "expr_mult$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_mult$macrocall$1", "symbols": ["expr_mult$macrocall$1$subexpression$1", "expr_mult$macrocall$2", "expr_mult$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_mult$macrocall$1", "symbols": ["expr_mult$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_mult", "symbols": ["expr_mult$macrocall$1"] },
+              { "name": "expr_exp$macrocall$2$macrocall$2", "symbols": [lexer_1.lexerAny.has("op_exp") ? { type: "op_exp" } : op_exp] },
+              { "name": "expr_exp$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_exp$macrocall$2$macrocall$2"] },
+              { "name": "expr_exp$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_exp$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_exp$macrocall$2$macrocall$1", "symbols": ["expr_exp$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_exp$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_exp$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_exp$macrocall$2", "symbols": ["expr_exp$macrocall$2$macrocall$1"] },
+              { "name": "expr_exp$macrocall$3", "symbols": ["expr_exp"] },
+              { "name": "expr_exp$macrocall$4", "symbols": ["expr_unary_add"] },
+              { "name": "expr_exp$macrocall$1$subexpression$1", "symbols": ["expr_exp$macrocall$3"] },
+              { "name": "expr_exp$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_exp$macrocall$1$subexpression$2", "symbols": ["expr_exp$macrocall$4"] },
+              { "name": "expr_exp$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_exp$macrocall$1", "symbols": ["expr_exp$macrocall$1$subexpression$1", "expr_exp$macrocall$2", "expr_exp$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_exp$macrocall$1", "symbols": ["expr_exp$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_exp", "symbols": ["expr_exp$macrocall$1"] },
+              { "name": "expr_unary_add$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_plus") ? { type: "op_plus" } : op_plus] },
+              { "name": "expr_unary_add$macrocall$2$macrocall$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_minus") ? { type: "op_minus" } : op_minus] },
+              { "name": "expr_unary_add$macrocall$2$macrocall$2", "symbols": ["expr_unary_add$macrocall$2$macrocall$2$subexpression$1"] },
+              { "name": "expr_unary_add$macrocall$2$macrocall$1$macrocall$2", "symbols": ["expr_unary_add$macrocall$2$macrocall$2"] },
+              { "name": "expr_unary_add$macrocall$2$macrocall$1$macrocall$1", "symbols": ["expr_unary_add$macrocall$2$macrocall$1$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_unary_add$macrocall$2$macrocall$1", "symbols": ["expr_unary_add$macrocall$2$macrocall$1$macrocall$1"], "postprocess": unwrap },
+              { "name": "expr_unary_add$macrocall$2$macrocall$1", "symbols": ["kw_operator", "lparen", "ident", "dot", "expr_unary_add$macrocall$2$macrocall$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x[4], " ") || "<error>").toUpperCase(),
+                opSchema: toStr(x[2])
+              }) },
+              { "name": "expr_unary_add$macrocall$2", "symbols": ["expr_unary_add$macrocall$2$macrocall$1"] },
+              { "name": "expr_unary_add$macrocall$3", "symbols": ["expr_unary_add"] },
+              { "name": "expr_unary_add$macrocall$4", "symbols": ["expr_various_constructs"] },
+              { "name": "expr_unary_add$macrocall$1$subexpression$1", "symbols": ["expr_unary_add$macrocall$3"] },
+              { "name": "expr_unary_add$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_unary_add$macrocall$1", "symbols": ["expr_unary_add$macrocall$2", "expr_unary_add$macrocall$1$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "unary",
+                ...unwrap(x[0]),
+                operand: unwrap(x[1])
+              }) },
+              { "name": "expr_unary_add$macrocall$1", "symbols": ["expr_unary_add$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_unary_add", "symbols": ["expr_unary_add$macrocall$1"] },
+              { "name": "expr_various_constructs$macrocall$2$macrocall$2", "symbols": ["various_binaries"] },
+              { "name": "expr_various_constructs$macrocall$2$macrocall$1", "symbols": ["expr_various_constructs$macrocall$2$macrocall$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                op: (toStr(x, " ") || "<error>").toUpperCase()
+              }) },
+              { "name": "expr_various_constructs$macrocall$2", "symbols": ["expr_various_constructs$macrocall$2$macrocall$1"] },
+              { "name": "expr_various_constructs$macrocall$3", "symbols": ["expr_various_constructs"] },
+              { "name": "expr_various_constructs$macrocall$4", "symbols": ["expr_array_index"] },
+              { "name": "expr_various_constructs$macrocall$1$subexpression$1", "symbols": ["expr_various_constructs$macrocall$3"] },
+              { "name": "expr_various_constructs$macrocall$1$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_various_constructs$macrocall$1$subexpression$2", "symbols": ["expr_various_constructs$macrocall$4"] },
+              { "name": "expr_various_constructs$macrocall$1$subexpression$2", "symbols": ["expr_paren"] },
+              { "name": "expr_various_constructs$macrocall$1", "symbols": ["expr_various_constructs$macrocall$1$subexpression$1", "expr_various_constructs$macrocall$2", "expr_various_constructs$macrocall$1$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "binary",
+                left: unwrap(x[0]),
+                right: unwrap(x[2]),
+                ...unwrap(x[1])
+              }) },
+              { "name": "expr_various_constructs$macrocall$1", "symbols": ["expr_various_constructs$macrocall$4"], "postprocess": unwrap },
+              { "name": "expr_various_constructs", "symbols": ["expr_various_constructs$macrocall$1"] },
+              { "name": "expr_array_index$subexpression$1", "symbols": ["expr_array_index"] },
+              { "name": "expr_array_index$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_array_index", "symbols": ["expr_array_index$subexpression$1", lexer_1.lexerAny.has("lbracket") ? { type: "lbracket" } : lbracket, "expr_nostar", lexer_1.lexerAny.has("rbracket") ? { type: "rbracket" } : rbracket], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "arrayIndex",
+                array: unwrap(x[0]),
+                index: unwrap(x[2])
+              }) },
+              { "name": "expr_array_index", "symbols": ["expr_member"], "postprocess": unwrap },
+              { "name": "expr_member$subexpression$1", "symbols": ["expr_member"] },
+              { "name": "expr_member$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "expr_member$subexpression$2", "symbols": ["string"] },
+              { "name": "expr_member$subexpression$2", "symbols": ["int"] },
+              { "name": "expr_member", "symbols": ["expr_member$subexpression$1", "ops_member", "expr_member$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "member",
+                operand: unwrap(x[0]),
+                op: x[1],
+                member: unwrap(x[2])
+              }) },
+              { "name": "expr_member$subexpression$3", "symbols": ["expr_member"] },
+              { "name": "expr_member$subexpression$3", "symbols": ["expr_paren"] },
+              { "name": "expr_member", "symbols": ["expr_member$subexpression$3", lexer_1.lexerAny.has("op_cast") ? { type: "op_cast" } : op_cast, "data_type"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "cast",
+                operand: unwrap(x[0]),
+                to: x[2]
+              }) },
+              { "name": "expr_member", "symbols": [lexer_1.lexerAny.has("kw_cast") ? { type: "kw_cast" } : kw_cast, "lparen", "expr_nostar", lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "data_type", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "cast",
+                operand: unwrap(x[2]),
+                to: x[4]
+              }) },
+              { "name": "expr_member", "symbols": ["data_type", "string"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "cast",
+                operand: (0, lexer_2.track)(x[1], {
+                  type: "string",
+                  value: (0, lexer_2.unbox)(x[1])
+                }),
+                to: (0, lexer_2.unbox)(x[0])
+              }) },
+              { "name": "expr_member", "symbols": ["expr_dot"], "postprocess": unwrap },
+              { "name": "expr_dot$subexpression$1", "symbols": ["word"] },
+              { "name": "expr_dot$subexpression$1", "symbols": ["star"] },
+              { "name": "expr_dot", "symbols": ["qname", lexer_1.lexerAny.has("dot") ? { type: "dot" } : dot, "expr_dot$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "ref",
+                table: unwrap(x[0]),
+                name: toStr(x[2])
+              }) },
+              { "name": "expr_dot", "symbols": ["expr_final"], "postprocess": unwrap },
+              { "name": "expr_final", "symbols": ["expr_basic"] },
+              { "name": "expr_final", "symbols": ["expr_primary"] },
+              { "name": "expr_basic", "symbols": ["expr_special_calls"] },
+              { "name": "expr_basic", "symbols": ["expr_call"] },
+              { "name": "expr_basic", "symbols": ["expr_array"] },
+              { "name": "expr_basic", "symbols": ["expr_case"] },
+              { "name": "expr_basic", "symbols": ["expr_extract"] },
+              { "name": "expr_basic", "symbols": ["word"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "ref",
+                name: unwrap(x[0])
+              }) },
+              { "name": "expr_array$ebnf$1", "symbols": ["expr_subarray_items"], "postprocess": id },
+              { "name": "expr_array$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_array", "symbols": [lexer_1.lexerAny.has("kw_array") ? { type: "kw_array" } : kw_array, lexer_1.lexerAny.has("lbracket") ? { type: "lbracket" } : lbracket, "expr_array$ebnf$1", lexer_1.lexerAny.has("rbracket") ? { type: "rbracket" } : rbracket], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "array",
+                expressions: x[2] || []
+              }) },
+              { "name": "expr_array", "symbols": [lexer_1.lexerAny.has("kw_array") ? { type: "kw_array" } : kw_array, "lparen", "selection", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "array select",
+                select: unwrap(x[2])
+              }) },
+              { "name": "expr_subarray$ebnf$1", "symbols": ["expr_subarray_items"], "postprocess": id },
+              { "name": "expr_subarray$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_subarray", "symbols": [lexer_1.lexerAny.has("lbracket") ? { type: "lbracket" } : lbracket, "expr_subarray$ebnf$1", lexer_1.lexerAny.has("rbracket") ? { type: "rbracket" } : rbracket], "postprocess": get(1) },
+              { "name": "expr_subarray_items$macrocall$2", "symbols": ["expr_list_item"] },
+              { "name": "expr_subarray_items$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "expr_subarray_items$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "expr_subarray_items$macrocall$2"], "postprocess": last },
+              { "name": "expr_subarray_items$macrocall$1$ebnf$1", "symbols": ["expr_subarray_items$macrocall$1$ebnf$1", "expr_subarray_items$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "expr_subarray_items$macrocall$1", "symbols": ["expr_subarray_items$macrocall$2", "expr_subarray_items$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "expr_subarray_items", "symbols": ["expr_subarray_items$macrocall$1"], "postprocess": (x) => x[0].map(unwrap) },
+              { "name": "expr_subarray_items$macrocall$4", "symbols": ["expr_subarray"] },
+              { "name": "expr_subarray_items$macrocall$3$ebnf$1", "symbols": [] },
+              { "name": "expr_subarray_items$macrocall$3$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "expr_subarray_items$macrocall$4"], "postprocess": last },
+              { "name": "expr_subarray_items$macrocall$3$ebnf$1", "symbols": ["expr_subarray_items$macrocall$3$ebnf$1", "expr_subarray_items$macrocall$3$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "expr_subarray_items$macrocall$3", "symbols": ["expr_subarray_items$macrocall$4", "expr_subarray_items$macrocall$3$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "expr_subarray_items", "symbols": ["expr_subarray_items$macrocall$3"], "postprocess": (x) => {
+                return x[0].map((v) => {
+                  return (0, lexer_2.track)(v, {
+                    type: "array",
+                    expressions: v[0].map(unwrap)
+                  });
+                });
+              } },
+              { "name": "expr_function_call$ebnf$1", "symbols": ["expr_list_raw"], "postprocess": id },
+              { "name": "expr_function_call$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_function_call", "symbols": ["expr_fn_name", "lparen", "expr_function_call$ebnf$1", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "call",
+                function: unwrap(x[0]),
+                args: x[2] || []
+              }) },
+              { "name": "expr_call$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all] },
+              { "name": "expr_call$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_distinct") ? { type: "kw_distinct" } : kw_distinct] },
+              { "name": "expr_call$ebnf$1", "symbols": ["expr_call$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "expr_call$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call$ebnf$2", "symbols": ["expr_list_raw"], "postprocess": id },
+              { "name": "expr_call$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call$ebnf$3", "symbols": ["select_order_by"], "postprocess": id },
+              { "name": "expr_call$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call$ebnf$4$subexpression$1", "symbols": ["kw_filter", "lparen", lexer_1.lexerAny.has("kw_where") ? { type: "kw_where" } : kw_where, "expr", "rparen"], "postprocess": get(3) },
+              { "name": "expr_call$ebnf$4", "symbols": ["expr_call$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "expr_call$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call$ebnf$5", "symbols": ["expr_call_within_group"], "postprocess": id },
+              { "name": "expr_call$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call$ebnf$6", "symbols": ["expr_call_over"], "postprocess": id },
+              { "name": "expr_call$ebnf$6", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call", "symbols": ["expr_fn_name", "lparen", "expr_call$ebnf$1", "expr_call$ebnf$2", "expr_call$ebnf$3", "rparen", "expr_call$ebnf$4", "expr_call$ebnf$5", "expr_call$ebnf$6"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "call",
+                function: unwrap(x[0]),
+                ...x[2] && { distinct: toStr(x[2]) },
+                args: x[3] || [],
+                ...x[4] && { orderBy: x[4] },
+                ...x[6] && { filter: unwrap(x[6]) },
+                ...x[7] && { withinGroup: x[7] },
+                ...x[8] && { over: unwrap(x[8]) }
+              }) },
+              { "name": "expr_call_over$ebnf$1$subexpression$1", "symbols": ["kw_partition", "kw_by", "expr_list_raw"], "postprocess": last },
+              { "name": "expr_call_over$ebnf$1", "symbols": ["expr_call_over$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "expr_call_over$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call_over$ebnf$2", "symbols": ["select_order_by"], "postprocess": id },
+              { "name": "expr_call_over$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "expr_call_over", "symbols": ["kw_over", "lparen", "expr_call_over$ebnf$1", "expr_call_over$ebnf$2", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                ...x[2] && { partitionBy: x[2] },
+                ...x[3] && { orderBy: x[3] }
+              }) },
+              { "name": "expr_call_within_group$subexpression$1", "symbols": ["kw_within", lexer_1.lexerAny.has("kw_group") ? { type: "kw_group" } : kw_group] },
+              { "name": "expr_call_within_group$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_order") ? { type: "kw_order" } : kw_order, "kw_by"] },
+              { "name": "expr_call_within_group", "symbols": ["expr_call_within_group$subexpression$1", "lparen", "expr_call_within_group$subexpression$2", "select_order_by_expr", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, x[3]) },
+              { "name": "expr_extract$subexpression$1", "symbols": ["word"], "postprocess": kw("extract") },
+              { "name": "expr_extract", "symbols": ["expr_extract$subexpression$1", "lparen", "word", lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from, "expr", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "extract",
+                field: asName(x[2]),
+                from: x[4]
+              }) },
+              { "name": "expr_primary", "symbols": ["float"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "numeric", value: (0, lexer_2.unbox)(x[0]) }) },
+              { "name": "expr_primary", "symbols": ["int"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "integer", value: (0, lexer_2.unbox)(x[0]) }) },
+              { "name": "expr_primary", "symbols": ["string"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "string", value: (0, lexer_2.unbox)(x[0]) }) },
+              { "name": "expr_primary", "symbols": [lexer_1.lexerAny.has("kw_true") ? { type: "kw_true" } : kw_true], "postprocess": (x) => (0, lexer_2.track)(x, { type: "boolean", value: true }) },
+              { "name": "expr_primary", "symbols": [lexer_1.lexerAny.has("kw_false") ? { type: "kw_false" } : kw_false], "postprocess": (x) => (0, lexer_2.track)(x, { type: "boolean", value: false }) },
+              { "name": "expr_primary", "symbols": [lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null], "postprocess": (x) => (0, lexer_2.track)(x, { type: "null" }) },
+              { "name": "expr_primary", "symbols": ["value_keyword"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "keyword", keyword: toStr(x) }) },
+              { "name": "expr_primary", "symbols": [lexer_1.lexerAny.has("qparam") ? { type: "qparam" } : qparam], "postprocess": (x) => (0, lexer_2.track)(x, { type: "parameter", name: toStr(x[0]) }) },
+              { "name": "expr_primary", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default], "postprocess": (x) => (0, lexer_2.track)(x, { type: "default" }) },
+              { "name": "ops_like", "symbols": ["ops_like_keywors"] },
+              { "name": "ops_like", "symbols": ["ops_like_operators"] },
+              { "name": "ops_like_keywors$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not], "postprocess": id },
+              { "name": "ops_like_keywors$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "ops_like_keywors$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_like") ? { type: "kw_like" } : kw_like] },
+              { "name": "ops_like_keywors$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_ilike") ? { type: "kw_ilike" } : kw_ilike] },
+              { "name": "ops_like_keywors", "symbols": ["ops_like_keywors$ebnf$1", "ops_like_keywors$subexpression$1"] },
+              { "name": "ops_like_operators$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_like") ? { type: "op_like" } : op_like], "postprocess": () => "LIKE" },
+              { "name": "ops_like_operators", "symbols": ["ops_like_operators$subexpression$1"] },
+              { "name": "ops_like_operators$subexpression$2", "symbols": [lexer_1.lexerAny.has("op_ilike") ? { type: "op_ilike" } : op_ilike], "postprocess": () => "ILIKE" },
+              { "name": "ops_like_operators", "symbols": ["ops_like_operators$subexpression$2"] },
+              { "name": "ops_like_operators$subexpression$3", "symbols": [lexer_1.lexerAny.has("op_not_like") ? { type: "op_not_like" } : op_not_like], "postprocess": () => "NOT LIKE" },
+              { "name": "ops_like_operators", "symbols": ["ops_like_operators$subexpression$3"] },
+              { "name": "ops_like_operators$subexpression$4", "symbols": [lexer_1.lexerAny.has("op_not_ilike") ? { type: "op_not_ilike" } : op_not_ilike], "postprocess": () => "NOT ILIKE" },
+              { "name": "ops_like_operators", "symbols": ["ops_like_operators$subexpression$4"] },
+              { "name": "ops_in$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not], "postprocess": id },
+              { "name": "ops_in$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "ops_in", "symbols": ["ops_in$ebnf$1", lexer_1.lexerAny.has("kw_in") ? { type: "kw_in" } : kw_in] },
+              { "name": "ops_between$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not], "postprocess": id },
+              { "name": "ops_between$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "ops_between", "symbols": ["ops_between$ebnf$1", "kw_between"] },
+              { "name": "ops_member$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_member") ? { type: "op_member" } : op_member] },
+              { "name": "ops_member$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_membertext") ? { type: "op_membertext" } : op_membertext] },
+              { "name": "ops_member", "symbols": ["ops_member$subexpression$1"], "postprocess": (x) => {
+                var _a;
+                return (_a = unwrap(x)) === null || _a === void 0 ? void 0 : _a.value;
+              } },
+              { "name": "expr_list_item", "symbols": ["expr_or_select"], "postprocess": unwrap },
+              { "name": "expr_list_item", "symbols": ["expr_star"], "postprocess": unwrap },
+              { "name": "expr_list_raw$macrocall$2", "symbols": ["expr_list_item"] },
+              { "name": "expr_list_raw$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "expr_list_raw$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "expr_list_raw$macrocall$2"], "postprocess": last },
+              { "name": "expr_list_raw$macrocall$1$ebnf$1", "symbols": ["expr_list_raw$macrocall$1$ebnf$1", "expr_list_raw$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "expr_list_raw$macrocall$1", "symbols": ["expr_list_raw$macrocall$2", "expr_list_raw$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "expr_list_raw", "symbols": ["expr_list_raw$macrocall$1"], "postprocess": ([x]) => x.map(unwrap) },
+              { "name": "expr_list_raw_many$macrocall$2", "symbols": ["expr_list_item"] },
+              { "name": "expr_list_raw_many$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "expr_list_raw_many$macrocall$2"], "postprocess": last },
+              { "name": "expr_list_raw_many$macrocall$1$ebnf$1", "symbols": ["expr_list_raw_many$macrocall$1$ebnf$1$subexpression$1"] },
+              { "name": "expr_list_raw_many$macrocall$1$ebnf$1$subexpression$2", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "expr_list_raw_many$macrocall$2"], "postprocess": last },
+              { "name": "expr_list_raw_many$macrocall$1$ebnf$1", "symbols": ["expr_list_raw_many$macrocall$1$ebnf$1", "expr_list_raw_many$macrocall$1$ebnf$1$subexpression$2"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "expr_list_raw_many$macrocall$1", "symbols": ["expr_list_raw_many$macrocall$2", "expr_list_raw_many$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "expr_list_raw_many", "symbols": ["expr_list_raw_many$macrocall$1"], "postprocess": ([x]) => x.map(unwrap) },
+              { "name": "expr_or_select", "symbols": ["expr_nostar"], "postprocess": unwrap },
+              { "name": "expr_or_select", "symbols": ["selection"], "postprocess": unwrap },
+              { "name": "expr_list_many", "symbols": ["expr_list_raw_many"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "list",
+                expressions: x[0]
+              }) },
+              { "name": "expr_case$ebnf$1", "symbols": ["expr_nostar"], "postprocess": id },
+              { "name": "expr_case$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_case$ebnf$2", "symbols": [] },
+              { "name": "expr_case$ebnf$2", "symbols": ["expr_case$ebnf$2", "expr_case_whens"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "expr_case$ebnf$3", "symbols": ["expr_case_else"], "postprocess": id },
+              { "name": "expr_case$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "expr_case", "symbols": [lexer_1.lexerAny.has("kw_case") ? { type: "kw_case" } : kw_case, "expr_case$ebnf$1", "expr_case$ebnf$2", "expr_case$ebnf$3", lexer_1.lexerAny.has("kw_end") ? { type: "kw_end" } : kw_end], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "case",
+                value: x[1],
+                whens: x[2],
+                else: x[3]
+              }) },
+              { "name": "expr_case_whens", "symbols": [lexer_1.lexerAny.has("kw_when") ? { type: "kw_when" } : kw_when, "expr_nostar", lexer_1.lexerAny.has("kw_then") ? { type: "kw_then" } : kw_then, "expr_nostar"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                when: x[1],
+                value: x[3]
+              }) },
+              { "name": "expr_case_else", "symbols": [lexer_1.lexerAny.has("kw_else") ? { type: "kw_else" } : kw_else, "expr_nostar"], "postprocess": last },
+              { "name": "expr_fn_name$subexpression$1$ebnf$1$subexpression$1", "symbols": ["word", lexer_1.lexerAny.has("dot") ? { type: "dot" } : dot] },
+              { "name": "expr_fn_name$subexpression$1$ebnf$1", "symbols": ["expr_fn_name$subexpression$1$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "expr_fn_name$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "expr_fn_name$subexpression$1", "symbols": ["expr_fn_name$subexpression$1$ebnf$1", "word_or_keyword"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                name: (0, lexer_2.unbox)(unwrap(x[1])),
+                ...x[0] && { schema: toStr(x[0][0]) }
+              }) },
+              { "name": "expr_fn_name", "symbols": ["expr_fn_name$subexpression$1"] },
+              { "name": "expr_fn_name$subexpression$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_any") ? { type: "kw_any" } : kw_any] },
+              { "name": "expr_fn_name$subexpression$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_some") ? { type: "kw_some" } : kw_some] },
+              { "name": "expr_fn_name$subexpression$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all] },
+              { "name": "expr_fn_name$subexpression$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_left") ? { type: "kw_left" } : kw_left] },
+              { "name": "expr_fn_name$subexpression$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_right") ? { type: "kw_right" } : kw_right] },
+              { "name": "expr_fn_name$subexpression$2", "symbols": ["expr_fn_name$subexpression$2$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                name: toStr(unwrap(x))
+              }) },
+              { "name": "expr_fn_name", "symbols": ["expr_fn_name$subexpression$2"] },
+              { "name": "word_or_keyword", "symbols": ["word"] },
+              { "name": "word_or_keyword", "symbols": ["value_keyword"], "postprocess": (x) => (0, lexer_2.box)(x, toStr(x)) },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_catalog") ? { type: "kw_current_catalog" } : kw_current_catalog] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_date") ? { type: "kw_current_date" } : kw_current_date] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_role") ? { type: "kw_current_role" } : kw_current_role] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_schema") ? { type: "kw_current_schema" } : kw_current_schema] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_timestamp") ? { type: "kw_current_timestamp" } : kw_current_timestamp] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_time") ? { type: "kw_current_time" } : kw_current_time] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_localtimestamp") ? { type: "kw_localtimestamp" } : kw_localtimestamp] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_localtime") ? { type: "kw_localtime" } : kw_localtime] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_session_user") ? { type: "kw_session_user" } : kw_session_user] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_user") ? { type: "kw_user" } : kw_user] },
+              { "name": "value_keyword", "symbols": [lexer_1.lexerAny.has("kw_current_user") ? { type: "kw_current_user" } : kw_current_user] },
+              { "name": "expr_special_calls", "symbols": ["spe_overlay"] },
+              { "name": "expr_special_calls", "symbols": ["spe_substring"] },
+              { "name": "spe_overlay$subexpression$1", "symbols": ["word"], "postprocess": kw("overlay") },
+              { "name": "spe_overlay$subexpression$2", "symbols": [lexer_1.lexerAny.has("lparen") ? { type: "lparen" } : lparen, "expr_nostar"] },
+              { "name": "spe_overlay$subexpression$3", "symbols": [lexer_1.lexerAny.has("kw_placing") ? { type: "kw_placing" } : kw_placing, "expr_nostar"] },
+              { "name": "spe_overlay$subexpression$4", "symbols": [lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from, "expr_nostar"] },
+              { "name": "spe_overlay$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_for") ? { type: "kw_for" } : kw_for, "expr_nostar"] },
+              { "name": "spe_overlay$ebnf$1", "symbols": ["spe_overlay$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "spe_overlay$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "spe_overlay", "symbols": ["spe_overlay$subexpression$1", "spe_overlay$subexpression$2", "spe_overlay$subexpression$3", "spe_overlay$subexpression$4", "spe_overlay$ebnf$1", lexer_1.lexerAny.has("rparen") ? { type: "rparen" } : rparen], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "overlay",
+                value: x[1][1],
+                placing: x[2][1],
+                from: x[3][1],
+                ...x[4] && { for: x[4][1] }
+              }) },
+              { "name": "spe_substring$subexpression$1", "symbols": ["word"], "postprocess": kw("substring") },
+              { "name": "spe_substring$subexpression$2", "symbols": [lexer_1.lexerAny.has("lparen") ? { type: "lparen" } : lparen, "expr_nostar"] },
+              { "name": "spe_substring$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from, "expr_nostar"] },
+              { "name": "spe_substring$ebnf$1", "symbols": ["spe_substring$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "spe_substring$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "spe_substring$ebnf$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_for") ? { type: "kw_for" } : kw_for, "expr_nostar"] },
+              { "name": "spe_substring$ebnf$2", "symbols": ["spe_substring$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "spe_substring$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "spe_substring", "symbols": ["spe_substring$subexpression$1", "spe_substring$subexpression$2", "spe_substring$ebnf$1", "spe_substring$ebnf$2", lexer_1.lexerAny.has("rparen") ? { type: "rparen" } : rparen], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "substring",
+                value: x[1][1],
+                ...x[2] && { from: x[2][1] },
+                ...x[3] && { for: x[3][1] }
+              }) },
+              { "name": "various_binaries", "symbols": ["kw_at", "kw_time", "kw_zone"], "postprocess": () => "AT TIME ZONE" },
+              { "name": "createtable_statement$ebnf$1", "symbols": ["createtable_modifiers"], "postprocess": id },
+              { "name": "createtable_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createtable_statement$ebnf$2", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "createtable_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "createtable_statement$ebnf$3", "symbols": ["createtable_opts"], "postprocess": id },
+              { "name": "createtable_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "createtable_statement", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "createtable_statement$ebnf$1", lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table, "createtable_statement$ebnf$2", "qname", "lparen", "createtable_declarationlist", "rparen", "createtable_statement$ebnf$3"], "postprocess": (x) => {
+                const cols = x[6].filter((v) => "kind" in v);
+                const constraints = x[6].filter((v) => !("kind" in v));
+                return (0, lexer_2.track)(x, {
+                  type: "create table",
+                  ...!!x[3] ? { ifNotExists: true } : {},
+                  name: x[4],
+                  columns: cols,
+                  ...unwrap(x[1]),
+                  ...constraints.length ? { constraints } : {},
+                  ...last(x)
+                });
+              } },
+              { "name": "createtable_modifiers", "symbols": ["kw_unlogged"], "postprocess": (x) => x[0] ? { unlogged: true } : {} },
+              { "name": "createtable_modifiers", "symbols": ["m_locglob"] },
+              { "name": "createtable_modifiers", "symbols": ["m_tmp"] },
+              { "name": "createtable_modifiers", "symbols": ["m_locglob", "m_tmp"], "postprocess": ([a, b]) => ({ ...a, ...b }) },
+              { "name": "m_locglob$subexpression$1", "symbols": ["kw_local"] },
+              { "name": "m_locglob$subexpression$1", "symbols": ["kw_global"] },
+              { "name": "m_locglob", "symbols": ["m_locglob$subexpression$1"], "postprocess": (x) => ({ locality: toStr(x) }) },
+              { "name": "m_tmp$subexpression$1", "symbols": ["kw_temp"] },
+              { "name": "m_tmp$subexpression$1", "symbols": ["kw_temporary"] },
+              { "name": "m_tmp", "symbols": ["m_tmp$subexpression$1"], "postprocess": (x) => ({ temporary: true }) },
+              { "name": "createtable_declarationlist$ebnf$1", "symbols": [] },
+              { "name": "createtable_declarationlist$ebnf$1$subexpression$1", "symbols": ["comma", "createtable_declaration"], "postprocess": last },
+              { "name": "createtable_declarationlist$ebnf$1", "symbols": ["createtable_declarationlist$ebnf$1", "createtable_declarationlist$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtable_declarationlist", "symbols": ["createtable_declaration", "createtable_declarationlist$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "createtable_declaration$subexpression$1", "symbols": ["createtable_constraint"] },
+              { "name": "createtable_declaration$subexpression$1", "symbols": ["createtable_column"] },
+              { "name": "createtable_declaration$subexpression$1", "symbols": ["createtable_like"] },
+              { "name": "createtable_declaration", "symbols": ["createtable_declaration$subexpression$1"], "postprocess": unwrap },
+              { "name": "createtable_constraint$macrocall$2", "symbols": ["createtable_constraint_def"] },
+              { "name": "createtable_constraint$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_constraint") ? { type: "kw_constraint" } : kw_constraint, "word"] },
+              { "name": "createtable_constraint$macrocall$1$ebnf$1", "symbols": ["createtable_constraint$macrocall$1$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "createtable_constraint$macrocall$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createtable_constraint$macrocall$1", "symbols": ["createtable_constraint$macrocall$1$ebnf$1", "createtable_constraint$macrocall$2"], "postprocess": (x) => {
+                const name = x[0] && asName(x[0][1]);
+                if (!name) {
+                  return (0, lexer_2.track)(x, unwrap(x[1]));
+                }
+                return (0, lexer_2.track)(x, {
+                  constraintName: name,
+                  ...unwrap(x[1])
+                });
+              } },
+              { "name": "createtable_constraint", "symbols": ["createtable_constraint$macrocall$1"], "postprocess": unwrap },
+              { "name": "createtable_constraint_def", "symbols": ["createtable_constraint_def_unique"] },
+              { "name": "createtable_constraint_def", "symbols": ["createtable_constraint_def_check"] },
+              { "name": "createtable_constraint_def", "symbols": ["createtable_constraint_foreignkey"] },
+              { "name": "createtable_constraint_def_unique$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_unique") ? { type: "kw_unique" } : kw_unique] },
+              { "name": "createtable_constraint_def_unique$subexpression$1", "symbols": ["kw_primary_key"] },
+              { "name": "createtable_constraint_def_unique", "symbols": ["createtable_constraint_def_unique$subexpression$1", "lparen", "createtable_collist", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: toStr(x[0], " "),
+                columns: x[2].map(asName)
+              }) },
+              { "name": "createtable_constraint_def_check", "symbols": [lexer_1.lexerAny.has("kw_check") ? { type: "kw_check" } : kw_check, "expr_paren"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "check",
+                expr: unwrap(x[1])
+              }) },
+              { "name": "createtable_constraint_foreignkey", "symbols": [lexer_1.lexerAny.has("kw_foreign") ? { type: "kw_foreign" } : kw_foreign, "kw_key", "collist_paren", "createtable_references"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  type: "foreign key",
+                  localColumns: x[2].map(asName),
+                  ...x[3]
+                });
+              } },
+              { "name": "createtable_references$ebnf$1", "symbols": [] },
+              { "name": "createtable_references$ebnf$1", "symbols": ["createtable_references$ebnf$1", "createtable_constraint_foreignkey_onsometing"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtable_references", "symbols": [lexer_1.lexerAny.has("kw_references") ? { type: "kw_references" } : kw_references, "table_ref", "collist_paren", "createtable_references$ebnf$1"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  foreignTable: unwrap(x[1]),
+                  foreignColumns: x[2].map(asName),
+                  ...x[3].reduce((a, b) => ({ ...a, ...b }), {})
+                });
+              } },
+              { "name": "createtable_constraint_foreignkey_onsometing", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "kw_delete", "createtable_constraint_on_action"], "postprocess": (x) => (0, lexer_2.track)(x, { onDelete: last(x) }) },
+              { "name": "createtable_constraint_foreignkey_onsometing", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "kw_update", "createtable_constraint_on_action"], "postprocess": (x) => (0, lexer_2.track)(x, { onUpdate: last(x) }) },
+              { "name": "createtable_constraint_foreignkey_onsometing$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_full") ? { type: "kw_full" } : kw_full] },
+              { "name": "createtable_constraint_foreignkey_onsometing$subexpression$1", "symbols": ["kw_partial"] },
+              { "name": "createtable_constraint_foreignkey_onsometing$subexpression$1", "symbols": ["kw_simple"] },
+              { "name": "createtable_constraint_foreignkey_onsometing", "symbols": ["kw_match", "createtable_constraint_foreignkey_onsometing$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { match: toStr(last(x)) }) },
+              { "name": "createtable_constraint_on_action$subexpression$1", "symbols": ["kw_cascade"] },
+              { "name": "createtable_constraint_on_action$subexpression$1$subexpression$1", "symbols": ["kw_no", "kw_action"] },
+              { "name": "createtable_constraint_on_action$subexpression$1", "symbols": ["createtable_constraint_on_action$subexpression$1$subexpression$1"] },
+              { "name": "createtable_constraint_on_action$subexpression$1", "symbols": ["kw_restrict"] },
+              { "name": "createtable_constraint_on_action$subexpression$1$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null] },
+              { "name": "createtable_constraint_on_action$subexpression$1$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default] },
+              { "name": "createtable_constraint_on_action$subexpression$1", "symbols": ["kw_set", "createtable_constraint_on_action$subexpression$1$subexpression$2"] },
+              { "name": "createtable_constraint_on_action", "symbols": ["createtable_constraint_on_action$subexpression$1"], "postprocess": (x) => toStr(x, " ") },
+              { "name": "createtable_collist$ebnf$1", "symbols": [] },
+              { "name": "createtable_collist$ebnf$1$subexpression$1", "symbols": ["comma", "ident"], "postprocess": last },
+              { "name": "createtable_collist$ebnf$1", "symbols": ["createtable_collist$ebnf$1", "createtable_collist$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtable_collist", "symbols": ["ident", "createtable_collist$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "createtable_column$ebnf$1", "symbols": ["createtable_collate"], "postprocess": id },
+              { "name": "createtable_column$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createtable_column$ebnf$2", "symbols": [] },
+              { "name": "createtable_column$ebnf$2", "symbols": ["createtable_column$ebnf$2", "createtable_column_constraint"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtable_column", "symbols": ["word", "data_type", "createtable_column$ebnf$1", "createtable_column$ebnf$2"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  kind: "column",
+                  name: asName(x[0]),
+                  dataType: x[1],
+                  ...x[2] ? { collate: x[2][1] } : {},
+                  ...x[3] && x[3].length ? { constraints: x[3] } : {}
+                });
+              } },
+              { "name": "createtable_like$ebnf$1", "symbols": [] },
+              { "name": "createtable_like$ebnf$1", "symbols": ["createtable_like$ebnf$1", "createtable_like_opt"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtable_like", "symbols": [lexer_1.lexerAny.has("kw_like") ? { type: "kw_like" } : kw_like, "qname", "createtable_like$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                kind: "like table",
+                like: x[1],
+                options: x[2]
+              }) },
+              { "name": "createtable_like_opt$subexpression$1", "symbols": ["kw_including"] },
+              { "name": "createtable_like_opt$subexpression$1", "symbols": ["kw_excluding"] },
+              { "name": "createtable_like_opt", "symbols": ["createtable_like_opt$subexpression$1", "createtable_like_opt_val"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                verb: toStr(x[0]),
+                option: toStr(x[1])
+              }) },
+              { "name": "createtable_like_opt_val", "symbols": ["word"], "postprocess": anyKw("defaults", "constraints", "indexes", "storage", "comments") },
+              { "name": "createtable_like_opt_val", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all] },
+              { "name": "createtable_column_constraint$macrocall$2", "symbols": ["createtable_column_constraint_def"] },
+              { "name": "createtable_column_constraint$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_constraint") ? { type: "kw_constraint" } : kw_constraint, "word"] },
+              { "name": "createtable_column_constraint$macrocall$1$ebnf$1", "symbols": ["createtable_column_constraint$macrocall$1$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "createtable_column_constraint$macrocall$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createtable_column_constraint$macrocall$1", "symbols": ["createtable_column_constraint$macrocall$1$ebnf$1", "createtable_column_constraint$macrocall$2"], "postprocess": (x) => {
+                const name = x[0] && asName(x[0][1]);
+                if (!name) {
+                  return (0, lexer_2.track)(x, unwrap(x[1]));
+                }
+                return (0, lexer_2.track)(x, {
+                  constraintName: name,
+                  ...unwrap(x[1])
+                });
+              } },
+              { "name": "createtable_column_constraint", "symbols": ["createtable_column_constraint$macrocall$1"], "postprocess": unwrap },
+              { "name": "createtable_column_constraint_def", "symbols": [lexer_1.lexerAny.has("kw_unique") ? { type: "kw_unique" } : kw_unique], "postprocess": (x) => (0, lexer_2.track)(x, { type: "unique" }) },
+              { "name": "createtable_column_constraint_def", "symbols": ["kw_primary_key"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "primary key" }) },
+              { "name": "createtable_column_constraint_def", "symbols": ["kw_not_null"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "not null" }) },
+              { "name": "createtable_column_constraint_def", "symbols": [lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null], "postprocess": (x) => (0, lexer_2.track)(x, { type: "null" }) },
+              { "name": "createtable_column_constraint_def", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default, "expr"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "default", default: unwrap(x[1]) }) },
+              { "name": "createtable_column_constraint_def", "symbols": [lexer_1.lexerAny.has("kw_check") ? { type: "kw_check" } : kw_check, "expr_paren"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "check", expr: unwrap(x[1]) }) },
+              { "name": "createtable_column_constraint_def", "symbols": ["createtable_references"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "reference", ...unwrap(x) }) },
+              { "name": "createtable_column_constraint_def", "symbols": ["altercol_generated"] },
+              { "name": "createtable_collate", "symbols": [lexer_1.lexerAny.has("kw_collate") ? { type: "kw_collate" } : kw_collate, "qualified_name"] },
+              { "name": "createtable_opts$subexpression$1", "symbols": ["word"], "postprocess": kw("inherits") },
+              { "name": "createtable_opts$macrocall$2", "symbols": ["qname"] },
+              { "name": "createtable_opts$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "createtable_opts$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "createtable_opts$macrocall$2"], "postprocess": last },
+              { "name": "createtable_opts$macrocall$1$ebnf$1", "symbols": ["createtable_opts$macrocall$1$ebnf$1", "createtable_opts$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtable_opts$macrocall$1", "symbols": ["createtable_opts$macrocall$2", "createtable_opts$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "createtable_opts", "symbols": ["createtable_opts$subexpression$1", "lparen", "createtable_opts$macrocall$1", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, { inherits: x[2] }) },
+              { "name": "createindex_statement$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_unique") ? { type: "kw_unique" } : kw_unique], "postprocess": id },
+              { "name": "createindex_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$2", "symbols": [lexer_1.lexerAny.has("kw_concurrently") ? { type: "kw_concurrently" } : kw_concurrently], "postprocess": id },
+              { "name": "createindex_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$3", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "createindex_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$4", "symbols": ["word"], "postprocess": id },
+              { "name": "createindex_statement$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$5$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_using") ? { type: "kw_using" } : kw_using, "ident"], "postprocess": last },
+              { "name": "createindex_statement$ebnf$5", "symbols": ["createindex_statement$ebnf$5$subexpression$1"], "postprocess": id },
+              { "name": "createindex_statement$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$6", "symbols": ["createindex_with"], "postprocess": id },
+              { "name": "createindex_statement$ebnf$6", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$7", "symbols": ["createindex_tblspace"], "postprocess": id },
+              { "name": "createindex_statement$ebnf$7", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement$ebnf$8", "symbols": ["createindex_predicate"], "postprocess": id },
+              { "name": "createindex_statement$ebnf$8", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_statement", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "createindex_statement$ebnf$1", "kw_index", "createindex_statement$ebnf$2", "createindex_statement$ebnf$3", "createindex_statement$ebnf$4", lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "table_ref", "createindex_statement$ebnf$5", "lparen", "createindex_expressions", "rparen", "createindex_statement$ebnf$6", "createindex_statement$ebnf$7", "createindex_statement$ebnf$8"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "create index",
+                ...x[1] && { unique: true },
+                ...x[3] && { concurrently: true },
+                ...x[4] && { ifNotExists: true },
+                ...x[5] && { indexName: asName(x[5]) },
+                table: x[7],
+                ...x[8] && { using: asName(x[8]) },
+                expressions: x[10],
+                ...x[12] && { with: x[12] },
+                ...x[13] && { tablespace: unwrap(x[13]) },
+                ...x[14] && { where: unwrap(x[14]) }
+              }) },
+              { "name": "createindex_expressions$ebnf$1", "symbols": [] },
+              { "name": "createindex_expressions$ebnf$1$subexpression$1", "symbols": ["comma", "createindex_expression"], "postprocess": last },
+              { "name": "createindex_expressions$ebnf$1", "symbols": ["createindex_expressions$ebnf$1", "createindex_expressions$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createindex_expressions", "symbols": ["createindex_expression", "createindex_expressions$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "createindex_expression$subexpression$1", "symbols": ["expr_basic"] },
+              { "name": "createindex_expression$subexpression$1", "symbols": ["expr_paren"] },
+              { "name": "createindex_expression$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_collate") ? { type: "kw_collate" } : kw_collate, "qualified_name"], "postprocess": last },
+              { "name": "createindex_expression$ebnf$1", "symbols": ["createindex_expression$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "createindex_expression$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_expression$ebnf$2", "symbols": ["qualified_name"], "postprocess": id },
+              { "name": "createindex_expression$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_expression$ebnf$3$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_asc") ? { type: "kw_asc" } : kw_asc] },
+              { "name": "createindex_expression$ebnf$3$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_desc") ? { type: "kw_desc" } : kw_desc] },
+              { "name": "createindex_expression$ebnf$3", "symbols": ["createindex_expression$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "createindex_expression$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_expression$ebnf$4$subexpression$1$subexpression$1", "symbols": ["kw_first"] },
+              { "name": "createindex_expression$ebnf$4$subexpression$1$subexpression$1", "symbols": ["kw_last"] },
+              { "name": "createindex_expression$ebnf$4$subexpression$1", "symbols": ["kw_nulls", "createindex_expression$ebnf$4$subexpression$1$subexpression$1"], "postprocess": last },
+              { "name": "createindex_expression$ebnf$4", "symbols": ["createindex_expression$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "createindex_expression$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "createindex_expression", "symbols": ["createindex_expression$subexpression$1", "createindex_expression$ebnf$1", "createindex_expression$ebnf$2", "createindex_expression$ebnf$3", "createindex_expression$ebnf$4"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                expression: unwrap(x[0]),
+                ...x[1] && { collate: unwrap(x[1]) },
+                ...x[2] && { opclass: unwrap(x[2]) },
+                ...x[3] && { order: unwrap(x[3]).value },
+                ...x[4] && { nulls: unwrap(x[4]) }
+              }) },
+              { "name": "createindex_predicate", "symbols": [lexer_1.lexerAny.has("kw_where") ? { type: "kw_where" } : kw_where, "expr"], "postprocess": last },
+              { "name": "createindex_with$macrocall$2", "symbols": ["createindex_with_item"] },
+              { "name": "createindex_with$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "createindex_with$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "createindex_with$macrocall$2"], "postprocess": last },
+              { "name": "createindex_with$macrocall$1$ebnf$1", "symbols": ["createindex_with$macrocall$1$ebnf$1", "createindex_with$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createindex_with$macrocall$1", "symbols": ["createindex_with$macrocall$2", "createindex_with$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "createindex_with", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "lparen", "createindex_with$macrocall$1", "rparen"], "postprocess": get(2) },
+              { "name": "createindex_with_item$subexpression$1", "symbols": ["string"] },
+              { "name": "createindex_with_item$subexpression$1", "symbols": ["int"] },
+              { "name": "createindex_with_item", "symbols": ["ident", lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "createindex_with_item$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { parameter: toStr(x[0]), value: unwrap(x[2]).toString() }) },
+              { "name": "createindex_tblspace", "symbols": ["kw_tablespace", "ident"], "postprocess": last },
+              { "name": "createextension_statement$ebnf$1", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "createextension_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createextension_statement$ebnf$2", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with], "postprocess": id },
+              { "name": "createextension_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "createextension_statement$ebnf$3$subexpression$1", "symbols": ["kw_schema", "word"], "postprocess": last },
+              { "name": "createextension_statement$ebnf$3", "symbols": ["createextension_statement$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "createextension_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "createextension_statement$ebnf$4$subexpression$1", "symbols": ["kw_version", "string"], "postprocess": last },
+              { "name": "createextension_statement$ebnf$4", "symbols": ["createextension_statement$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "createextension_statement$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "createextension_statement$ebnf$5$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from, "string"], "postprocess": last },
+              { "name": "createextension_statement$ebnf$5", "symbols": ["createextension_statement$ebnf$5$subexpression$1"], "postprocess": id },
+              { "name": "createextension_statement$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "createextension_statement", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "kw_extension", "createextension_statement$ebnf$1", "word", "createextension_statement$ebnf$2", "createextension_statement$ebnf$3", "createextension_statement$ebnf$4", "createextension_statement$ebnf$5"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "create extension",
+                ...!!x[2] ? { ifNotExists: true } : {},
+                extension: asName(x[3]),
+                ...!!x[5] ? { schema: asName(x[5]) } : {},
+                ...!!x[6] ? { version: asLit(x[6]) } : {},
+                ...!!x[7] ? { from: asLit(x[7]) } : {}
+              }) },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_start_transaction"] },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_commit"] },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_rollback"] },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_tablespace"] },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_set"] },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_show"] },
+              { "name": "simplestatements_all", "symbols": ["simplestatements_begin"] },
+              { "name": "simplestatements_start_transaction$subexpression$1", "symbols": ["kw_start", "kw_transaction"] },
+              { "name": "simplestatements_start_transaction", "symbols": ["simplestatements_start_transaction$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "start transaction" }) },
+              { "name": "simplestatements_commit", "symbols": ["kw_commit"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "commit" }) },
+              { "name": "simplestatements_rollback", "symbols": ["kw_rollback"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "rollback" }) },
+              { "name": "simplestatements_tablespace", "symbols": ["kw_tablespace", "word"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "tablespace",
+                tablespace: asName(x[1])
+              }) },
+              { "name": "simplestatements_set$subexpression$1", "symbols": ["simplestatements_set_simple"] },
+              { "name": "simplestatements_set$subexpression$1", "symbols": ["simplestatements_set_timezone"] },
+              { "name": "simplestatements_set$subexpression$1", "symbols": ["simplestatements_set_names"] },
+              { "name": "simplestatements_set", "symbols": ["kw_set", "simplestatements_set$subexpression$1"], "postprocess": last },
+              { "name": "simplestatements_set_timezone", "symbols": ["kw_time", "kw_zone", "simplestatements_set_timezone_val"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "set timezone", to: x[2] }) },
+              { "name": "simplestatements_set_timezone_val$subexpression$1", "symbols": ["string"] },
+              { "name": "simplestatements_set_timezone_val$subexpression$1", "symbols": ["int"] },
+              { "name": "simplestatements_set_timezone_val", "symbols": ["simplestatements_set_timezone_val$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "value", value: unwrap(x[0]) }) },
+              { "name": "simplestatements_set_timezone_val", "symbols": ["kw_local"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "local" }) },
+              { "name": "simplestatements_set_timezone_val", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default], "postprocess": (x) => (0, lexer_2.track)(x, { type: "default" }) },
+              { "name": "simplestatements_set_timezone_val", "symbols": ["kw_interval", "string", "kw_hour", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "kw_minute"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "interval", value: (0, lexer_2.unbox)(x[1]) }) },
+              { "name": "simplestatements_set_names", "symbols": ["kw_names", "simplestatements_set_names_val"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "set names", to: x[1] }) },
+              { "name": "simplestatements_set_names_val$subexpression$1", "symbols": ["string"] },
+              { "name": "simplestatements_set_names_val", "symbols": ["simplestatements_set_names_val$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "value", value: unwrap(x[0]) }) },
+              { "name": "simplestatements_set_simple$ebnf$1$subexpression$1", "symbols": ["kw_local"] },
+              { "name": "simplestatements_set_simple$ebnf$1$subexpression$1", "symbols": ["kw_session"] },
+              { "name": "simplestatements_set_simple$ebnf$1", "symbols": ["simplestatements_set_simple$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "simplestatements_set_simple$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "simplestatements_set_simple$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq] },
+              { "name": "simplestatements_set_simple$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to] },
+              { "name": "simplestatements_set_simple", "symbols": ["simplestatements_set_simple$ebnf$1", "ident", "simplestatements_set_simple$subexpression$1", "simplestatements_set_val"], "postprocess": (x) => {
+                var _a;
+                return (0, lexer_2.track)(x, {
+                  type: "set",
+                  variable: asName(x[1]),
+                  scope: (_a = unwrap(x[0])) === null || _a === void 0 ? void 0 : _a.toLowerCase(),
+                  set: (0, lexer_2.unbox)(x[3])
+                });
+              } },
+              { "name": "simplestatements_set_val", "symbols": ["simplestatements_set_val_raw"], "postprocess": unwrap },
+              { "name": "simplestatements_set_val", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default], "postprocess": (x) => (0, lexer_2.track)(x, { type: "default" }) },
+              { "name": "simplestatements_set_val$ebnf$1$subexpression$1", "symbols": ["comma", "simplestatements_set_val_raw"] },
+              { "name": "simplestatements_set_val$ebnf$1", "symbols": ["simplestatements_set_val$ebnf$1$subexpression$1"] },
+              { "name": "simplestatements_set_val$ebnf$1$subexpression$2", "symbols": ["comma", "simplestatements_set_val_raw"] },
+              { "name": "simplestatements_set_val$ebnf$1", "symbols": ["simplestatements_set_val$ebnf$1", "simplestatements_set_val$ebnf$1$subexpression$2"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "simplestatements_set_val", "symbols": ["simplestatements_set_val_raw", "simplestatements_set_val$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "list",
+                values: [x[0], ...x[1] || []]
+              }) },
+              { "name": "simplestatements_set_val_raw$subexpression$1", "symbols": ["string"] },
+              { "name": "simplestatements_set_val_raw$subexpression$1", "symbols": ["int"] },
+              { "name": "simplestatements_set_val_raw", "symbols": ["simplestatements_set_val_raw$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "value", value: unwrap(x) }) },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word] },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on] },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_true") ? { type: "kw_true" } : kw_true] },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_false") ? { type: "kw_false" } : kw_false] },
+              { "name": "simplestatements_set_val_raw", "symbols": ["simplestatements_set_val_raw$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "identifier", name: unwrap(x).value }) },
+              { "name": "simplestatements_set_val_raw", "symbols": [lexer_1.lexerAny.has("quoted_word") ? { type: "quoted_word" } : quoted_word], "postprocess": (x) => (0, lexer_2.track)(x, { type: "identifier", doubleQuoted: true, name: unwrap(x).value }) },
+              { "name": "simplestatements_show", "symbols": ["kw_show", "ident"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "show", variable: asName(x[1]) }) },
+              { "name": "create_schema$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "kw_schema"] },
+              { "name": "create_schema$ebnf$1", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "create_schema$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_schema", "symbols": ["create_schema$subexpression$1", "create_schema$ebnf$1", "ident"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "create schema",
+                name: asName(x[2]),
+                ...!!x[1] ? { ifNotExists: true } : {}
+              }) },
+              { "name": "raise_statement$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("debug", "log", "info", "notice", "warning", "exception") },
+              { "name": "raise_statement$ebnf$1", "symbols": ["raise_statement$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "raise_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "raise_statement$ebnf$2$subexpression$1", "symbols": ["comma", "expr_list_raw"], "postprocess": last },
+              { "name": "raise_statement$ebnf$2", "symbols": ["raise_statement$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "raise_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "raise_statement$ebnf$3", "symbols": ["raise_using"], "postprocess": id },
+              { "name": "raise_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "raise_statement", "symbols": ["kw_raise", "raise_statement$ebnf$1", "string", "raise_statement$ebnf$2", "raise_statement$ebnf$3"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "raise",
+                format: toStr(x[2]),
+                ...x[1] && { level: toStr(x[1]) },
+                ...x[3] && x[3].length && { formatExprs: x[3] },
+                ...x[4] && x[4].length && { using: x[4] }
+              }) },
+              { "name": "raise_using$macrocall$2", "symbols": ["raise_using_one"] },
+              { "name": "raise_using$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "raise_using$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "raise_using$macrocall$2"], "postprocess": last },
+              { "name": "raise_using$macrocall$1$ebnf$1", "symbols": ["raise_using$macrocall$1$ebnf$1", "raise_using$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "raise_using$macrocall$1", "symbols": ["raise_using$macrocall$2", "raise_using$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "raise_using", "symbols": [lexer_1.lexerAny.has("kw_using") ? { type: "kw_using" } : kw_using, "raise_using$macrocall$1"], "postprocess": last },
+              { "name": "raise_using_one", "symbols": ["raise_using_what", lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "expr"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: toStr(x[0]),
+                value: x[2]
+              }) },
+              { "name": "raise_using_what", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table] },
+              { "name": "raise_using_what", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("message", "detail", "hint", "errcode", "column", "constraint", "datatype", "schema") },
+              { "name": "comment_statement", "symbols": ["kw_comment", lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "comment_what", lexer_1.lexerAny.has("kw_is") ? { type: "kw_is" } : kw_is, "string"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "comment",
+                comment: (0, lexer_2.unbox)(last(x)),
+                on: unwrap(x[2])
+              }) },
+              { "name": "comment_what", "symbols": ["comment_what_col"] },
+              { "name": "comment_what", "symbols": ["comment_what_nm"] },
+              { "name": "comment_what_nm$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table] },
+              { "name": "comment_what_nm$subexpression$1", "symbols": ["kw_materialized", "kw_view"] },
+              { "name": "comment_what_nm$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("database", "index", "trigger", "type", "view") },
+              { "name": "comment_what_nm", "symbols": ["comment_what_nm$subexpression$1", "qualified_name"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: toStr(x[0]),
+                name: x[1]
+              }) },
+              { "name": "comment_what_col", "symbols": ["kw_column", "qcolumn"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "column",
+                column: last(x)
+              }) },
+              { "name": "simplestatements_begin$ebnf$1$subexpression$1", "symbols": ["kw_transaction"] },
+              { "name": "simplestatements_begin$ebnf$1$subexpression$1", "symbols": ["kw_work"] },
+              { "name": "simplestatements_begin$ebnf$1", "symbols": ["simplestatements_begin$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "simplestatements_begin$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "simplestatements_begin$ebnf$2", "symbols": [] },
+              { "name": "simplestatements_begin$ebnf$2$subexpression$1", "symbols": ["simplestatements_begin_isol"] },
+              { "name": "simplestatements_begin$ebnf$2$subexpression$1", "symbols": ["simplestatements_begin_writ"] },
+              { "name": "simplestatements_begin$ebnf$2$subexpression$1", "symbols": ["simplestatements_begin_def"] },
+              { "name": "simplestatements_begin$ebnf$2", "symbols": ["simplestatements_begin$ebnf$2", "simplestatements_begin$ebnf$2$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              {
+                "name": "simplestatements_begin",
+                "symbols": ["kw_begin", "simplestatements_begin$ebnf$1", "simplestatements_begin$ebnf$2"],
+                "postprocess": (x) =>

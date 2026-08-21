@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:evidence-link:1",
+  "title": "Opaque workbench evidence link",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workspaceId",
+    "linkRef",
+    "kind",
+    "label",
+    "availability"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "workspaceId": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+    },
+    "linkRef": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef"
+    },
+    "evidenceRef": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+    },
+    "kind": {
+      "enum": [
+        "GRAFANA_DASHBOARD",
+        "GRAFANA_PANEL",
+        "PROMETHEUS_VIEW",
+        "LOG_VIEW",
+        "TRACE_VIEW",
+        "CODE_REVISION",
+        "CODE_LOCATION"
+      ]
+    },
+    "label": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "availability": { "enum": ["AVAILABLE", "UNAVAILABLE"] },
+    "unavailableReason": { "type": "string", "minLength": 1, "maxLength": 256 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "availability": { "const": "UNAVAILABLE" } },
+        "required": ["availability"]
+      },
+      "then": {
+        "required": ["unavailableReason"],
+        "properties": {
+          "unavailableReason": { "type": "string", "minLength": 1, "maxLength": 256 }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:manifest:1",
+  "title": "Sealed incident bundle manifest",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "bundleId", "runId", "origin", "producer", "createdAt", "sealedAt", "entries", "bundleSha256"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "bundleId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/BundleId" }, "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" }, "parentRunId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" }, "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    "producer": { "type": "object", "additionalProperties": false, "required": ["pluginVersion", "contractsVersion", "reportProjectionVersion"], "properties": { "pluginVersion": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Semver" }, "contractsVersion": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Semver" }, "reportProjectionVersion": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Semver" } } },
+    "createdAt": { "type": "string", "format": "date-time" }, "sealedAt": { "type": "string", "format": "date-time" },
+    "entries": { "type": "array", "minItems": 1, "maxItems": 10000, "items": { "type": "object", "additionalProperties": false, "required": ["path", "role", "mediaType", "bytes", "sha256"], "properties": { "path": { "allOf": [{ "$ref": "urn:production-monitoring:schema:common:1#/$defs/PortableRelativePath" }, { "not": { "enum": ["manifest.json", "manifest.sha256", "manifest.sig", "report.md"] } }] }, "role": { "enum": ["RUN", "PROFILE", "OPERATIONS", "EVIDENCE", "CONTRADICTIONS", "COVERAGE", "INVESTIGATION", "RECEIPT"] }, "mediaType": { "type": "string", "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$" }, "bytes": { "type": "integer", "minimum": 0 }, "sha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" } } } },
+    "bundleSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+  },
+  "$comment": "bundleSha256 covers only canonical semantic-file receipts sorted by path. manifest.json, manifest.sha256, manifest.sig, and the derived report.md projection are excluded, avoiding circular or presentation-dependent hashes."
+}

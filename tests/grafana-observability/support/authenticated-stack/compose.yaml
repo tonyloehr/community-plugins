@@ -1,0 +1,84 @@
+name: ${CDE_GRAFANA_AUTH_PROJECT:?runner must choose a disposable project}
+
+services:
+  metrics:
+    image: ${CDE_GRAFANA_AUTH_NODE_IMAGE:?runner must select the pinned seed image}
+    command: [node, /opt/metrics/metrics.mjs]
+    read_only: true
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - ./metrics.mjs:/opt/metrics/metrics.mjs:ro
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 2s
+      timeout: 1s
+      retries: 30
+    networks: [observability]
+
+  prometheus:
+    image: ${CDE_GRAFANA_AUTH_PROMETHEUS_IMAGE:?runner must select the pinned provider image}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.path=/prometheus
+      - --no-web.enable-lifecycle
+      - --no-web.enable-admin-api
+      - --log.level=error
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /prometheus:uid=65534,gid=65534,mode=0700
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+    depends_on:
+      metrics:
+        condition: service_healthy
+    networks: [observability]
+
+  grafana:
+    image: ${CDE_GRAFANA_AUTH_IMAGE:?runner must select the pinned Grafana image}
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_BASIC_ENABLED: "true"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_SECURITY_ADMIN_USER: community-disposable-admin
+      # Generated in memory by the runner; never supplied as an argv value or
+      # written into a fixture. This instance and its SQLite DB are disposable.
+      GF_SECURITY_ADMIN_PASSWORD: ${CDE_GRAFANA_AUTH_ADMIN_PASSWORD:?runner must generate a disposable password}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_SERVER_HTTP_PORT: "3000"
+      GF_LOG_LEVEL: error
+    ports:
+      - "127.0.0.1:0:3000"
+    read_only: true
+    user: "472:472"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /var/lib/grafana:uid=472,gid=472,mode=0700
+      - /var/log/grafana:uid=472,gid=472,mode=0700
+    volumes:
+      - ./datasources.yaml:/etc/grafana/provisioning/datasources/authenticated.yaml:ro
+    healthcheck:
+      test: [CMD-SHELL, "wget --spider --quiet http://127.0.0.1:3000/api/health"]
+      interval: 2s
+      timeout: 1s
+      retries: 60
+    depends_on:
+      prometheus:
+        condition: service_started
+    # The actual Grafana API is exposed only on a dynamically allocated IPv4
+    # loopback port. Prometheus and the metric exporter have no published ports.
+    networks: [observability, ingress]
+
+networks:
+  observability:
+    internal: true
+  ingress:
+    driver: bridge

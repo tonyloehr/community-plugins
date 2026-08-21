@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:provider-capability-pack:1",
+  "title": "Reviewed provider capability pack",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packId",
+    "revision",
+    "useCase",
+    "requiredOperationIds",
+    "optionalOperationIds",
+    "supportedSubjectKinds",
+    "scopeMappings",
+    "signals",
+    "issueRules",
+    "definitionSha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "packId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/CapabilityPackId" },
+    "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "useCase": {
+      "enum": [
+        "INFRASTRUCTURE",
+        "APPLICATION_PERFORMANCE",
+        "LOG_ANALYTICS",
+        "IOT_EDGE",
+        "BUSINESS_INTELLIGENCE"
+      ]
+    },
+    "requiredOperationIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" }
+    },
+    "optionalOperationIds": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" }
+    },
+    "supportedSubjectKinds": {
+      "type": "array",
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": { "enum": ["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"] }
+    },
+    "scopeMappings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": { "$ref": "#/$defs/scopeMapping" }
+    },
+    "signals": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/signal" }
+    },
+    "issueRules": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/issueRule" }
+    },
+    "definitionSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+  },
+  "$defs": {
+    "scopeMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scopeField", "providerField", "required"],
+      "properties": {
+        "scopeField": { "enum": ["environment", "service", "region", "cohort", "subject.ref"] },
+        "providerField": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+        },
+        "required": { "type": "boolean" }
+      }
+    },
+    "threshold": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comparator"],
+      "properties": {
+        "comparator": { "enum": ["LT", "LTE", "GT", "GTE", "EQ"] },
+        "warning": { "type": "number" },
+        "critical": { "type": "number" }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["signalId", "operationId", "resultName", "order", "polarity"],
+      "properties": {
+        "signalId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "operationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+        "resultName": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "order": { "type": "integer", "minimum": 1, "maximum": 1024 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "polarity": { "enum": ["HIGH_IS_BAD", "LOW_IS_BAD", "NEUTRAL"] },
+        "thresholds": { "$ref": "#/$defs/threshold" }
+      }
+    },
+    "issueRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ruleId",
+        "comparison",
+        "operationId",
+        "issueKind",
+        "severity",
+        "signedThreshold"
+      ],
+      "properties": {
+        "ruleId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "comparison": {
+          "enum": ["THRESHOLD", "BASELINE_DELTA", "STALE", "EMPTY", "ERROR", "CONTRADICTION"]
+        },
+        "operationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+        "comparisonOperationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+        "resultName": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "reducer": { "enum": ["SINGLE", "MAX", "MIN"] },
+        "comparator": { "enum": ["LT", "LTE", "GT", "GTE", "EQ"] },
+        "threshold": { "type": "number" },
+        "delta": { "type": "number" },
+        "maxAgeMs": { "type": "integer", "minimum": 0, "maximum": 31536000000 },
+        "issueKind": {
+          "enum": ["ALERT", "REGRESSION", "ANOMALY", "CONTRADICTION", "EVIDENCE_GAP"]
+        },
+        "severity": { "enum": ["INFO", "WARNING", "CRITICAL"] },
+        "signedThreshold": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "comparison": { "const": "THRESHOLD" } }, "required": ["comparison"] },
+          "then": {
+            "properties": { "resultName": {}, "comparator": {}, "threshold": {} },
+            "required": ["resultName", "comparator", "threshold"]
+          }
+        },
+        {
+          "if": { "properties": { "comparison": { "const": "BASELINE_DELTA" } }, "required": ["comparison"] },
+          "then": {
+            "properties": { "resultName": {}, "comparator": {}, "delta": {} },
+            "required": ["resultName", "comparator", "delta"]
+          }
+        },
+        {
+          "if": { "properties": { "comparison": { "const": "STALE" } }, "required": ["comparison"] },
+          "then": { "properties": { "maxAgeMs": {} }, "required": ["maxAgeMs"] }
+        },
+        {
+          "if": { "properties": { "issueKind": { "const": "ANOMALY" } }, "required": ["issueKind"] },
+          "then": { "properties": { "signedThreshold": { "const": true } } }
+        }
+      ]
+    }
+  },
+  "$comment": "definitionSha256 is sha256-jcs-v1 over the complete pack with definitionSha256 omitted."
+}

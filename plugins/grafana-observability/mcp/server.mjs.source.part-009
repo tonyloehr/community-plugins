@@ -1,0 +1,3076 @@
+iberate timeout scenario short, but give every
+      // other deterministic scenario the profile's full bounded second.
+      limits: { timeoutMs: scenario === "timeout" ? 25 : 1e3 }
+    })
+  );
+  const endpoint = {
+    endpointId: "fixture-checkout",
+    adapterId: FIXTURE_ADAPTER_PACKAGE_ID,
+    baseUrl: "http://127.0.0.1/",
+    authentication: { mode: "NONE" },
+    tls: { minimumVersion: "TLSv1.2" },
+    network: {
+      followRedirects: false,
+      allowLoopbackHttp: true,
+      allowedHosts: ["127.0.0.1"],
+      networkClass: "loopback",
+      routeMode: "direct"
+    }
+  };
+  const profileDraft = {
+    schemaVersion: "1.0.0",
+    profileAlias: "fixture",
+    capabilityProfile: "investigate",
+    allowedOrigins: ["SIMULATED", "REPLAY"],
+    compiledAt: FIXED_CAPTURE_TIME,
+    configSha256: "0".repeat(64),
+    endpointRegistrySha256: sha256Canonical([endpoint]),
+    catalogSha256: sha256Canonical(operations),
+    scopes: {
+      checkout: { environment: "simulation", service: "checkout" },
+      worker: { environment: "simulation", service: "worker" }
+    },
+    endpointIds: [endpoint.endpointId],
+    operationIds: operations.map((operation2) => operation2.operationId),
+    verificationPolicies: {
+      "checkout-recovery": {
+        policyAlias: "checkout-recovery",
+        windowStrategy: "REPEATED_CHECKS",
+        windowDurationSeconds: 60,
+        requiredSamples: 1,
+        passCount: 1,
+        criteria: [
+          {
+            criterionId: "checkout-error-rate",
+            operationId: "fixture.healthy",
+            valueSelector: { kind: "SCALAR", name: "checkout_error_rate", reducer: "SINGLE" },
+            comparator: "LTE",
+            expected: 1,
+            unit: "percent",
+            maxEvidenceAgeMs: 6e4
+          }
+        ]
+      }
+    },
+    policy: {
+      defaultLookback: { mode: "FIXED", durationSeconds: 900 },
+      maxEvidenceAge: { mode: "FIXED", durationSeconds: 60 },
+      rawEvidenceRetention: { mode: "NONE" },
+      auditRequired: true,
+      limits: {
+        timeoutMs: 1e3,
+        maxAgeMs: 6e4,
+        maxBytes: 64e3,
+        maxRows: 100,
+        maxSeries: 10,
+        maxPoints: 1e3
+      }
+    }
+  };
+  const profile = {
+    ...profileDraft,
+    configSha256: computeTrustedProfileConfigHash(profileDraft)
+  };
+  const unsealed = {
+    schemaVersion: "1.0.0",
+    createdAt: FIXED_CAPTURE_TIME,
+    profile,
+    endpoints: [endpoint],
+    operations,
+    adapters: [fixtureAdapterPackage],
+    integrity: {
+      hashContractVersion: "sha256-jcs-v1",
+      algorithm: "sha256",
+      canonicalization: "RFC8785",
+      contentSha256: "0".repeat(64)
+    }
+  };
+  return {
+    bundle: { ...unsealed, integrity: computeIntegrity(unsealed) },
+    registrations: [builtinRegistration(fixtureAdapterPackage, fixtureAdapter)]
+  };
+}
+
+// packages/evidence-server/src/service.ts
+var import_node_crypto12 = require("node:crypto");
+
+// packages/artifacts/src/schema.ts
+var import__2 = __toESM(require__(), 1);
+var import_ajv_formats2 = __toESM(require_dist(), 1);
+var ajv2 = new import__2.Ajv2020({
+  allErrors: true,
+  allowUnionTypes: true,
+  strict: true
+});
+var addFormats2 = import_ajv_formats2.default;
+addFormats2(ajv2);
+for (const schema of loadSchemaRegistry().values()) ajv2.addSchema(schema);
+function assertSchema(name, value) {
+  const validator = ajv2.getSchema(SCHEMA_IDS[name]);
+  if (validator === void 0) throw new Error("Schema is not registered: ".concat(name));
+  if (!validator(value)) {
+    const details = ajv2.errorsText(validator.errors, { separator: "; " });
+    throw new TypeError("".concat(name, " contract validation failed: ").concat(details));
+  }
+}
+
+// packages/artifacts/src/model.ts
+var RUN_ID = /^pmrun_[A-Za-z0-9_-]{20,128}$/u;
+var BUNDLE_ID = /^pmbundle_[A-Za-z0-9_-]{20,128}$/u;
+var EVIDENCE_KEYS = /* @__PURE__ */ new Set([
+  "schemaVersion",
+  "evidenceId",
+  "runId",
+  "operationId",
+  "operationDefinitionSha256",
+  "trustBundleSha256",
+  "origin",
+  "authority",
+  "source",
+  "scope",
+  "correlation",
+  "evaluatedAt",
+  "collectedAt",
+  "window",
+  "maxAcceptableAgeMs",
+  "collectionState",
+  "freshnessState",
+  "native",
+  "values",
+  "redactions",
+  "limitations",
+  "pagination",
+  "providerWarnings",
+  "error",
+  "integrity"
+]);
+var FORBIDDEN_RAW_KEYS = /* @__PURE__ */ new Set([
+  "raw",
+  "rawpayload",
+  "rawproviderpayload",
+  "rawproviderdata",
+  "rawresponse",
+  "rawdata",
+  "providerpayload",
+  "providerresponse",
+  "requestbody",
+  "responsebody",
+  "authorization",
+  "cookie",
+  "password",
+  "secret"
+]);
+function assertIsoTimestamp(value, label) {
+  const date5 = new Date(value);
+  if (!Number.isFinite(date5.getTime()) || date5.toISOString() !== value) {
+    throw new TypeError("".concat(label, " must be an ISO 8601 UTC timestamp"));
+  }
+}
+function assertEqual2(left, right, message) {
+  if (canonicalJson(left) !== canonicalJson(right)) throw new TypeError(message);
+}
+function sortedUnique(values) {
+  return [...new Set(values)].sort();
+}
+function assertNoUnexpectedEvidenceProperties(evidence) {
+  for (const key of Object.keys(evidence)) {
+    if (!EVIDENCE_KEYS.has(key)) {
+      throw new TypeError("Evidence ".concat(evidence.evidenceId, " has unsupported property ").concat(key));
+    }
+  }
+}
+function assertNoRawProviderRetention(value, path = "$") {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      assertNoRawProviderRetention(value[index], "".concat(path, "[").concat(index, "]"));
+    }
+    return;
+  }
+  for (const [key, member] of Object.entries(value)) {
+    const normalized = key.replaceAll(/[^a-z]/giu, "").toLowerCase();
+    if (FORBIDDEN_RAW_KEYS.has(normalized)) {
+      throw new TypeError("Raw provider material is forbidden at ".concat(path, ".").concat(key));
+    }
+    assertNoRawProviderRetention(member, "".concat(path, ".").concat(key));
+  }
+}
+function assertUnique2(values, label) {
+  if (new Set(values).size !== values.length) throw new TypeError("".concat(label, " must be unique"));
+}
+function jsonPointerExists(value, pointer) {
+  if (pointer === "") return true;
+  let current = value;
+  for (const encodedToken of pointer.slice(1).split("/")) {
+    const token = encodedToken.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (Array.isArray(current)) {
+      if (!/^(?:0|[1-9][0-9]*)$/u.test(token)) return false;
+      const index = Number(token);
+      if (!Number.isSafeInteger(index) || index >= current.length) return false;
+      current = current[index];
+    } else if (current !== null && typeof current === "object") {
+      if (!Object.hasOwn(current, token)) return false;
+      current = current[token];
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+function validateVerificationContract(contract) {
+  const semanticContract = {
+    policyAlias: contract.policyAlias,
+    scope: contract.scope,
+    ...contract.cohort === void 0 ? {} : { cohort: contract.cohort },
+    windowStrategy: contract.windowStrategy,
+    windowDurationSeconds: contract.windowDurationSeconds,
+    requiredSamples: contract.requiredSamples,
+    passCount: contract.passCount,
+    criteria: contract.criteria
+  };
+  const expected = sha256Canonical(semanticContract);
+  if (contract.contractSha256 !== expected) {
+    throw new TypeError("Verification contract hash does not match its semantic content");
+  }
+}
+function computeVerificationContractHash(contract) {
+  return sha256Canonical(contract);
+}
+function assertCitations(draft, evidenceIds) {
+  const requireEvidence = (id, citation) => {
+    if (!evidenceIds.has(id)) throw new TypeError("".concat(citation, " cites unknown evidence ").concat(id));
+  };
+  for (const observation of draft.observations) {
+    for (const id of observation.evidenceIds) requireEvidence(id, observation.observationId);
+  }
+  for (const inference of draft.inferences) {
+    for (const id of inference.supportingEvidenceIds) requireEvidence(id, inference.inferenceId);
+    for (const id of inference.contradictingEvidenceIds) requireEvidence(id, inference.inferenceId);
+  }
+  for (const hypothesis of draft.hypotheses) {
+    for (const id of hypothesis.supportingEvidenceIds) requireEvidence(id, hypothesis.hypothesisId);
+    for (const id of hypothesis.contradictingEvidenceIds) {
+      requireEvidence(id, hypothesis.hypothesisId);
+    }
+  }
+  for (const id of draft.verificationResult?.evidenceIds ?? []) {
+    requireEvidence(id, "verificationResult");
+  }
+}
+function validateAnalysis(draft, evidenceIds) {
+  const analysis = {
+    schemaVersion: "1.0.0",
+    observations: draft.observations,
+    inferences: draft.inferences,
+    hypotheses: draft.hypotheses,
+    checksPerformed: draft.checksPerformed,
+    missingEvidence: draft.missingEvidence,
+    smallestSafeNextStep: draft.smallestSafeNextStep,
+    approvalRequired: draft.approvalRequired,
+    remainingUncertainty: draft.remainingUncertainty,
+    owners: draft.owners
+  };
+  assertSchema("analysisDraft", analysis);
+  assertAnalysisDraftSemantics(analysis, evidenceIds);
+}
+function validateSourceInput(input) {
+  if (!RUN_ID.test(input.runId)) throw new TypeError("Invalid runId");
+  if (!BUNDLE_ID.test(input.bundleId)) throw new TypeError("Invalid bundleId");
+  assertIsoTimestamp(input.createdAt, "createdAt");
+  assertSchema("workflowRequest", input.request);
+  assertSchema("trustedProfile", input.profile);
+  if (input.request.profileAlias !== input.profile.profileAlias) {
+    throw new TypeError("Request profileAlias does not match the captured profile");
+  }
+  if (!Object.hasOwn(input.profile.scopes, input.request.scopeAlias)) {
+    throw new TypeError("Unknown request scope alias: ".concat(input.request.scopeAlias));
+  }
+  if (!input.profile.allowedOrigins.includes(input.request.origin)) {
+    throw new TypeError("Origin ".concat(input.request.origin, " is not allowed by the profile"));
+  }
+  if (input.operations.length === 0) {
+    throw new TypeError("At least one reviewed operation snapshot is mandatory");
+  }
+  const operationIds = input.operations.map((operation2) => operation2.operationId);
+  assertUnique2(operationIds, "Operation snapshot IDs");
+  const selectedOperationIds = input.request.requiredOperations ?? input.profile.operationIds;
+  if (canonicalJson(sortedUnique(operationIds)) !== canonicalJson(sortedUnique(selectedOperationIds))) {
+    throw new TypeError("Operation snapshots must cover the sealed run operation IDs exactly");
+  }
+  const operations = /* @__PURE__ */ new Map();
+  for (const operation2 of input.operations) {
+    assertSchema("operationSnapshot", operation2);
+    if (computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new TypeError("Operation definition hash mismatch: ".concat(operation2.operationId));
+    }
+    operations.set(operation2.operationId, operation2);
+  }
+  for (const required2 of input.request.requiredOperations ?? []) {
+    if (!operations.has(required2)) throw new TypeError("Required operation is not captured: ".concat(required2));
+  }
+  const evidenceIds = input.evidence.map((evidence) => evidence.evidenceId);
+  assertUnique2(evidenceIds, "Evidence IDs");
+  const evidenceIdSet = new Set(evidenceIds);
+  const evidenceById = new Map(input.evidence.map((evidence) => [evidence.evidenceId, evidence]));
+  let trustBundleSha256;
+  const expectedScope = input.profile.scopes[input.request.scopeAlias];
+  if (expectedScope === void 0) throw new TypeError("Request scope is unavailable");
+  for (const evidence of input.evidence) {
+    assertNoRawProviderRetention(evidence);
+    assertNoUnexpectedEvidenceProperties(evidence);
+    assertSchema("evidenceEnvelope", evidence);
+    if (!verifyIntegrity(evidence)) throw new TypeError("Evidence integrity failed: ".concat(evidence.evidenceId));
+    if (evidence.runId !== input.runId) {
+      throw new TypeError("Evidence ".concat(evidence.evidenceId, " belongs to a different run"));
+    }
+    if (evidence.origin !== input.request.origin) {
+      throw new TypeError("Evidence ".concat(evidence.evidenceId, " has a different origin"));
+    }
+    assertEqual2(evidence.scope, expectedScope, "Evidence ".concat(evidence.evidenceId, " has a different scope"));
+    const operation2 = operations.get(evidence.operationId);
+    if (operation2 === void 0) {
+      throw new TypeError("Evidence ".concat(evidence.evidenceId, " cites an uncaptured operation"));
+    }
+    if (evidence.operationDefinitionSha256 !== operation2.definitionSha256) {
+      throw new TypeError("Evidence ".concat(evidence.evidenceId, " cites a different operation revision"));
+    }
+    if (evidence.source.sourceAlias !== operation2.definition.sourceAlias || evidence.authority !== operation2.definition.authority || evidence.source.adapterPackageId !== operation2.definition.adapterPackageId) {
+      throw new TypeError("Evidence ".concat(evidence.evidenceId, " source does not match its operation"));
+    }
+    trustBundleSha256 ??= evidence.trustBundleSha256;
+    if (trustBundleSha256 !== evidence.trustBundleSha256) {
+      throw new TypeError("Evidence contains mixed trust-bundle identities");
+    }
+  }
+  const contradictionIds = input.contradictions.map((item) => item.contradictionId);
+  assertUnique2(contradictionIds, "Contradiction IDs");
+  for (const contradiction of input.contradictions) {
+    assertSchema("contradiction", contradiction);
+    if (!verifyIntegrity(contradiction)) {
+      throw new TypeError("Contradiction integrity failed: ".concat(contradiction.contradictionId));
+    }
+    if (contradiction.runId !== input.runId) {
+      throw new TypeError("Contradiction ".concat(contradiction.contradictionId, " belongs to a different run"));
+    }
+    for (const claim of contradiction.claimRefs) {
+      const citedEvidence = evidenceById.get(claim.evidenceId);
+      if (citedEvidence === void 0) {
+        throw new TypeError(
+          "Contradiction ".concat(contradiction.contradictionId, " cites unknown evidence ").concat(claim.evidenceId)
+        );
+      }
+      if (!jsonPointerExists(citedEvidence, claim.jsonPointer)) {
+        throw new TypeError(
+          "Contradiction ".concat(contradiction.contradictionId, " cites a missing JSON pointer in ").concat(claim.evidenceId)
+        );
+      }
+    }
+  }
+  assertEqual2(input.investigation.scope, expectedScope, "Investigation scope does not match request");
+  assertEqual2(
+    input.investigation.requestedWindow,
+    input.request.window,
+    "Investigation requestedWindow does not match request"
+  );
+  assertCitations(input.investigation, evidenceIdSet);
+  if (input.investigation.analysisState === "SUBMITTED") {
+    validateAnalysis(input.investigation, evidenceIdSet);
+  }
+  if (input.investigation.verificationContract !== void 0) {
+    validateVerificationContract(input.investigation.verificationContract);
+    for (const criterion of input.investigation.verificationContract.criteria) {
+      const operation2 = operations.get(criterion.operationId);
+      if (operation2 === void 0 || operation2.definitionSha256 !== criterion.operationDefinitionSha256) {
+        throw new TypeError("Verification criterion ".concat(criterion.criterionId, " is not reproducible"));
+      }
+    }
+  }
+  return operations;
+}
+function aggregateDisposition(evidence, contradictionEvidenceIds) {
+  if (evidence.length === 0) return "DEFERRED";
+  const states = evidence.map(
+    (item) => deriveEvidenceState({
+      collectionState: item.collectionState,
+      freshnessState: item.freshnessState,
+      hasUnresolvedContradiction: contradictionEvidenceIds.has(item.evidenceId)
+    })
+  );
+  for (const state of ["ERROR", "CONTRADICTORY", "STALE"]) {
+    if (states.includes(state)) return evidenceStateToCoverageDisposition(state);
+  }
+  if (states.every((state) => state === "EMPTY")) return "EMPTY";
+  return "AVAILABLE";
+}
+function deriveArtifactCoverage(input) {
+  const operations = validateSourceInput(input);
+  const required2 = new Set(
+    input.request.workflow === "deep" ? input.operations.map((operation2) => operation2.operationId) : input.request.requiredOperations ?? input.operations.map((operation2) => operation2.operationId)
+  );
+  const unresolvedContradictions = input.contradictions.filter(
+    (contradiction) => contradiction.resolutionState === "UNRESOLVED"
+  );
+  const contradictionEvidenceIds = new Set(
+    unresolvedContradictions.flatMap((item) => item.claimRefs.map((claim) => claim.evidenceId))
+  );
+  const entries = [...operations.values()].sort((left, right) => left.operationId.localeCompare(right.operationId)).map((operation2) => {
+    const operationEvidence = input.evidence.filter((item) => item.operationId === operation2.operationId).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
+    const operationEvidenceIds = new Set(operationEvidence.map((item) => item.evidenceId));
+    const operationContradictions = unresolvedContradictions.filter((item) => item.claimRefs.some((claim) => operationEvidenceIds.has(claim.evidenceId))).map((item) => item.contradictionId).sort();
+    const truncated = operationEvidence.some((item) => !item.pagination.complete);
+    const disposition = truncated ? "ERROR" : aggregateDisposition(operationEvidence, contradictionEvidenceIds);
+    const isRequired = required2.has(operation2.operationId);
+    const entry = {
+      domain: operation2.definition.domain,
+      operationId: operation2.operationId,
+      requirement: isRequired ? "REQUIRED" : "OPTIONAL",
+      sourceAlias: operation2.definition.sourceAlias,
+      authority: operation2.definition.authority,
+      disposition,
+      evidenceIds: operationEvidence.map((item) => item.evidenceId),
+      contradictionIds: operationContradictions,
+      blocksWorkflow: isRequired && disposition !== "AVAILABLE"
+    };
+    if (operationEvidence.length > 0) {
+      entry.paginationComplete = operationEvidence.every((item) => item.pagination.complete);
+    }
+    if (truncated) entry.reason = "Normalized evidence was truncated by a sealed limit";
+    else if (disposition === "DEFERRED") entry.reason = "No normalized evidence was collected";
+    return entry;
+  });
+  const considered = entries.filter(
+    (entry) => entry.requirement === "REQUIRED" || entry.evidenceIds.length > 0
+  );
+  const overall = considered.length === 0 ? "UNKNOWN" : considered.every((entry) => entry.disposition === "AVAILABLE") ? "COMPLETE" : "PARTIAL";
+  const withoutIntegrity = {
+    schemaVersion: "1.0.0",
+    runId: input.runId,
+    overall,
+    entries
+  };
+  return { ...withoutIntegrity, integrity: computeIntegrity(withoutIntegrity) };
+}
+function deriveInvestigationStatus(coverage, analysisState = "SUBMITTED", recoveryState = "NONE") {
+  if (recoveryState === "INCOMPLETE") return "PARTIAL";
+  if (analysisState === "EVIDENCE_ONLY") return "PARTIAL";
+  const blockingRequired = coverage.entries.some(
+    (entry) => entry.requirement === "REQUIRED" && ["ERROR", "UNSUPPORTED", "DEFERRED"].includes(
+      entry.disposition
+    )
+  );
+  if (blockingRequired) return "BLOCKED";
+  return coverage.overall === "COMPLETE" ? "COMPLETE" : "PARTIAL";
+}
+function deriveInvestigation(input, coverage) {
+  const coverageGaps = coverage.entries.filter((entry) => entry.disposition !== "AVAILABLE").map((entry) => "".concat(entry.operationId, ": ").concat(entry.disposition));
+  const missingEvidence = sortedUnique([...input.investigation.missingEvidence, ...coverageGaps]);
+  const withoutIntegrity = {
+    schemaVersion: "1.0.0",
+    runId: input.runId,
+    ...input.investigation,
+    status: deriveInvestigationStatus(
+      coverage,
+      input.investigation.analysisState,
+      input.investigation.recoveryState
+    ),
+    contradictionIds: input.contradictions.map((item) => item.contradictionId).sort(),
+    missingEvidence
+  };
+  const investigation = {
+    ...withoutIntegrity,
+    integrity: computeIntegrity(withoutIntegrity)
+  };
+  assertSchema("investigation", investigation);
+  return investigation;
+}
+function reportText(value) {
+  return value.replaceAll(/\s+/gu, " ").replaceAll("|", "\\|").trim();
+}
+function idList(values) {
+  return values.length === 0 ? "—" : values.join(", ");
+}
+var PRESENTATION_LIMITS = {
+  signals: 8,
+  hypotheses: 3,
+  contradictions: 8,
+  gaps: 8,
+  checks: 8,
+  owners: 8,
+  criteria: 8,
+  contradictionEvidenceIds: 16,
+  evidenceIds: 64,
+  contradictionIds: 64
+};
+function bounded(values, limit) {
+  return values.slice(0, limit);
+}
+function omittedCount(values, limit) {
+  return Math.max(0, values.length - limit);
+}
+function boundedDimensions(dimensions) {
+  return Object.fromEntries(
+    Object.entries(dimensions).sort(([left], [right]) => left.localeCompare(right)).slice(0, 8)
+  );
+}
+function sortedDimensions(dimensions) {
+  return Object.fromEntries(
+    Object.entries(dimensions).sort(([left], [right]) => left.localeCompare(right))
+  );
+}
+function eventDimensions(attributes) {
+  return sortedDimensions(
+    Object.fromEntries(
+      Object.entries(attributes).map(([key, value]) => [key, value === null ? "null" : String(value)])
+    )
+  );
+}
+function latestPoint(value) {
+  return [...value.points].sort(
+    (left, right) => left.at.localeCompare(right.at)
+  ).at(-1);
+}
+function signalCandidates(evidence) {
+  return evidence.flatMap(
+    (envelope) => envelope.values.map((value) => {
+      switch (value.kind) {
+        case "SCALAR":
+          return {
+            evidence: envelope,
+            kind: value.kind,
+            label: value.name,
+            value: value.value,
+            ...value.unit === void 0 ? {} : { unit: value.unit },
+            dimensions: sortedDimensions(value.dimensions),
+            evaluatedAt: value.observedAt ?? envelope.evaluatedAt
+          };
+        case "TIMESERIES": {
+          const point = latestPoint(value);
+          return {
+            evidence: envelope,
+            kind: value.kind,
+            label: value.name,
+            value: point?.value ?? null,
+            ...value.unit === void 0 ? {} : { unit: value.unit },
+            dimensions: sortedDimensions(value.dimensions),
+            evaluatedAt: point?.at ?? envelope.evaluatedAt
+          };
+        }
+        case "TABLE":
+          return {
+            evidence: envelope,
+            kind: value.kind,
+            label: value.name,
+            value: value.rows.length,
+            unit: value.rows.length === 1 ? "row" : "rows",
+            dimensions: {},
+            evaluatedAt: envelope.evaluatedAt
+          };
+        case "EVENT":
+          return {
+            evidence: envelope,
+            kind: value.kind,
+            label: value.name,
+            value: value.summary,
+            dimensions: eventDimensions(value.attributes),
+            evaluatedAt: value.occurredAt
+          };
+      }
+    })
+  );
+}
+function signalSortKey(signal) {
+  return [
+    signal.evidence.operationId,
+    signal.evidence.source.sourceAlias,
+    signal.kind,
+    signal.label,
+    canonicalJson(signal.dimensions),
+    signal.evaluatedAt,
+    signal.evidence.evidenceId
+  ].join("\0");
+}
+function signalPairKey(signal) {
+  return [
+    signal.evidence.operationId,
+    signal.evidence.source.sourceAlias,
+    signal.kind,
+    signal.label,
+    signal.unit ?? "",
+    canonicalJson(signal.dimensions)
+  ].join("\0");
+}
+function formatNumber(value) {
+  if (!Number.isFinite(value)) return String(value);
+  if (Object.is(value, -0)) return "0";
+  const absolute = Math.abs(value);
+  if (absolute !== 0 && (absolute >= 1e6 || absolute < 1e-4)) {
+    return value.toExponential(3).replace(/\.0+(?=e)/u, "").replace(/(\.\d*?)0+(?=e)/u, "$1");
+  }
+  return Number(value.toFixed(4)).toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
+function formatValue(value, unit) {
+  if (value === null) return "No value";
+  if (typeof value !== "number") return String(value);
+  if (unit?.toLowerCase() === "ratio") return "".concat(formatNumber(value * 100), "%");
+  if (["percent", "percentage", "%"].includes(unit?.toLowerCase() ?? "")) {
+    return "".concat(formatNumber(value), "%");
+  }
+  return "".concat(formatNumber(value)).concat(unit === void 0 ? "" : " ".concat(unit));
+}
+function signalChange(current, baseline) {
+  if (typeof current.value !== "number" || typeof baseline.value !== "number") return void 0;
+  const value = current.value - baseline.value;
+  const normalizedUnit = current.unit?.toLowerCase();
+  if (normalizedUnit === "ratio") {
+    const percentagePoints = value * 100;
+    return {
+      value,
+      displayValue: "".concat(percentagePoints >= 0 ? "+" : "").concat(formatNumber(percentagePoints), " percentage points"),
+      unit: "ratio"
+    };
+  }
+  if (["percent", "percentage", "%"].includes(normalizedUnit ?? "")) {
+    return {
+      value,
+      displayValue: "".concat(value >= 0 ? "+" : "").concat(formatNumber(value), " percentage points"),
+      ...current.unit === void 0 ? {} : { unit: current.unit }
+    };
+  }
+  return {
+    value,
+    displayValue: "".concat(value >= 0 ? "+" : "").concat(formatValue(value, current.unit)),
+    ...current.unit === void 0 ? {} : { unit: current.unit }
+  };
+}
+function isWindow(value, expected) {
+  return canonicalJson(value) === canonicalJson(expected);
+}
+function presentationSignals(input) {
+  const baselineEvidence = input.request.baselineWindow === void 0 ? [] : input.evidence.filter((item) => isWindow(item.window, input.request.baselineWindow));
+  const exactCurrent = input.evidence.filter((item) => isWindow(item.window, input.request.window));
+  const currentEvidence = exactCurrent.length > 0 ? exactCurrent : input.evidence.filter((item) => !baselineEvidence.includes(item));
+  const baselineByKey = /* @__PURE__ */ new Map();
+  for (const signal of signalCandidates(baselineEvidence).sort(
+    (left, right) => signalSortKey(left).localeCompare(signalSortKey(right))
+  )) {
+    baselineByKey.set(signalPairKey(signal), signal);
+  }
+  const all = signalCandidates(currentEvidence).sort((left, right) => signalSortKey(left).localeCompare(signalSortKey(right))).map((current) => {
+    const baseline = baselineByKey.get(signalPairKey(current));
+    const change = baseline === void 0 ? void 0 : signalChange(current, baseline);
+    return {
+      label: current.label,
+      value: current.value,
+      displayValue: formatValue(current.value, current.unit),
+      ...current.unit === void 0 ? {} : { unit: current.unit },
+      dimensions: boundedDimensions(current.dimensions),
+      freshness: current.evidence.freshnessState,
+      evaluatedAt: current.evaluatedAt,
+      maxAgeMs: current.evidence.maxAcceptableAgeMs,
+      source: {
+        provider: current.evidence.source.provider,
+        alias: current.evidence.source.sourceAlias,
+        authority: current.evidence.authority
+      },
+      ...baseline === void 0 ? {} : {
+        baseline: {
+          value: baseline.value,
+          displayValue: formatValue(baseline.value, baseline.unit),
+          evaluatedAt: baseline.evaluatedAt,
+          technicalDetails: { evidenceId: baseline.evidence.evidenceId }
+        }
+      },
+      ...change === void 0 ? {} : { change },
+      technicalDetails: {
+        evidenceId: current.evidence.evidenceId,
+        operationId: current.evidence.operationId
+      }
+    };
+  });
+  return { all, visible: bounded(all, PRESENTATION_LIMITS.signals) };
+}
+function collectionSummary(state) {
+  switch (state) {
+    case "COMPLETE":
+      return "All required evidence operations produced available normalized evidence.";
+    case "PARTIAL":
+      return "Some required evidence is missing, stale, contradictory, empty, or unavailable.";
+    case "UNKNOWN":
+      return "No required evidence operation was available to assess.";
+  }
+}
+function causalConclusion(investigation) {
+  if (investigation.analysisState === "EVIDENCE_ONLY") {
+    return {
+      state: "NOT_ASSESSED",
+      summary: "Evidence was collected, but no causal analysis was submitted."
+    };
+  }
+  if (investigation.hypotheses.some((item) => item.status === "SUPPORTED")) {
+    return {
+      state: "SUPPORTED",
+      summary: "The cited evidence supports at least one hypothesis; this is not proof of root cause."
+    };
+  }
+  if (investigation.hypotheses.some((item) => item.status === "OPEN")) {
+    return {
+      state: "OPEN",
+      summary: "Causal hypotheses remain open; collection completeness does not establish cause."
+    };
+  }
+  return {
+    state: "INCONCLUSIVE",
+    summary: "The submitted analysis did not establish a supported causal explanation."
+  };
+}
+function recoverySummary(investigation) {
+  if (investigation.verificationResult !== void 0) {
+    return investigation.verificationResult.status === "PASSED" ? "The sealed recovery criteria passed in the verification evidence." : investigation.verificationResult.status === "FAILED" ? "The sealed recovery criteria did not pass." : "Recovery verification was incomplete.";
+  }
+  if (investigation.verificationContract !== void 0) {
+    return "Recovery criteria are sealed but have not been evaluated in a verification run.";
+  }
+  if (investigation.recoveryState === "NONE") {
+    return "Not assessed: no recovery criteria were sealed for this run.";
+  }
+  return "Recovery is ".concat(investigation.recoveryState.toLowerCase().replaceAll("_", " "), ".");
+}
+function verificationState(investigation) {
+  if (investigation.verificationResult !== void 0) return investigation.verificationResult.status;
+  return investigation.verificationContract === void 0 ? "NOT_CONFIGURED" : "PENDING";
+}
+function verificationSummary(investigation) {
+  const state = verificationState(investigation);
+  switch (state) {
+    case "NOT_CONFIGURED":
+      return "No recovery criteria were sealed; recovery is not assessed.";
+    case "PENDING":
+      return "Recovery criteria are sealed and awaiting a verification result.";
+    case "PASSED":
+      return "All sealed recovery criteria passed.";
+    case "FAILED":
+      return "One or more sealed recovery criteria failed.";
+    case "INCOMPLETE":
+      return "The sealed recovery criteria could not be fully evaluated.";
+  }
+}
+function independentEvidenceCount(evidence, evidenceIds) {
+  const evidenceById = new Map(evidence.map((envelope) => [envelope.evidenceId, envelope]));
+  return new Set(evidenceIds.map((id) => {
+    const envelope = evidenceById.get(id);
+    return envelope === void 0 ? "missing:".concat(id) : evidenceSourceIndependenceKey(envelope);
+  })).size;
+}
+function incidentPresentation(input, investigation, coverage) {
+  const { all: allSignals, visible: signals } = presentationSignals(input);
+  const allHypotheses = [...investigation.hypotheses].sort(
+    (left, right) => left.rank - right.rank || left.hypothesisId.localeCompare(right.hypothesisId)
+  );
+  const hypotheses = bounded(allHypotheses, PRESENTATION_LIMITS.hypotheses).map((item) => ({
+    rank: item.rank,
+    statement: item.statement,
+    status: item.status,
+    rationale: item.rationale,
+    ...item.nextCheck === void 0 ? {} : { nextCheck: item.nextCheck },
+    supportingEvidenceCount: independentEvidenceCount(input.evidence, item.supportingEvidenceIds),
+    contradictingEvidenceCount: independentEvidenceCount(input.evidence, item.contradictingEvidenceIds),
+    technicalDetails: { hypothesisId: item.hypothesisId }
+  }));
+  const allContradictions = [...input.contradictions].sort(
+    (left, right) => left.contradictionId.localeCompare(right.contradictionId)
+  );
+  const contradictions = bounded(allContradictions, PRESENTATION_LIMITS.contradictions).map((item) => {
+    const allEvidenceIds = sortedUnique(item.claimRefs.map((claim) => claim.evidenceId));
+    return {
+      summary: item.summary,
+      resolutionState: item.resolutionState,
+      evidenceCount: independentEvidenceCount(input.evidence, allEvidenceIds),
+      technicalDetails: {
+        contradictionId: item.contradictionId,
+        evidenceIds: bounded(allEvidenceIds, PRESENTATION_LIMITS.contradictionEvidenceIds),
+        omittedEvidenceIds: omittedCount(
+          allEvidenceIds,
+          PRESENTATION_LIMITS.contradictionEvidenceIds
+        )
+      }
+    };
+  });
+  const allGaps = sortedUnique([
+    ...investigation.missingEvidence,
+    ...investigation.remainingUncertainty
+  ]);
+  const allChecks = sortedUnique(investigation.checksPerformed);
+  const allOwners = sortedUnique(investigation.owners);
+  const allCriteria = [...investigation.verificationContract?.criteria ?? []].sort(
+    (left, right) => left.criterionId.localeCompare(right.criterionId)
+  );
+  const criteria = bounded(allCriteria, PRESENTATION_LIMITS.criteria).map((criterion) => ({
+    label: criterion.valueSelector.name,
+    comparator: criterion.comparator,
+    expected: criterion.expected,
+    displayExpected: formatValue(criterion.expected, criterion.unit),
+    ...criterion.unit === void 0 ? {} : { unit: criterion.unit },
+    maxAgeMs: criterion.maxEvidenceAgeMs,
+    ...criterion.requiredDurationSeconds === void 0 ? {} : { requiredDurationSeconds: criterion.requiredDurationSeconds },
+    technicalDetails: {
+      criterionId: criterion.criterionId,
+      operationId: criterion.operationId,
+      operationDefinitionSha256: criterion.operationDefinitionSha256
+    }
+  }));
+  const dispositions = [
+    "AVAILABLE",
+    "EMPTY",
+    "STALE",
+    "CONTRADICTORY",
+    "ERROR",
+    "UNSUPPORTED",
+    "DEFERRED"
+  ];
+  const byDisposition = Object.fromEntries(
+    dispositions.map((disposition) => [
+      disposition,
+      coverage.entries.filter((entry) => entry.disposition === disposition).length
+    ])
+  );
+  const requiredEntries = coverage.entries.filter((entry) => entry.requirement === "REQUIRED");
+  const evidenceIds = sortedUnique(input.evidence.map((item) => item.evidenceId));
+  const contradictionIds = sortedUnique(input.contradictions.map((item) => item.contradictionId));
+  const verificationResult = investigation.verificationResult;
+  const contract = investigation.verificationContract;
+  return {
+    schemaVersion: "1.0.0",
+    origin: input.request.origin,
+    workflow: input.request.workflow,
+    profile: input.profile.profileAlias,
+    scope: investigation.scope,
+    window: {
+      requested: input.request.window,
+      evaluated: investigation.evaluatedWindow,
+      ...input.request.baselineWindow === void 0 ? {} : { baseline: input.request.baselineWindow }
+    },
+    collectionStatus: {
+      state: coverage.overall,
+      summary: collectionSummary(coverage.overall),
+      evidenceCount: input.evidence.length,
+      freshEvidenceCount: input.evidence.filter((item) => item.freshnessState === "FRESH").length,
+      requiredOperationCount: requiredEntries.length,
+      availableRequiredOperationCount: requiredEntries.filter(
+        (item) => item.disposition === "AVAILABLE"
+      ).length
+    },
+    causalConclusion: causalConclusion(investigation),
+    recoveryState: {
+      state: investigation.recoveryState,
+      summary: recoverySummary(investigation)
+    },
+    signals,
+    hypotheses,
+    contradictions,
+    gaps: bounded(allGaps, PRESENTATION_LIMITS.gaps),
+    checks: bounded(allChecks, PRESENTATION_LIMITS.checks),
+    owners: bounded(allOwners, PRESENTATION_LIMITS.owners),
+    approval: {
+      required: investigation.approvalRequired,
+      summary: investigation.approvalRequired ? "Explicit operator approval is required before the proposed action." : "No runtime-changing action is requested by this investigation."
+    },
+    verification: {
+      state: verificationState(investigation),
+      summary: verificationSummary(investigation),
+      ...contract === void 0 ? {} : { policyAlias: contract.policyAlias },
+      criteria,
+      ...verificationResult === void 0 ? {} : {
+        result: {
+          status: verificationResult.status,
+          evidenceCount: new Set(verificationResult.evidenceIds).size
+        }
+      }
+    },
+    nextSafeStep: investigation.smallestSafeNextStep,
+    coverage: {
+      state: coverage.overall,
+      summary: collectionSummary(coverage.overall),
+      byDisposition,
+      blockedRequiredOperationCount: requiredEntries.filter((item) => item.blocksWorkflow).length
+    },
+    technicalDetails: {
+      runId: input.runId,
+      investigationStatus: investigation.status,
+      evidenceIds: bounded(evidenceIds, PRESENTATION_LIMITS.evidenceIds),
+      contradictionIds: bounded(contradictionIds, PRESENTATION_LIMITS.contradictionIds),
+      ...contract === void 0 ? {} : { verificationContractSha256: contract.contractSha256 },
+      omitted: {
+        signals: omittedCount(allSignals, PRESENTATION_LIMITS.signals),
+        hypotheses: omittedCount(allHypotheses, PRESENTATION_LIMITS.hypotheses),
+        contradictions: omittedCount(allContradictions, PRESENTATION_LIMITS.contradictions),
+        gaps: omittedCount(allGaps, PRESENTATION_LIMITS.gaps),
+        checks: omittedCount(allChecks, PRESENTATION_LIMITS.checks),
+        owners: omittedCount(allOwners, PRESENTATION_LIMITS.owners),
+        criteria: omittedCount(allCriteria, PRESENTATION_LIMITS.criteria),
+        evidenceIds: omittedCount(evidenceIds, PRESENTATION_LIMITS.evidenceIds),
+        contradictionIds: omittedCount(
+          contradictionIds,
+          PRESENTATION_LIMITS.contradictionIds
+        )
+      }
+    }
+  };
+}
+function formatDuration(milliseconds) {
+  if (milliseconds === 0) return "0 ms";
+  if (milliseconds % 36e5 === 0) return "".concat(milliseconds / 36e5, " h");
+  if (milliseconds % 6e4 === 0) return "".concat(milliseconds / 6e4, " min");
+  if (milliseconds % 1e3 === 0) return "".concat(milliseconds / 1e3, " s");
+  return "".concat(milliseconds, " ms");
+}
+function dimensionsText(dimensions) {
+  const entries = Object.entries(dimensions).sort(([left], [right]) => left.localeCompare(right));
+  return entries.length === 0 ? "—" : entries.map(([key, value]) => "".concat(reportText(key), "=").concat(reportText(value))).join(", ");
+}
+function comparatorText(comparator) {
+  return {
+    LT: "<",
+    LTE: "≤",
+    GT: ">",
+    GTE: "≥",
+    EQ: "=",
+    INACTIVE: "inactive",
+    ACTIVE: "active"
+  }[comparator] ?? comparator;
+}
+function recoveryDisplayState(presentation) {
+  return presentation.recoveryState.state === "NONE" && presentation.verification.state === "NOT_CONFIGURED" ? "NOT ASSESSED" : presentation.recoveryState.state;
+}
+function renderIncidentReport(input, investigation, coverage) {
+  const presentation = incidentPresentation(input, investigation, coverage);
+  const lines = [
+    "# Production Monitoring Incident Report",
+    "",
+    ...presentation.origin === "SIMULATED" ? ["> **SIMULATED EVIDENCE** — This report does not describe live production state.", ""] : ["> Evidence origin: **".concat(presentation.origin, "**."), ""],
+    "## Incident at a glance",
+    "",
+    "- Evidence collection: **".concat(presentation.collectionStatus.state, "** — ").concat(reportText(presentation.collectionStatus.summary)),
+    "- Causal conclusion: **".concat(presentation.causalConclusion.state, "** — ").concat(reportText(presentation.causalConclusion.summary)),
+    "- Recovery: **".concat(recoveryDisplayState(presentation), "** — ").concat(reportText(presentation.recoveryState.summary)),
+    "- Approval: **".concat(presentation.approval.required ? "REQUIRED" : "NOT REQUESTED", "** — ").concat(reportText(presentation.approval.summary)),
+    "",
+    "- Workflow: `".concat(presentation.workflow, "`"),
+    "- Origin: `".concat(presentation.origin, "`"),
+    "- Profile: `".concat(reportText(presentation.profile), "`"),
+    "- Scope: `".concat(reportText(JSON.stringify(presentation.scope)), "`"),
+    "- Requested window: `".concat(presentation.window.requested.start, "` to `").concat(presentation.window.requested.end, "`"),
+    ...presentation.window.baseline === void 0 ? [] : [
+      "- Baseline window: `".concat(presentation.window.baseline.start, "` to `").concat(presentation.window.baseline.end, "`")
+    ],
+    "",
+    "## Signal summary",
+    "",
+    "| Signal | Current | Baseline | Change | Dimensions | Freshness | Evaluated at | Max age | Source |",
+    "| --- | ---: | ---: | ---: | --- | --- | --- | ---: | --- |"
+  ];
+  for (const signal of presentation.signals) {
+    lines.push(
+      "| ".concat(reportText(signal.label), " | ").concat(reportText(signal.displayValue), " | ").concat(signal.baseline === void 0 ? "—" : reportText(signal.baseline.displayValue), " | ").concat(signal.change === void 0 ? "—" : reportText(signal.change.displayValue), " | ").concat(dimensionsText(signal.dimensions), " | ").concat(signal.freshness, " | `").concat(signal.evaluatedAt, "` | ").concat(formatDuration(signal.maxAgeMs), " | ").concat(reportText(signal.source.provider), "/").concat(reportText(signal.source.alias), " (").concat(signal.source.authority, ") |")
+    );
+  }
+  if (presentation.signals.length === 0) {
+    lines.push("| No normalized values were available. | — | — | — | — | — | — | — | — |");
+  }
+  if (presentation.technicalDetails.omitted.signals > 0) {
+    lines.push(
+      "",
+      "_Signal view is bounded; ".concat(presentation.technicalDetails.omitted.signals, " additional normalized value(s) remain in the canonical evidence._")
+    );
+  }
+  lines.push("", "## Observations", "");
+  for (const observation of [...investigation.observations].sort(
+    (left, right) => left.observationId.localeCompare(right.observationId)
+  )) {
+    lines.push(
+      "- ".concat(reportText(observation.statement), " _(").concat(independentEvidenceCount(input.evidence, observation.evidenceIds), " independent cited source(s))_")
+    );
+  }
+  if (investigation.observations.length === 0) lines.push("- No evidence-backed observations.");
+  lines.push("", "## Ranked hypotheses", "");
+  for (const hypothesis of [...investigation.hypotheses].sort(
+    (left, right) => left.rank - right.rank || left.hypothesisId.localeCompare(right.hypothesisId)
+  )) {
+    lines.push(
+      "".concat(hypothesis.rank, ". **").concat(hypothesis.status, ":** ").concat(reportText(hypothesis.statement), " ") + "_".concat(independentEvidenceCount(input.evidence, hypothesis.supportingEvidenceIds), " supporting; ").concat(independentEvidenceCount(input.evidence, hypothesis.contradictingEvidenceIds), " contradicting independent source(s)._"),
+      "   - Rationale: ".concat(reportText(hypothesis.rationale)),
+      ...hypothesis.nextCheck === void 0 ? [] : ["   - Next check: ".concat(reportText(hypothesis.nextCheck))]
+    );
+  }
+  if (investigation.hypotheses.length === 0) lines.push("- No ranked hypotheses.");
+  lines.push("", "## Contradictions", "");
+  for (const contradiction of presentation.contradictions) {
+    lines.push(
+      "- **".concat(contradiction.resolutionState, ":** ").concat(reportText(contradiction.summary), " _(").concat(contradiction.evidenceCount, " cited evidence item(s))_")
+    );
+  }
+  if (input.contradictions.length === 0) lines.push("- No cross-source contradictions recorded.");
+  lines.push("", "## Recovery criteria and result", "");
+  if (presentation.verification.criteria.length === 0) {
+    lines.push("- **".concat(presentation.verification.state, ":** ").concat(reportText(presentation.verification.summary)));
+  } else {
+    lines.push(
+      "- Policy: `".concat(reportText(presentation.verification.policyAlias ?? "sealed-policy"), "`"),
+      "- Result: **".concat(presentation.verification.state, "** — ").concat(reportText(presentation.verification.summary)),
+      "",
+      "| Criterion | Condition | Max age | Required duration |",
+      "| --- | --- | ---: | ---: |"
+    );
+    for (const criterion of presentation.verification.criteria) {
+      lines.push(
+        "| ".concat(reportText(criterion.label), " | ").concat(comparatorText(criterion.comparator), " ").concat(reportText(criterion.displayExpected), " | ").concat(formatDuration(criterion.maxAgeMs), " | ").concat(criterion.requiredDurationSeconds === void 0 ? "—" : "".concat(criterion.requiredDurationSeconds, " s"), " |")
+      );
+    }
+  }
+  lines.push(
+    "",
+    "## Evidence coverage",
+    "",
+    "| Operation | Domain | Requirement | Disposition | Evidence count | Contradiction count |",
+    "| --- | --- | --- | --- | ---: | ---: |"
+  );
+  for (const entry of [...coverage.entries].sort(
+    (left, right) => left.operationId.localeCompare(right.operationId)
+  )) {
+    lines.push(
+      "| ".concat(reportText(entry.operationId), " | ").concat(entry.domain, " | ").concat(entry.requirement, " | ").concat(entry.disposition, " | ").concat(entry.evidenceIds.length, " | ").concat(entry.contradictionIds.length, " |")
+    );
+  }
+  lines.push("", "## Checks performed", "");
+  for (const check2 of presentation.checks) lines.push("- ".concat(reportText(check2)));
+  if (presentation.checks.length === 0) lines.push("- No analysis checks recorded.");
+  lines.push("", "## Remaining uncertainty", "");
+  for (const uncertainty of presentation.gaps) lines.push("- ".concat(reportText(uncertainty)));
+  if (presentation.gaps.length === 0) lines.push("- None recorded.");
+  lines.push("", "## Ownership and approval", "");
+  lines.push(
+    "- Owners: ".concat(presentation.owners.length === 0 ? "Not assigned." : presentation.owners.map(reportText).join(", ")),
+    "- Approval: ".concat(reportText(presentation.approval.summary))
+  );
+  lines.push(
+    "",
+    "## Smallest safe next step",
+    "",
+    reportText(presentation.nextSafeStep),
+    "",
+    "<details>",
+    "<summary>Technical details and evidence references</summary>",
+    "",
+    "- Run: `".concat(presentation.technicalDetails.runId, "`"),
+    "- Runtime investigation status: `".concat(presentation.technicalDetails.investigationStatus, "`"),
+    "- Evidence IDs: ".concat(idList(presentation.technicalDetails.evidenceIds)),
+    "- Contradiction IDs: ".concat(idList(presentation.technicalDetails.contradictionIds)),
+    ...presentation.technicalDetails.verificationContractSha256 === void 0 ? [] : [
+      "- Verification contract SHA-256: `".concat(presentation.technicalDetails.verificationContractSha256, "`")
+    ],
+    "",
+    "</details>",
+    "",
+    "---",
+    "This report is a deterministic projection of normalized, cited evidence. It does not retain raw provider responses.",
+    ""
+  );
+  return lines.join("\n");
+}
+function prepareArtifacts(input) {
+  validateSourceInput(input);
+  const coverage = deriveArtifactCoverage(input);
+  assertSchema("coverage", coverage);
+  const investigation = deriveInvestigation(input, coverage);
+  const operations = [...input.operations].sort(
+    (left, right) => left.operationId.localeCompare(right.operationId)
+  );
+  const evidence = [...input.evidence].sort(
+    (left, right) => left.evidenceId.localeCompare(right.evidenceId)
+  );
+  const contradictions = [...input.contradictions].sort(
+    (left, right) => left.contradictionId.localeCompare(right.contradictionId)
+  );
+  return {
+    request: input.request,
+    profile: input.profile,
+    operations,
+    evidence,
+    contradictions,
+    investigation,
+    coverage,
+    report: renderIncidentReport(input, investigation, coverage)
+  };
+}
+function validatePreparedArtifacts(input, actual) {
+  const expected = prepareArtifacts(input);
+  for (const key of [
+    "request",
+    "profile",
+    "operations",
+    "evidence",
+    "contradictions",
+    "investigation",
+    "coverage"
+  ]) {
+    assertEqual2(actual[key], expected[key], "Artifact ".concat(key, " is not canonical for this run"));
+  }
+  if (actual.report !== expected.report) throw new TypeError("Incident report is not deterministic");
+}
+function assertParentVerificationContract(child, parentInvestigation) {
+  if (child.request.parentRunId === void 0) return;
+  if (child.request.parentRunId === child.runId) throw new TypeError("A run cannot be its own parent");
+  if (child.request.workflow !== "verify") return;
+  const parentContract = parentInvestigation.verificationContract;
+  if (parentContract === void 0) {
+    throw new TypeError("Verification child requires a sealed parent verification contract");
+  }
+  if (child.investigation.verificationContract === void 0) {
+    throw new TypeError("Verification child must snapshot the parent verification contract");
+  }
+  assertEqual2(
+    child.investigation.verificationContract,
+    parentContract,
+    "Verification child cannot change the sealed parent verification contract"
+  );
+}
+function assertManifestIdentity(manifest, bundleId, runId, parentRunId) {
+  if (manifest.bundleId !== bundleId || manifest.runId !== runId) {
+    throw new TypeError("Manifest identity does not match the bundle contents");
+  }
+  if (manifest.parentRunId !== parentRunId) {
+    throw new TypeError("Manifest parent identity does not match the request");
+  }
+}
+function asBundleId(value) {
+  if (!BUNDLE_ID.test(value)) throw new TypeError("Invalid bundleId");
+  return value;
+}
+function bundleIdForRunId(runId) {
+  if (!RUN_ID.test(runId)) throw new TypeError("Invalid runId");
+  return "pmbundle_".concat(sha256Canonical({ domain: "pm-bundle-v1", runId }).slice(0, 40));
+}
+function asRunId(value) {
+  if (!RUN_ID.test(value)) throw new TypeError("Invalid runId");
+  return value;
+}
+
+// packages/artifacts/src/storage.ts
+var import_node_crypto11 = require("node:crypto");
+var import_node_fs9 = require("node:fs");
+var import_node_path11 = require("node:path");
+var ROOT_MARKER = ".production-monitoring-owned.json";
+var STAGE_MARKER = ".production-monitoring-stage.json";
+var SEAL_LOCK = ".seal.lock";
+var BUNDLES_DIRECTORY = "bundles";
+var MANIFEST_PATH = "manifest.json";
+var MANIFEST_DIGEST_PATH = "manifest.sha256";
+var MAX_JSON_BYTES = 64 * 1024 * 1024;
+var ROOT_MAGIC = "codex-production-monitoring-artifact-root";
+var STAGE_MAGIC = "codex-production-monitoring-artifact-stage";
+var STAGE_RECEIPT_MAGIC = "codex-production-monitoring-artifact-stage-receipt";
+var SEAL_LOCK_MAGIC = "codex-production-monitoring-artifact-seal-lock";
+var INTERNAL_RECEIPT_BYTES = 16 * 1024;
+var UUID_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
+var INTERNAL_INTEGER_PATTERN = /^(?:0|[1-9][0-9]{0,39})$/u;
+var STAGE_NAME_PATTERN = /^(?:\.stage-)(pmbundle_[A-Za-z0-9_-]{20,128})-([a-f0-9-]{36})$/u;
+var STAGE_RECEIPT_NAME_PATTERN = /^\.stage-receipt-([a-f0-9-]{36})\.json$/u;
+var TEST_CRASH_ENV = "PM_ARTIFACT_TEST_CRASH_POINT";
+var TEST_CRASH_TOKEN_ENV = "PM_ARTIFACT_TEST_CRASH_TOKEN";
+var TEST_CRASH_TOKEN = "artifact-crash-recovery-v1";
+var DEFAULT_PRODUCER = {
+  pluginVersion: "0.3.0",
+  contractsVersion: "0.3.0",
+  reportProjectionVersion: "1.1.0"
+};
+function currentUid2() {
+  return typeof process.getuid === "function" ? process.getuid() : void 0;
+}
+function statDevice(stat) {
+  return BigInt(stat.dev);
+}
+function assertOwned(stat, label) {
+  const uid = currentUid2();
+  if (uid !== void 0 && stat.uid !== uid) throw new Error("".concat(label, " is not owned by this user"));
+}
+function assertPrivateMode(stat, label) {
+  if ((stat.mode & 63) !== 0) throw new Error("".concat(label, " grants group or other permissions"));
+}
+function assertDirectory(stat, label) {
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("".concat(label, " is not a real directory"));
+}
+function assertRegularFile2(stat, label) {
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("".concat(label, " is not a regular file"));
+  if (stat.nlink !== 1) throw new Error("".concat(label, " has multiple hard links"));
+}
+function ensureContained(root, candidate) {
+  const pathFromRoot = (0, import_node_path11.relative)(root, candidate);
+  if (pathFromRoot === ".." || pathFromRoot.startsWith("..".concat(import_node_path11.sep)) || (0, import_node_path11.isAbsolute)(pathFromRoot)) {
+    throw new Error("Path escapes the artifact root: ".concat(candidate));
+  }
+}
+function assertPortablePath(path) {
+  if (path.length === 0 || path.length > 1024 || path.startsWith("/") || path.includes("\\") || path.split("/").includes("..") || !/^[A-Za-z0-9._/-]+$/u.test(path)) {
+    throw new Error("Unsafe artifact path: ".concat(path));
+  }
+}
+function writeExclusive(path, content, mode = 384) {
+  const noFollow = import_node_fs9.constants.O_NOFOLLOW ?? 0;
+  const descriptor3 = (0, import_node_fs9.openSync)(
+    path,
+    import_node_fs9.constants.O_WRONLY | import_node_fs9.constants.O_CREAT | import_node_fs9.constants.O_EXCL | noFollow,
+    mode
+  );
+  try {
+    (0, import_node_fs9.writeFileSync)(descriptor3, content, "utf8");
+    (0, import_node_fs9.fsyncSync)(descriptor3);
+  } finally {
+    (0, import_node_fs9.closeSync)(descriptor3);
+  }
+  const stat = (0, import_node_fs9.lstatSync)(path, { bigint: false });
+  assertRegularFile2(stat, path);
+  assertOwned(stat, path);
+  assertPrivateMode(stat, path);
+}
+function canonicalDocument(value) {
+  return canonicalJson(value);
+}
+function parseJson(content, label) {
+  try {
+    return JSON.parse(content);
+  } catch (error2) {
+    throw new TypeError("".concat(label, " is not valid JSON: ").concat(String(error2)));
+  }
+}
+function readSecureFile(path, device, maxBytes = MAX_JSON_BYTES) {
+  const stat = (0, import_node_fs9.lstatSync)(path, { bigint: false });
+  assertRegularFile2(stat, path);
+  assertOwned(stat, path);
+  assertPrivateMode(stat, path);
+  if (statDevice(stat) !== device) throw new Error("".concat(path, " crosses a filesystem device boundary"));
+  if (stat.size > maxBytes) throw new Error("".concat(path, " exceeds the artifact size limit"));
+  return (0, import_node_fs9.readFileSync)(path, "utf8");
+}
+function readCanonicalJson(path, device) {
+  const content = readSecureFile(path, device);
+  const value = parseJson(content, path);
+  if (content !== canonicalDocument(value)) throw new Error("".concat(path, " is not canonical RFC 8785 JSON"));
+  return value;
+}
+function createDirectory(path, device) {
+  (0, import_node_fs9.mkdirSync)(path, { mode: 448 });
+  const stat = (0, import_node_fs9.lstatSync)(path, { bigint: false });
+  assertDirectory(stat, path);
+  assertOwned(stat, path);
+  assertPrivateMode(stat, path);
+  if (statDevice(stat) !== device) throw new Error("".concat(path, " crosses a filesystem device boundary"));
+}
+function validateRootMarker(rootPath, device) {
+  const markerPath = (0, import_node_path11.resolve)(rootPath, ROOT_MARKER);
+  const marker = readCanonicalJson(markerPath, device);
+  if (marker.magic !== ROOT_MAGIC || marker.version !== 1 || typeof marker.rootId !== "string" || !/^[a-f0-9-]{36}$/u.test(marker.rootId) || marker.rootPath !== rootPath) {
+    throw new Error("Artifact root ownership marker is invalid or belongs elsewhere");
+  }
+  return marker;
+}
+function openOrCreateRoot(requestedRoot) {
+  if (!(0, import_node_path11.isAbsolute)(requestedRoot)) throw new Error("Artifact root must be an absolute path");
+  const requestedPath = (0, import_node_path11.resolve)(requestedRoot);
+  const existed = (0, import_node_fs9.existsSync)(requestedPath);
+  if (!existed) {
+    const parent = (0, import_node_path11.dirname)(requestedPath);
+    const parentStat = (0, import_node_fs9.lstatSync)(parent, { bigint: false });
+    assertDirectory(parentStat, "Artifact root parent");
+    (0, import_node_fs9.mkdirSync)(requestedPath, { mode: 448 });
+  }
+  const rootStat = (0, import_node_fs9.lstatSync)(requestedPath, { bigint: false });
+  assertDirectory(rootStat, "Artifact root");
+  assertOwned(rootStat, "Artifact root");
+  assertPrivateMode(rootStat, "Artifact root");
+  const rootPath = import_node_fs9.realpathSync.native(requestedPath);
+  const device = statDevice(rootStat);
+  let marker;
+  if (existed) {
+    if (!(0, import_node_fs9.existsSync)((0, import_node_path11.resolve)(rootPath, ROOT_MARKER))) {
+      throw new Error("Refusing to claim an existing unmarked artifact root");
+    }
+    marker = validateRootMarker(rootPath, device);
+  } else {
+    marker = {
+      magic: ROOT_MAGIC,
+      version: 1,
+      rootId: (0, import_node_crypto11.randomUUID)(),
+      rootPath
+    };
+    writeExclusive((0, import_node_path11.resolve)(rootPath, ROOT_MARKER), canonicalDocument(marker));
+  }
+  const bundlesPath = (0, import_node_path11.resolve)(rootPath, BUNDLES_DIRECTORY);
+  if (!(0, import_node_fs9.existsSync)(bundlesPath)) createDirectory(bundlesPath, device);
+  const bundlesStat = (0, import_node_fs9.lstatSync)(bundlesPath, { bigint: false });
+  assertDirectory(bundlesStat, "Artifact bundles directory");
+  assertOwned(bundlesStat, "Artifact bundles directory");
+  assertPrivateMode(bundlesStat, "Artifact bundles directory");
+  if (statDevice(bundlesStat) !== device) throw new Error("Bundles directory crosses devices");
+  return { path: rootPath, device, marker };
+}
+function assertSecureTree(root, device) {
+  ensureContained(root, root);
+  const rootStat = (0, import_node_fs9.lstatSync)(root, { bigint: false });
+  assertDirectory(rootStat, root);
+  assertOwned(rootStat, root);
+  assertPrivateMode(rootStat, root);
+  if (statDevice(rootStat) !== device) throw new Error("".concat(root, " crosses a filesystem device boundary"));
+  for (const entry of (0, import_node_fs9.readdirSync)(root, { withFileTypes: true })) {
+    const path = (0, import_node_path11.resolve)(root, entry.name);
+    ensureContained(root, path);
+    const stat = (0, import_node_fs9.lstatSync)(path, { bigint: false });
+    if (stat.isSymbolicLink()) throw new Error("".concat(path, " is a symbolic link"));
+    assertOwned(stat, path);
+    assertPrivateMode(stat, path);
+    if (statDevice(stat) !== device) throw new Error("".concat(path, " crosses a filesystem device boundary"));
+    if (stat.isDirectory()) assertSecureTree(path, device);
+    else assertRegularFile2(stat, path);
+  }
+}
+function ownedPathIdentity(path, kind, device) {
+  const stat = (0, import_node_fs9.lstatSync)(path, { bigint: false });
+  if (kind === "directory") assertDirectory(stat, path);
+  else assertRegularFile2(stat, path);
+  assertOwned(stat, path);
+  assertPrivateMode(stat, path);
+  if (statDevice(stat) !== device) throw new Error("".concat(path, " crosses a filesystem device boundary"));
+  return { path, kind, device, inode: BigInt(stat.ino) };
+}
+function assertSameOwnedPath(identity) {
+  const current = ownedPathIdentity(identity.path, identity.kind, identity.device);
+  if (current.inode !== identity.inode) {
+    throw new Error("Refusing to delete a replaced artifact path: ".concat(identity.path));
+  }
+}
+function isErrnoException(error2, code) {
+  return error2 instanceof Error && "code" in error2 && error2.code === code;
+}
+function assertExactKeys(value, expected, label) {
+  const actual = Object.keys(value).sort();
+  if (canonicalJson(actual) !== canonicalJson([...expected].sort())) {
+    throw new Error("".concat(label, " contains unknown or missing fields"));
+  }
+}
+function assertCanonicalTimestamp(value, label) {
+  if (typeof value !== "string" || value.length < 20 || value.length > 32 || Number.isNaN(Date.parse(value)) || new Date(value).toISOString() !== value) {
+    throw new Error("".concat(label, " is not a bounded canonical timestamp"));
+  }
+}
+function assertUuid(value, label) {
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+    throw new Error("".concat(label, " is not a canonical UUID"));
+  }
+}
+function assertInternalInteger(value, label) {
+  if (typeof value !== "string" || !INTERNAL_INTEGER_PATTERN.test(value)) {
+    throw new Error("".concat(label, " is not a bounded filesystem identity"));
+  }
+}
+function fsyncDirectory(path) {
+  const descriptor3 = (0, import_node_fs9.openSync)(path, import_node_fs9.constants.O_RDONLY);
+  try {
+    (0, import_node_fs9.fsyncSync)(descriptor3);
+  } finally {
+    (0, import_node_fs9.closeSync)(descriptor3);
+  }
+}
+function readCanonicalOwnedReceipt(path, device, label) {
+  const identity = ownedPathIdentity(path, "file", device);
+  const content = readSecureFile(path, device, INTERNAL_RECEIPT_BYTES);
+  assertSameOwnedPath(identity);
+  const value = parseJson(content, label);
+  if (content !== canonicalDocument(value)) throw new Error("".concat(label, " is not canonical RFC 8785 JSON"));
+  return { value, content, identity };
+}
+function bundlesIdentity(root) {
+  return ownedPathIdentity((0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY), "directory", root.device);
+}
+function rootIdentityFields(root) {
+  const bundles = bundlesIdentity(root);
+  return {
+    rootId: root.marker.rootId,
+    rootPath: root.path,
+    bundlesDevice: bundles.device.toString(),
+    bundlesInode: bundles.inode.toString()
+  };
+}
+function assertReceiptRootIdentity(value, root, label) {
+  assertInternalInteger(value.bundlesDevice, "".concat(label, " bundlesDevice"));
+  assertInternalInteger(value.bundlesInode, "".concat(label, " bundlesInode"));
+  const expected = rootIdentityFields(root);
+  if (value.rootId !== expected.rootId || value.rootPath !== expected.rootPath || value.bundlesDevice !== expected.bundlesDevice || value.bundlesInode !== expected.bundlesInode) {
+    throw new Error("".concat(label, " belongs to a different artifact root"));
+  }
+}
+function stageCoordinates(stageName) {
+  const match = STAGE_NAME_PATTERN.exec(stageName);
+  if (match === null) throw new Error("Invalid internal staging directory name: ".concat(stageName));
+  const bundleId = asBundleId(match[1]);
+  const stageNonce = match[2];
+  assertUuid(stageNonce, "Stage name nonce");
+  return { bundleId, stageNonce };
+}
+function receiptNonce(receiptName) {
+  const match = STAGE_RECEIPT_NAME_PATTERN.exec(receiptName);
+  if (match === null) throw new Error("Invalid internal staging receipt name: ".concat(receiptName));
+  const nonce = match[1];
+  assertUuid(nonce, "Stage receipt name nonce");
+  return nonce;
+}
+function assertStageOwnership(value, root, lock, label) {
+  assertReceiptRootIdentity(value, root, label);
+  assertUuid(value.lockNonce, "".concat(label, " lock nonce"));
+  assertUuid(value.stageNonce, "".concat(label, " stage nonce"));
+  assertCanonicalTimestamp(value.createdAt, "".concat(label, " createdAt"));
+  const coordinates = stageCoordinates(value.stageName);
+  const receiptStageNonce = receiptNonce(value.receiptName);
+  const bundleId = asBundleId(value.bundleId);
+  const runId = asRunId(value.runId);
+  if (value.lockNonce !== lock.nonce || coordinates.bundleId !== bundleId || coordinates.stageNonce !== value.stageNonce || receiptStageNonce !== value.stageNonce || runId !== value.runId) {
+    throw new Error("".concat(label, " identity fields do not agree"));
+  }
+}
+function readSealLock(path, root) {
+  const receipt = readCanonicalOwnedReceipt(path, root.device, "Artifact seal lock");
+  assertExactKeys(receipt.value, [
+    "magic",
+    "version",
+    "rootId",
+    "rootPath",
+    "bundlesDevice",
+    "bundlesInode",
+    "pid",
+    "nonce",
+    "acquiredAt"
+  ], "Artifact seal lock");
+  if (receipt.value.magic !== SEAL_LOCK_MAGIC || receipt.value.version !== 1) {
+    throw new Error("Artifact seal lock has an unsupported identity");
+  }
+  assertReceiptRootIdentity(receipt.value, root, "Artifact seal lock");
+  if (!Number.isSafeInteger(receipt.value.pid) || receipt.value.pid <= 0 || receipt.value.pid > 2147483647) {
+    throw new Error("Artifact seal lock PID is invalid");
+  }
+  assertUuid(receipt.value.nonce, "Artifact seal lock nonce");
+  assertCanonicalTimestamp(receipt.value.acquiredAt, "Artifact seal lock acquiredAt");
+  return receipt;
+}
+function readStageReceipt(path, root, lock) {
+  const receipt = readCanonicalOwnedReceipt(path, root.device, "Artifact stage receipt");
+  assertExactKeys(receipt.value, [
+    "magic",
+    "version",
+    "rootId",
+    "rootPath",
+    "bundlesDevice",
+    "bundlesInode",
+    "lockNonce",
+    "stageNonce",
+    "stageName",
+    "receiptName",
+    "bundleId",
+    "runId",
+    "createdAt"
+  ], "Artifact stage receipt");
+  if (receipt.value.magic !== STAGE_RECEIPT_MAGIC || receipt.value.version !== 1) {
+    throw new Error("Artifact stage receipt has an unsupported identity");
+  }
+  assertStageOwnership(receipt.value, root, lock, "Artifact stage receipt");
+  if ((0, import_node_path11.basename)(path) !== receipt.value.receiptName) {
+    throw new Error("Artifact stage receipt path does not match its identity");
+  }
+  return receipt;
+}
+function readStageMarker(path, root, lock) {
+  const marker = readCanonicalOwnedReceipt(path, root.device, "Artifact stage marker");
+  assertExactKeys(marker.value, [
+    "magic",
+    "version",
+    "rootId",
+    "rootPath",
+    "bundlesDevice",
+    "bundlesInode",
+    "lockNonce",
+    "stageNonce",
+    "stageName",
+    "receiptName",
+    "bundleId",
+    "runId",
+    "createdAt"
+  ], "Artifact stage marker");
+  if (marker.value.magic !== STAGE_MAGIC || marker.value.version !== 1) {
+    throw new Error("Artifact stage marker has an unsupported identity");
+  }
+  assertStageOwnership(marker.value, root, lock, "Artifact stage marker");
+  if ((0, import_node_path11.dirname)(path) === path || (0, import_node_path11.basename)((0, import_node_path11.dirname)(path)) !== marker.value.stageName) {
+    throw new Error("Artifact stage marker path does not match its identity");
+  }
+  return marker;
+}
+function stageOwnershipFields(value) {
+  return {
+    version: value.version,
+    rootId: value.rootId,
+    rootPath: value.rootPath,
+    bundlesDevice: value.bundlesDevice,
+    bundlesInode: value.bundlesInode,
+    lockNonce: value.lockNonce,
+    stageNonce: value.stageNonce,
+    stageName: value.stageName,
+    receiptName: value.receiptName,
+    bundleId: value.bundleId,
+    runId: value.runId,
+    createdAt: value.createdAt
+  };
+}
+function maybeCrashForTest(point) {
+  if (process.env.NODE_ENV === "test" && (0, import_node_path11.basename)(process.argv[1] ?? "") === "crash-seal-child.ts" && process.env[TEST_CRASH_TOKEN_ENV] === TEST_CRASH_TOKEN && process.env[TEST_CRASH_ENV] === point) {
+    process.kill(process.pid, "SIGKILL");
+    throw new Error("Test crash failpoint did not terminate at ".concat(point));
+  }
+}
+function collectRelativeTree(root) {
+  const files = [];
+  const directories = [];
+  const visit = (directory) => {
+    for (const entry of (0, import_node_fs9.readdirSync)(directory, { withFileTypes: true })) {
+      const path = (0, import_node_path11.resolve)(directory, entry.name);
+      const relativePath = (0, import_node_path11.relative)(root, path).split(import_node_path11.sep).join("/");
+      if (entry.isDirectory()) {
+        directories.push(relativePath);
+        visit(path);
+      } else {
+        files.push(relativePath);
+      }
+    }
+  };
+  visit(root);
+  return { files: files.sort(), directories: directories.sort() };
+}
+function immutableTree(root) {
+  for (const entry of (0, import_node_fs9.readdirSync)(root, { withFileTypes: true })) {
+    const path = (0, import_node_path11.resolve)(root, entry.name);
+    if (entry.isDirectory()) immutableTree(path);
+    else (0, import_node_fs9.chmodSync)(path, 256);
+  }
+  (0, import_node_fs9.chmodSync)(root, 320);
+}
+function semanticFileSpecs(prepared) {
+  const specs = [
+    {
+      path: "request.json",
+      role: "RUN",
+      mediaType: "application/json",
+      content: canonicalDocument(prepared.request)
+    },
+    {
+      path: "profile.json",
+      role: "PROFILE",
+      mediaType: "application/json",
+      content: canonicalDocument(prepared.profile)
+    },
+    {
+      path: "operations.json",
+      role: "OPERATIONS",
+      mediaType: "application/json",
+      content: canonicalDocument(prepared.operations)
+    },
+    {
+      path: "investigation.json",
+      role: "INVESTIGATION",
+      mediaType: "application/json",
+      content: canonicalDocument(prepared.investigation)
+    },
+    {
+      path: "coverage.json",
+      role: "COVERAGE",
+      mediaType: "application/json",
+      content: canonicalDocument(prepared.coverage)
+    }
+  ];
+  for (const evidence of prepared.evidence) {
+    specs.push({
+      path: "evidence/".concat(evidence.evidenceId, ".json"),
+      role: "EVIDENCE",
+      mediaType: "application/json",
+      content: canonicalDocument(evidence)
+    });
+  }
+  for (const contradiction of prepared.contradictions) {
+    specs.push({
+      path: "contradictions/".concat(contradiction.contradictionId, ".json"),
+      role: "CONTRADICTIONS",
+      mediaType: "application/json",
+      content: canonicalDocument(contradiction)
+    });
+  }
+  return specs.sort((left, right) => left.path.localeCompare(right.path));
+}
+function pathDepth(path) {
+  return path.split(import_node_path11.sep).length;
+}
+function writePreparedFiles(stagePath, device, prepared) {
+  createDirectory((0, import_node_path11.resolve)(stagePath, "evidence"), device);
+  createDirectory((0, import_node_path11.resolve)(stagePath, "contradictions"), device);
+  const entries = [];
+  for (const spec of semanticFileSpecs(prepared)) {
+    assertPortablePath(spec.path);
+    const destination = (0, import_node_path11.resolve)(stagePath, spec.path);
+    ensureContained(stagePath, destination);
+    writeExclusive(destination, spec.content);
+    entries.push({
+      path: spec.path,
+      role: spec.role,
+      mediaType: spec.mediaType,
+      bytes: Buffer.byteLength(spec.content),
+      sha256: sha256Bytes(spec.content)
+    });
+  }
+  return entries;
+}
+function expectedRole(path) {
+  const fixed = {
+    "request.json": "RUN",
+    "profile.json": "PROFILE",
+    "operations.json": "OPERATIONS",
+    "investigation.json": "INVESTIGATION",
+    "coverage.json": "COVERAGE"
+  };
+  if (fixed[path] !== void 0) return fixed[path];
+  if (/^evidence\/pmev_[A-Za-z0-9_-]{20,128}\.json$/u.test(path)) return "EVIDENCE";
+  if (/^contradictions\/pmcon_[A-Za-z0-9_-]{20,128}\.json$/u.test(path)) {
+    return "CONTRADICTIONS";
+  }
+  return void 0;
+}
+function investigationDraft(investigation) {
+  const draft = { ...investigation };
+  delete draft.schemaVersion;
+  delete draft.runId;
+  delete draft.status;
+  delete draft.contradictionIds;
+  delete draft.integrity;
+  return draft;
+}
+function validateBundleDirectory(bundlePath, root, options = {}) {
+  ensureContained((0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY), bundlePath);
+  assertSecureTree(bundlePath, root.device);
+  const tree = collectRelativeTree(bundlePath);
+  const allowedDirectories = /* @__PURE__ */ new Set(["contradictions", "evidence"]);
+  for (const directory of tree.directories) {
+    if (!allowedDirectories.has(directory)) throw new Error("Unexpected bundle directory: ".concat(directory));
+  }
+  const manifestFile = (0, import_node_path11.resolve)(bundlePath, MANIFEST_PATH);
+  const digestFile = (0, import_node_path11.resolve)(bundlePath, MANIFEST_DIGEST_PATH);
+  const manifestContent = readSecureFile(manifestFile, root.device, 4 * 1024 * 1024);
+  const manifest = parseJson(manifestContent, MANIFEST_PATH);
+  if (manifestContent !== canonicalDocument(manifest)) throw new Error("Manifest is not canonical");
+  assertSchema("manifest", manifest);
+  if (!verifyBundleHash(manifest)) throw new Error("Manifest bundle hash is invalid");
+  const sortedEntries = [...manifest.entries].sort((left, right) => left.path.localeCompare(right.path));
+  if (canonicalJson(sortedEntries) !== canonicalJson(manifest.entries)) {
+    throw new Error("Manifest entries are not sorted by path");
+  }
+  if (options.expectedBundleId !== void 0 && manifest.bundleId !== options.expectedBundleId) {
+    throw new Error("Bundle directory does not match manifest bundleId");
+  }
+  if (!options.allowStageMarker && (0, import_node_path11.basename)(bundlePath) !== manifest.bundleId) {
+    throw new Error("Bundle directory name does not match manifest bundleId");
+  }
+  const manifestSha256 = sha256Bytes(manifestContent);
+  const digestContent = readSecureFile(digestFile, root.device, 1024);
+  if (digestContent !== "".concat(manifestSha256, "  ").concat(MANIFEST_PATH, "\n")) {
+    throw new Error("Detached manifest digest is invalid");
+  }
+  const expectedFiles = /* @__PURE__ */ new Set([
+    MANIFEST_PATH,
+    MANIFEST_DIGEST_PATH,
+    "report.md",
+    ...manifest.entries.map((entry) => entry.path)
+  ]);
+  if (options.allowStageMarker) expectedFiles.add(STAGE_MARKER);
+  if (canonicalJson([...expectedFiles].sort()) !== canonicalJson(tree.files)) {
+    throw new Error("Bundle contains missing or unreceipted files");
+  }
+  if (options.allowStageMarker) {
+    const stageMarker = readCanonicalJson(
+      (0, import_node_path11.resolve)(bundlePath, STAGE_MARKER),
+      root.device
+    );
+    if (stageMarker.magic !== STAGE_MAGIC || stageMarker.version !== 1 || stageMarker.rootId !== root.marker.rootId || stageMarker.stageName !== (0, import_node_path11.basename)(bundlePath) || stageMarker.bundleId !== manifest.bundleId || stageMarker.runId !== manifest.runId) {
+      throw new Error("Staging ownership marker does not match the bundle");
+    }
+  }
+  for (const entry of manifest.entries) {
+    assertPortablePath(entry.path);
+    const role = expectedRole(entry.path);
+    if (role === void 0 || role !== entry.role) {
+      throw new Error("Manifest role does not match path: ".concat(entry.path));
+    }
+    if (entry.mediaType !== "application/json") {
+      throw new Error("Manifest media type does not match path: ".concat(entry.path));
+    }
+    const path = (0, import_node_path11.resolve)(bundlePath, entry.path);
+    ensureContained(bundlePath, path);
+    const content = readSecureFile(path, root.device);
+    if (Buffer.byteLength(content) !== entry.bytes || sha256Bytes(content) !== entry.sha256) {
+      throw new Error("Artifact receipt mismatch: ".concat(entry.path));
+    }
+  }
+  const request = readCanonicalJson((0, import_node_path11.resolve)(bundlePath, "request.json"), root.device);
+  const profile = readCanonicalJson((0, import_node_path11.resolve)(bundlePath, "profile.json"), root.device);
+  const operations = readCanonicalJson(
+    (0, import_node_path11.resolve)(bundlePath, "operations.json"),
+    root.device
+  );
+  const investigation = readCanonicalJson(
+    (0, import_node_path11.resolve)(bundlePath, "investigation.json"),
+    root.device
+  );
+  const coverage = readCanonicalJson((0, import_node_path11.resolve)(bundlePath, "coverage.json"), root.device);
+  assertSchema("investigation", investigation);
+  assertSchema("coverage", coverage);
+  if (!verifyIntegrity(investigation) || !verifyIntegrity(coverage)) {
+    throw new Error("Derived artifact integrity is invalid");
+  }
+  const evidence = manifest.entries.filter((entry) => entry.role === "EVIDENCE").map(
+    (entry) => readCanonicalJson((0, import_node_path11.resolve)(bundlePath, entry.path), root.device)
+  );
+  const contradictions = manifest.entries.filter((entry) => entry.role === "CONTRADICTIONS").map(
+    (entry) => readCanonicalJson((0, import_node_path11.resolve)(bundlePath, entry.path), root.device)
+  );
+  const report = readSecureFile((0, import_node_path11.resolve)(bundlePath, "report.md"), root.device);
+  const reconstructed = {
+    bundleId: manifest.bundleId,
+    runId: manifest.runId,
+    createdAt: manifest.createdAt,
+    request,
+    profile,
+    operations,
+    evidence,
+    contradictions,
+    investigation: investigationDraft(investigation)
+  };
+  assertManifestIdentity(
+    manifest,
+    reconstructed.bundleId,
+    reconstructed.runId,
+    request.parentRunId
+  );
+  if (manifest.origin !== request.origin) throw new Error("Manifest origin does not match request");
+  const actual = {
+    request,
+    profile,
+    operations,
+    evidence,
+    contradictions,
+    investigation,
+    coverage,
+    report
+  };
+  validatePreparedArtifacts(reconstructed, actual);
+  return {
+    bundleId: manifest.bundleId,
+    runId: manifest.runId,
+    path: bundlePath,
+    manifest,
+    manifestSha256,
+    request,
+    profile,
+    operations,
+    evidence,
+    contradictions,
+    investigation,
+    coverage,
+    report
+  };
+}
+function isAllowedStageFile(path) {
+  if (path === STAGE_MARKER || path === "request.json" || path === "profile.json" || path === "operations.json" || path === "investigation.json" || path === "coverage.json" || path === MANIFEST_PATH || path === MANIFEST_DIGEST_PATH || path === "report.md") {
+    return true;
+  }
+  return /^evidence\/pmev_[A-Za-z0-9_-]{20,128}\.json$/u.test(path) || /^contradictions\/pmcon_[A-Za-z0-9_-]{20,128}\.json$/u.test(path);
+}
+function stageInventory(stagePath, receipt, root, lock) {
+  const bundlesPath = (0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY);
+  ensureContained(bundlesPath, stagePath);
+  if ((0, import_node_path11.basename)(stagePath) !== receipt.stageName) {
+    throw new Error("Staging directory path does not match its parent receipt");
+  }
+  const coordinates = stageCoordinates((0, import_node_path11.basename)(stagePath));
+  if (coordinates.bundleId !== receipt.bundleId || coordinates.stageNonce !== receipt.stageNonce) {
+    throw new Error("Staging directory name does not match its parent receipt");
+  }
+  const stageRoot = ownedPathIdentity(stagePath, "directory", root.device);
+  assertSecureTree(stagePath, root.device);
+  const tree = collectRelativeTree(stagePath);
+  for (const directory of tree.directories) {
+    if (directory !== "evidence" && directory !== "contradictions") {
+      throw new Error("Staging directory contains an unknown directory: ".concat(directory));
+    }
+  }
+  for (const file2 of tree.files) {
+    if (!isAllowedStageFile(file2)) {
+      throw new Error("Staging directory contains an unknown file: ".concat(file2));
+    }
+  }
+  const markerPath = (0, import_node_path11.resolve)(stagePath, STAGE_MARKER);
+  if ((0, import_node_fs9.existsSync)(markerPath)) {
+    const marker = readStageMarker(markerPath, root, lock);
+    if (canonicalJson(stageOwnershipFields(marker.value)) !== canonicalJson(stageOwnershipFields(receipt))) {
+      throw new Error("Staging marker does not match its parent receipt");
+    }
+  }
+  const files = tree.files.map(
+    (path) => ownedPathIdentity((0, import_node_path11.resolve)(stagePath, path), "file", root.device)
+  );
+  const directories = tree.directories.map(
+    (path) => ownedPathIdentity((0, import_node_path11.resolve)(stagePath, path), "directory", root.device)
+  );
+  assertSameOwnedPath(stageRoot);
+  return { root: stageRoot, files, directories };
+}
+function inventoryIdentities(inventory) {
+  return [inventory.root, ...inventory.files, ...inventory.directories].map((entry) => "".concat(entry.kind, ":").concat(entry.path, ":").concat(entry.device, ":").concat(entry.inode)).sort();
+}
+function removeOwnedStage(stagePath, receipt, root, lock, initial = stageInventory(stagePath, receipt, root, lock)) {
+  const directories = [initial.root, ...initial.directories].sort(
+    (left, right) => pathDepth(left.path) - pathDepth(right.path) || left.path.localeCompare(right.path)
+  );
+  for (const directory of directories) {
+    assertSameOwnedPath(directory);
+    (0, import_node_fs9.chmodSync)(directory.path, 448);
+  }
+  const confirmed = stageInventory(stagePath, receipt, root, lock);
+  if (canonicalJson(inventoryIdentities(initial)) !== canonicalJson(inventoryIdentities(confirmed))) {
+    throw new Error("Refusing to remove a staging directory that changed during validation");
+  }
+  for (const file2 of confirmed.files) {
+    assertSameOwnedPath(file2);
+    (0, import_node_fs9.unlinkSync)(file2.path);
+  }
+  for (const directory of [...confirmed.directories].sort(
+    (left, right) => pathDepth(right.path) - pathDepth(left.path) || right.path.localeCompare(left.path)
+  )) {
+    assertSameOwnedPath(directory);
+    (0, import_node_fs9.rmdirSync)(directory.path);
+  }
+  assertSameOwnedPath(confirmed.root);
+  (0, import_node_fs9.rmdirSync)(confirmed.root.path);
+}
+function assertFinalBundleMatchesStage(finalPath, receipt, root) {
+  const bundle = validateBundleDirectory(finalPath, root, { expectedBundleId: receipt.bundleId });
+  if (bundle.runId !== receipt.runId) {
+    throw new Error("Committed bundle does not match its staging receipt");
+  }
+}
+function cleanupStageReceipt(ownedReceipt, root, lock) {
+  const receipt = ownedReceipt.value;
+  const bundlesPath = (0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY);
+  const stagePath = (0, import_node_path11.resolve)(bundlesPath, receipt.stageName);
+  const finalPath = (0, import_node_path11.resolve)(bundlesPath, receipt.bundleId);
+  ensureContained(bundlesPath, stagePath);
+  ensureContained(bundlesPath, finalPath);
+  const stageExists = (0, import_node_fs9.existsSync)(stagePath);
+  const finalExists = (0, import_node_fs9.existsSync)(finalPath);
+  if (stageExists && finalExists) {
+    throw new Error("Both a staging directory and its final bundle exist");
+  }
+  if (stageExists) {
+    const inventory = stageInventory(stagePath, receipt, root, lock);
+    removeOwnedStage(stagePath, receipt, root, lock, inventory);
+  } else if (finalExists) {
+    assertFinalBundleMatchesStage(finalPath, receipt, root);
+  }
+  assertSameOwnedPath(ownedReceipt.identity);
+  (0, import_node_fs9.unlinkSync)(ownedReceipt.identity.path);
+  fsyncDirectory(bundlesPath);
+}
+function processIsProvablyAbandoned(pid) {
+  let signalError;
+  try {
+    process.kill(pid, 0);
+  } catch (error2) {
+    signalError = error2;
+  }
+  if (signalError === void 0) return false;
+  if (isErrnoException(signalError, "ESRCH")) return true;
+  throw new Error("Artifact seal lock owner liveness could not be proven");
+}
+function recoverAbandonedSeal(root, lockPath) {
+  const lock = readSealLock(lockPath, root);
+  if (!processIsProvablyAbandoned(lock.value.pid)) {
+    throw new Error("Artifact sealing is active in process ".concat(lock.value.pid));
+  }
+  const bundlesPath = (0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY);
+  const receipts = [];
+  const stages = /* @__PURE__ */ new Map();
+  const finalBundles = /* @__PURE__ */ new Map();
+  for (const entry of (0, import_node_fs9.readdirSync)(bundlesPath, { withFileTypes: true })) {
+    const path = (0, import_node_path11.resolve)(bundlesPath, entry.name);
+    if (entry.name === SEAL_LOCK) {
+      const current2 = readSealLock(path, root);
+      if (current2.identity.inode !== lock.identity.inode || current2.identity.device !== lock.identity.device || current2.content !== lock.content) {
+        throw new Error("Artifact seal lock changed during abandoned-lock recovery");
+      }
+      continue;
+    }
+    if (STAGE_RECEIPT_NAME_PATTERN.test(entry.name)) {
+      if (!entry.isFile()) throw new Error("Internal staging receipt is not a file: ".concat(entry.name));
+      receipts.push(readStageReceipt(path, root, lock.value));
+      continue;
+    }
+    if (STAGE_NAME_PATTERN.test(entry.name)) {
+      if (!entry.isDirectory()) throw new Error("Internal staging path is not a directory: ".concat(entry.name));
+      stageCoordinates(entry.name);
+      stages.set(entry.name, path);
+      continue;
+    }
+    let bundleId;
+    try {
+      bundleId = asBundleId(entry.name);
+    } catch {
+      throw new Error("Artifact bundles directory contains an unknown entry: ".concat(entry.name));
+    }
+    if (!entry.isDirectory()) {
+      throw new Error("Sealed bundle path is not a directory: ".concat(entry.name));
+    }
+    finalBundles.set(bundleId, path);
+  }
+  if (receipts.length > 1) {
+    throw new Error("Abandoned artifact seal contains multiple staging receipts");
+  }
+  if (receipts.length === 0 && stages.size > 0) {
+    throw new Error("Refusing to recover a staging directory without its parent receipt");
+  }
+  const receipt = receipts[0];
+  if (receipt !== void 0) {
+    const expectedStage = stages.get(receipt.value.stageName);
+    if (stages.size > (expectedStage === void 0 ? 0 : 1)) {
+      throw new Error("Abandoned artifact seal contains a foreign staging directory");
+    }
+    const finalPath = finalBundles.get(receipt.value.bundleId);
+    if (expectedStage !== void 0 && finalPath !== void 0) {
+      throw new Error("Both a staging directory and its final bundle exist");
+    }
+    if (expectedStage === void 0 && finalPath !== void 0) {
+      assertFinalBundleMatchesStage(finalPath, receipt.value, root);
+    }
+    if (expectedStage !== void 0) {
+      stageInventory(expectedStage, receipt.value, root, lock.value);
+    }
+    if (!processIsProvablyAbandoned(lock.value.pid)) {
+      throw new Error("Artifact sealing became active in process ".concat(lock.value.pid));
+    }
+    cleanupStageReceipt(receipt, root, lock.value);
+  }
+  for (const entry of (0, import_node_fs9.readdirSync)(bundlesPath, { withFileTypes: true })) {
+    if (STAGE_NAME_PATTERN.test(entry.name) || STAGE_RECEIPT_NAME_PATTERN.test(entry.name)) {
+      throw new Error("Internal staging state remained after abandoned-lock recovery");
+    }
+  }
+  const current = readSealLock(lockPath, root);
+  if (current.identity.inode !== lock.identity.inode || current.identity.device !== lock.identity.device || current.content !== lock.content) {
+    throw new Error("Artifact seal lock changed before abandoned-lock reclamation");
+  }
+  if (!processIsProvablyAbandoned(lock.value.pid)) {
+    throw new Error("Artifact sealing became active in process ".concat(lock.value.pid));
+  }
+  assertSameOwnedPath(lock.identity);
+  (0, import_node_fs9.unlinkSync)(lockPath);
+  fsyncDirectory(bundlesPath);
+}
+function acquireSealLock(root, acquiredAt) {
+  assertCanonicalTimestamp(acquiredAt, "Artifact seal lock acquiredAt");
+  const bundlesPath = (0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY);
+  const lockPath = (0, import_node_path11.resolve)(bundlesPath, SEAL_LOCK);
+  const receipt = {
+    magic: SEAL_LOCK_MAGIC,
+    version: 1,
+    ...rootIdentityFields(root),
+    pid: process.pid,
+    nonce: (0, import_node_crypto11.randomUUID)(),
+    acquiredAt
+  };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      writeExclusive(lockPath, canonicalDocument(receipt));
+      fsyncDirectory(bundlesPath);
+      const owned = readSealLock(lockPath, root);
+      if (owned.content !== canonicalDocument(receipt)) {
+        throw new Error("New artifact seal lock does not match its receipt");
+      }
+      return { path: lockPath, receipt, identity: owned.identity };
+    } catch (error2) {
+      if (!isErrnoException(error2, "EEXIST")) throw error2;
+      try {
+        recoverAbandonedSeal(root, lockPath);
+      } catch (recoveryError) {
+        if (isErrnoException(recoveryError, "ENOENT")) continue;
+        throw recoveryError;
+      }
+    }
+  }
+  throw new Error("Artifact seal lock could not be acquired after concurrent recovery");
+}
+function releaseSealLock(lock, root) {
+  const current = readSealLock(lock.path, root);
+  if (current.identity.inode !== lock.identity.inode || current.identity.device !== lock.identity.device || current.content !== canonicalDocument(lock.receipt)) {
+    throw new Error("Refusing to release a replaced artifact seal lock");
+  }
+  assertSameOwnedPath(lock.identity);
+  (0, import_node_fs9.unlinkSync)(lock.path);
+  fsyncDirectory((0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY));
+}
+function assertKnownInternalSealState(root) {
+  const bundlesPath = (0, import_node_path11.resolve)(root.path, BUNDLES_DIRECTORY);
+  const entries = (0, import_node_fs9.readdirSync)(bundlesPath, { withFileTypes: true });
+  const lockEntry = entries.find((entry) => entry.name === SEAL_LOCK);
+  const receiptEntries = entries.filter((entry) => STAGE_RECEIPT_NAME_PATTERN.test(entry.name));
+  const stageEntries = entries.filter((entry) => STAGE_NAME_PATTERN.test(entry.name));
+  if (lockEntry === void 0) {
+    if (receiptEntries.length > 0 || stageEntries.length > 0) {
+      throw new Error("Internal staging state exists without a seal lock receipt");
+    }
+    return;
+  }
+  if (!lockEntry.isFile()) throw new Error("Artifact seal lock is not a regular file");
+  const lock = readSealLock((0, import_node_path11.resolve)(bundlesPath, SEAL_LOCK), root);
+  if (receiptEntries.length > 1) {
+    throw new Error("Artifact seal contains multiple staging receipts");
+  }
+  if (receiptEntries.length === 0) {
+    if (stageEntries.length > 0) {
+      throw new Error("Internal staging directory exists without a parent receipt");
+    }
+    return;
+  }
+  const receiptEntry = receiptEntries[0];
+  if (!receiptEntry.isFile()) throw new Error("Internal staging receipt is not a regular file");
+  const receipt = readStageReceipt((0, import_node_path11.resolve)(bundlesPath, receiptEntry.name), root, lock.value);
+  const expectedStage = stageEntries.find((entry) => entry.name === receipt.value.stageName);
+  if (stageEntries.length > (expectedStage === void 0 ? 0 : 1)) {
+    throw new Error("Artifact seal contains a foreign staging directory");
+  }
+  const finalPath = (0, import_node_path11.resolve)(bundlesPath, receipt.value.bundleId);
+  const finalExists = (0, import_node_fs9.existsSync)(finalPath);
+  if (expectedStage !== void 0) {
+    if (!expectedStage.isDirectory()) throw new Error("Internal staging path is not a directory");
+    if (finalExists) throw new Error("Both a staging directory and its final bundle exist");
+    stageInventory((0, import_node_path11.resolve)(bundlesPath, expectedStage.name), receipt.value, root, lock.value);
+  } else if (finalExists) {
+    assertFinalBundleMatchesStage(finalPath, receipt.value, root);
+  }
+}
+var ArtifactStore = class {
+  root;
+  #context;
+  #now;
+  #producer;
+  constructor(options) {
+    this.#context = openOrCreateRoot(options.root);
+    this.root = this.#context.path;
+    this.#now = options.now ?? (() => /* @__PURE__ */ new Date());
+    this.#producer = { ...DEFAULT_PRODUCER, ...options.producer };
+  }
+  #bundlesPath() {
+    return (0, import_node_path11.resolve)(this.root, BUNDLES_DIRECTORY);
+  }
+  #findByRunId(runId) {
+    assertKnownInternalSealState(this.#context);
+    let found;
+    for (const entry of (0, import_node_fs9.readdirSync)(this.#bundlesPath(), { withFileTypes: true })) {
+      const path = (0, import_node_path11.resolve)(this.#bundlesPath(), entry.name);
+      if (entry.name === SEAL_LOCK) {
+        ownedPathIdentity(path, "file", this.#context.device);
+        continue;
+      }
+      if (STAGE_RECEIPT_NAME_PATTERN.test(entry.name)) {
+        ownedPathIdentity(path, "file", this.#context.device);
+        continue;
+      }
+      if (STAGE_NAME_PATTERN.test(entry.name)) {
+        stageCoordinates(entry.name);
+        ownedPathIdentity(path, "directory", this.#context.device);
+        continue;
+      }
+      if (!entry.isDirectory()) {
+        throw new Error("Artifact bundles directory contains an unknown entry: ".concat(entry.name));
+      }
+      let bundleId;
+      try {
+        bundleId = asBundleId(entry.name);
+      } catch {
+        throw new Error("Artifact bundles directory contains an unknown entry: ".concat(entry.name));
+      }
+      const bundle = validateBundleDirectory((0, import_node_path11.resolve)(this.#bundlesPath(), entry.name), this.#context, {
+        expectedBundleId: bundleId
+      });
+      if (bundle.runId === runId) {
+        if (found !== void 0) throw new Error("Multiple sealed bundles exist for run ".concat(runId));
+        found = bundle;
+      }
+    }
+    return found;
+  }
+  validateBundle(bundleId) {
+    const safeBundleId = asBundleId(bundleId);
+    const bundle = validateBundleDirectory(
+      (0, import_node_path11.resolve)(this.#bundlesPath(), safeBundleId),
+      this.#context,
+      { expectedBundleId: safeBundleId }
+    );
+    if (bundle.manifest.parentRunId !== void 0) {
+      const parent = this.#findByRunId(bundle.manifest.parentRunId);
+      if (parent === void 0) throw new Error("Sealed child bundle has no immutable parent bundle");
+      const reconstructed = {
+        bundleId: bundle.bundleId,
+        runId: bundle.runId,
+        createdAt: bundle.manifest.createdAt,
+        request: bundle.request,
+        profile: bundle.profile,
+        operations: bundle.operations,
+        evidence: bundle.evidence,
+        contradictions: bundle.contradictions,
+        investigation: investigationDraft(bundle.investigation)
+      };
+      assertParentVerificationContract(reconstructed, parent.investigation);
+    }
+    return bundle;
+  }
+  seal(input) {
+    const prepared = prepareArtifacts(input);
+    const sealedAt = this.#now().toISOString();
+    const lock = acquireSealLock(this.#context, sealedAt);
+    maybeCrashForTest("LOCK_ONLY");
+    let stagePath;
+    let stageReceipt;
+    let releaseLockOnExit = true;
+    try {
+      if ((0, import_node_fs9.existsSync)((0, import_node_path11.resolve)(this.#bundlesPath(), input.bundleId))) {
+        throw new Error("Bundle already exists: ".concat(input.bundleId));
+      }
+      if (this.#findByRunId(input.runId) !== void 0) {
+        throw new Error("Run is already sealed and immutable: ".concat(input.runId));
+      }
+      if (input.request.parentRunId !== void 0) {
+        const parent = this.#findByRunId(input.request.parentRunId);
+        if (parent === void 0) throw new Error("Parent run must be sealed before creating a child");
+        assertParentVerificationContract(input, parent.investigation);
+      }
+      const stageNonce = (0, import_node_crypto11.randomUUID)();
+      const stageName = ".stage-".concat(input.bundleId, "-").concat(stageNonce);
+      const receiptName = ".stage-receipt-".concat(stageNonce, ".json");
+      const ownership = {
+        ...rootIdentityFields(this.#context),
+        lockNonce: lock.receipt.nonce,
+        stageNonce,
+        stageName,
+        receiptName,
+        bundleId: input.bundleId,
+        runId: input.runId,
+        createdAt: sealedAt
+      };
+      const receiptValue = {
+        magic: STAGE_RECEIPT_MAGIC,
+        version: 1,
+        ...ownership
+      };
+      const receiptPath = (0, import_node_path11.resolve)(this.#bundlesPath(), receiptName);
+      writeExclusive(receiptPath, canonicalDocument(receiptValue));
+      fsyncDirectory(this.#bundlesPath());
+      stageReceipt = readStageReceipt(receiptPath, this.#context, lock.receipt);
+      stagePath = (0, import_node_path11.resolve)(this.#bundlesPath(), stageName);
+      createDirectory(stagePath, this.#context.device);
+      fsyncDirectory(this.#bundlesPath());
+      const stageMarker = {
+        magic: STAGE_MAGIC,
+        version: 1,
+        ...ownership
+      };
+      writeExclusive((0, import_node_path11.resolve)(stagePath, STAGE_MARKER), canonicalDocument(stageMarker));
+      fsyncDirectory(stagePath);
+      maybeCrashForTest("MARKED_STAGE");
+      const entries = writePreparedFiles(stagePath, this.#context.device, prepared);
+      const manifestBase = {
+        schemaVersion: "1.0.0",
+        bundleId: input.bundleId,
+        runId: input.runId,
+        ...input.request.parentRunId === void 0 ? {} : { parentRunId: input.request.parentRunId },
+        origin: input.request.origin,
+        producer: this.#producer,
+        createdAt: input.createdAt,
+        sealedAt,
+        entries,
+        bundleSha256: computeBundleHash(entries)
+      };
+      const manifest = manifestBase;
+      assertSchema("manifest", manifest);
+      const manifestContent = canonicalDocument(manifest);
+      const manifestSha256 = manifestDigest(manifest);
+      writeExclusive(
+        (0, import_node_path11.resolve)(stagePath, MANIFEST_DIGEST_PATH),
+        "".concat(manifestSha256, "  ").concat(MANIFEST_PATH, "\n")
+      );
+      writeExclusive((0, import_node_path11.resolve)(stagePath, MANIFEST_PATH), manifestContent);
+      writeExclusive((0, import_node_path11.resolve)(stagePath, "report.md"), prepared.report);
+      validateBundleDirectory(stagePath, this.#context, {
+        expectedBundleId: input.bundleId,
+        allowStageMarker: true
+      });
+      const marker = readStageMarker(
+        (0, import_node_path11.resolve)(stagePath, STAGE_MARKER),
+        this.#context,
+        lock.receipt
+      );
+      if (canonicalJson(stageOwnershipFields(marker.value)) !== canonicalJson(stageOwnershipFields(receiptValue))) {
+        throw new Error("Staging marker changed before commit");
+      }
+      assertSameOwnedPath(marker.identity);
+      (0, import_node_fs9.unlinkSync)(marker.identity.path);
+      fsyncDirectory(stagePath);
+      assertSecureTree(stagePath, this.#context.device);
+      immutableTree(stagePath);
+      maybeCrashForTest("PRE_RENAME");
+      const finalPath = (0, import_node_path11.resolve)(this.#bundlesPath(), input.bundleId);
+      (0, import_node_fs9.renameSync)(stagePath, finalPath);
+      stagePath = void 0;
+      fsyncDirectory(this.#bundlesPath());
+      maybeCrashForTest("POST_RENAME");
+      const validated = validateBundleDirectory(finalPath, this.#context, {
+        expectedBundleId: input.bundleId
+      });
+      cleanupStageReceipt(stageReceipt, this.#context, lock.receipt);
+      stageReceipt = void 0;
+      return { ...validated, created: true };
+    } catch (error2) {
+      if (stageReceipt !== void 0) {
+        try {
+          cleanupStageReceipt(stageReceipt, this.#context, lock.receipt);
+          stageReceipt = void 0;
+          stagePath = void 0;
+        } catch {
+          releaseLockOnExit = false;
+        }
+      } else if (stagePath !== void 0 && (0, import_node_fs9.existsSync)(stagePath)) {
+        releaseLockOnExit = false;
+      }
+      throw error2;
+    } finally {
+      if (releaseLockOnExit) releaseSealLock(lock, this.#context);
+    }
+  }
+};
+function manifestDigest(manifest) {
+  return sha256Bytes(canonicalJson(manifest));
+}
+
+// packages/policy/src/policy.ts
+var PolicyError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "PolicyError";
+    this.code = code;
+  }
+};
+function deepFreeze4(value, seen = /* @__PURE__ */ new Set()) {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) deepFreeze4(child, seen);
+  return Object.freeze(value);
+}
+function positiveInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new PolicyError("INVALID_BUDGET", "".concat(name, " must be a positive safe integer"));
+  }
+  return value;
+}
+function nonNegativeInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new PolicyError("INVALID_BUDGET", "".concat(name, " must be a non-negative safe integer"));
+  }
+  return value;
+}
+function validateRunBudgetLimits(limits2) {
+  const validated = {
+    maxRequests: positiveInteger(limits2.maxRequests, "maxRequests"),
+    maxRequestsPerSource: positiveInteger(limits2.maxRequestsPerSource, "maxRequestsPerSource"),
+    maxConcurrent: positiveInteger(limits2.maxConcurrent, "maxConcurrent"),
+    maxTotalCostUnits: positiveInteger(limits2.maxTotalCostUnits, "maxTotalCostUnits"),
+    maxTotalTimeoutMs: positiveInteger(limits2.maxTotalTimeoutMs, "maxTotalTimeoutMs"),
+    maxTotalBytes: positiveInteger(limits2.maxTotalBytes, "maxTotalBytes"),
+    maxTotalRows: nonNegativeInteger(limits2.maxTotalRows, "maxTotalRows"),
+    maxTotalSeries: nonNegativeInteger(limits2.maxTotalSeries, "maxTotalSeries"),
+    maxTotalPoints: nonNegativeInteger(limits2.maxTotalPoints, "maxTotalPoints")
+  };
+  if (validated.maxConcurrent > validated.maxRequests) {
+    throw new PolicyError("INVALID_BUDGET", "maxConcurrent cannot exceed maxRequests");
+  }
+  if (validated.maxRequestsPerSource > validated.maxRequests) {
+    throw new PolicyError("INVALID_BUDGET", "maxRequestsPerSource cannot exceed maxRequests");
+  }
+  return deepFreeze4(validated);
+}
+function estimateOperationCostUnits(limits2) {
+  const units = Math.ceil(limits2.timeoutMs / 5e3) + Math.ceil(limits2.maxBytes / 65536) + Math.ceil(limits2.maxRows / 100) + Math.ceil(limits2.maxSeries / 25) + Math.ceil(limits2.maxPoints / 500);
+  if (!Number.isSafeInteger(units) || units < 1) {
+    throw new PolicyError("INVALID_BUDGET", "Operation cost units are invalid");
+  }
+  return units;
+}
+function parseWindow(window, label, nowMs, maxLookbackMs, maxFutureSkewMs) {
+  const start = Date.parse(window.start);
+  const end = Date.parse(window.end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    throw new PolicyError("INVALID_WINDOW", "".concat(label, " must use RFC 3339 timestamps"));
+  }
+  if (start >= end) throw new PolicyError("INVALID_WINDOW", "".concat(label, " start must precede end"));
+  if (end - start > maxLookbackMs) {
+    throw new PolicyError("WINDOW_TOO_LARGE", "".concat(label, " exceeds the approved lookback"));
+  }
+  if (end > nowMs + maxFutureSkewMs) {
+    throw new PolicyError("FUTURE_WINDOW", "".concat(label, " exceeds the allowed future clock skew"));
+  }
+}
+function minimumLimits(left, right) {
+  return {
+    timeoutMs: Math.min(left.timeoutMs, right.timeoutMs),
+    maxAgeMs: Math.min(left.maxAgeMs, right.maxAgeMs),
+    maxBytes: Math.min(left.maxBytes, right.maxBytes),
+    maxRows: Math.min(left.maxRows, right.maxRows),
+    maxSeries: Math.min(left.maxSeries, right.maxSeries),
+    maxPoints: Math.min(left.maxPoints, right.maxPoints)
+  };
+}
+function compileWorkflowPolicy(options) {
+  if (!verifyIntegrity(options.trustBundle)) {
+    throw new PolicyError("UNTRUSTED_BUNDLE", "The trust bundle integrity check failed");
+  }
+  const profile = options.trustBundle.profile;
+  if (options.request.profileAlias !== profile.profileAlias) {
+    throw new PolicyError("PROFILE_NOT_ALLOWED", "The workflow request names a different profile");
+  }
+  if (!profile.allowedOrigins.includes(options.request.origin)) {
+    throw new PolicyError("ORIGIN_NOT_ALLOWED", "The workflow origin is not approved for this profile");
+  }
+  const scope = profile.scopes[options.request.scopeAlias];
+  if (scope === void 0) {
+    throw new PolicyError("SCOPE_NOT_ALLOWED", "The workflow scope alias is not approved");
+  }
+  if (profile.policy.maxEvidenceAge.mode === "OPERATOR_REQUIRED") {
+    throw new PolicyError("OPERATOR_DECISION_REQUIRED", "The profile requires an approved evidence-age limit");
+  }
+  const nowMs = Date.parse(options.now);
+  if (!Number.isFinite(nowMs)) throw new PolicyError("INVALID_TIME", "now must be an RFC 3339 timestamp");
+  const maxLookbackMs = positiveInteger(options.maxLookbackMs, "maxLookbackMs");
+  const maxFutureSkewMs = options.maxFutureSkewMs ?? 3e4;
+  if (!Number.isSafeInteger(maxFutureSkewMs) || maxFutureSkewMs < 0) {
+    throw new PolicyError("INVALID_BUDGET", "maxFutureSkewMs must be a non-negative safe integer");
+  }
+  parseWindow(options.request.window, "window", nowMs, maxLookbackMs, maxFutureSkewMs);
+  if (options.request.baselineWindow !== void 0) {
+    parseWindow(
+      options.request.baselineWindow,
+      "baselineWindow",
+      nowMs,
+      maxLookbackMs,
+      maxFutureSkewMs
+    );
+    const currentStart = Date.parse(options.request.window.start);
+    const currentEnd = Date.parse(options.request.window.end);
+    const baselineStart = Date.parse(options.request.baselineWindow.start);
+    const baselineEnd = Date.parse(options.request.baselineWindow.end);
+    if (baselineEnd > currentStart) {
+      throw new PolicyError(
+        "OVERLAPPING_BASELINE_WINDOW",
+        "baselineWindow must end before the current window starts"
+      );
+    }
+    if (baselineEnd - baselineStart !== currentEnd - currentStart) {
+      throw new PolicyError(
+        "INCOMPARABLE_BASELINE_WINDOW",
+        "baselineWindow and window must have equal durations"
+      );
+    }
+  }
+  const requestedCapabilityPackIds = options.request.requiredCapabilityPacks ?? [];
+  if (new Set(requestedCapabilityPackIds).size !== requestedCapabilityPackIds.length) {
+    throw new PolicyError("DUPLICATE_CAPABILITY_PACK", "Requested capability packs must be unique");
+  }
+  const approvedCapabilityPacks = new Set(profile.capabilityPackIds ?? []);
+  const capabilityPackSnapshots = new Map(
+    (options.trustBundle.capabilityPacks ?? []).map((pack) => [pack.packId, pack])
+  );
+  const capabilityPacks = {};
+  const capabilityOperationIds = [];
+  for (const packId3 of requestedCapabilityPackIds) {
+    if (!approvedCapabilityPacks.has(packId3)) {
+      throw new PolicyError("CAPABILITY_PACK_NOT_ALLOWED", "Capability pack ".concat(packId3, " is not approved"));
+    }
+    const pack = capabilityPackSnapshots.get(packId3);
+    if (pack === void 0) {
+      throw new PolicyError("CAPABILITY_PACK_NOT_SNAPSHOTTED", "Capability pack ".concat(packId3, " is missing from the bundle"));
+    }
+    try {
+      validateCapabilityPack(pack);
+    } catch {
+      throw new PolicyError("CAPABILITY_PACK_INVALID", "Capability pack ".concat(packId3, " failed integrity validation"));
+    }
+    const subject = scope.subject;
+    if (subject === void 0 && pack.scopeMappings.some((mapping) => mapping.scopeField === "subject.ref" && mapping.required)) {
+      throw new PolicyError(
+        "CAPABILITY_PACK_SUBJECT_REQUIRED",
+        "Capability pack ".concat(packId3, " requires an approved opaque subject scope")
+      );
+    }
+    if (subject !== void 0 && !pack.supportedSubjectKinds.includes(subject.kind)) {
+      throw new PolicyError(
+        "CAPABILITY_PACK_SUBJECT_NOT_ALLOWED",
+        "Capability pack ".concat(packId3, " does not support the approved subject kind")
+      );
+    }
+    capabilityOperationIds.push(...pack.requiredOperationIds);
+    capabilityPacks[packId3] = {
+      packId: packId3,
+      revision: pack.revision,
+      definitionSha256: pack.definitionSha256,
+      requiredOperationIds: [...pack.requiredOperationIds]
+    };
+  }
+  const baseRequested = options.request.requiredOperations ?? (requestedCapabilityPackIds.length === 0 ? profile.operationIds : []);
+  const requested = [.../* @__PURE__ */ new Set([...baseRequested, ...capabilityOperationIds])];
+  if (requested.length === 0) throw new PolicyError("NO_OPERATIONS", "At least one operation is required");
+  if (new Set(requested).size !== requested.length) {
+    throw new PolicyError("DUPLICATE_OPERATION", "Requested operations must be unique");
+  }
+  const approved = new Set(profile.operationIds);
+  const snapshots = new Map(options.trustBundle.operations.map((entry) => [entry.operationId, entry]));
+  const operations = {};
+  for (const operationId of requested) {
+    if (!approved.has(operationId)) {
+      throw new PolicyError("OPERATION_NOT_ALLOWED", "Operation ".concat(operationId, " is not approved"));
+    }
+    const snapshot = snapshots.get(operationId);
+    if (snapshot === void 0) {
+      throw new PolicyError("OPERATION_NOT_SNAPSHOTTED", "Operation ".concat(operationId, " is missing from the bundle"));
+    }
+    let limits2 = minimumLimits(profile.policy.limits, snapshot.definition.limits);
+    if (profile.policy.maxEvidenceAge.mode === "FIXED") {
+      limits2 = { ...limits2, maxAgeMs: Math.min(limits2.maxAgeMs, profile.policy.maxEvidenceAge.durationSeconds * 1e3) };
+    }
+    operations[operationId] = {
+      operationId,
+      definitionSha256: snapshot.definitionSha256,
+      sourceAlias: snapshot.definition.sourceAlias,
+      costUnits: estimateOperationCostUnits(limits2),
+      limits: limits2
+    };
+  }
+  for (const packId3 of requestedCapabilityPackIds) {
+    const pack = capabilityPackSnapshots.get(packId3);
+    const requiredMappings = pack.scopeMappings.filter((mapping) => mapping.required);
+    for (const operationId of pack.requiredOperationIds) {
+      const snapshot = snapshots.get(operationId);
+      for (const mapping of requiredMappings) {
+        if (snapshot.definition.scopeMapping[mapping.scopeField] !== mapping.providerField) {
+          throw new PolicyError(
+            "CAPABILITY_PACK_SCOPE_UNPROVEN",
+            "Capability pack ".concat(packId3, " cannot prove a required scope binding for ").concat(operationId)
+          );
+        }
+      }
+    }
+  }
+  if (options.request.workflow === "verify" && options.request.verificationPolicyAlias !== void 0) {
+    throw new PolicyError(
+      "VERIFICATION_POLICY_OVERRIDE",
+      "Verification policy is derived from the sealed parent and cannot be supplied by the request"
+    );
+  }
+  if (options.request.workflow !== "verify" && options.sealedVerificationPolicyAlias !== void 0) {
+    throw new PolicyError("VERIFICATION_POLICY_OVERRIDE", "A sealed verification policy is valid only for verification runs");
+  }
+  const policyAlias = options.request.workflow === "verify" ? options.sealedVerificationPolicyAlias : options.request.verificationPolicyAlias ?? profile.defaultVerificationPolicyAlias;
+  let verificationPolicy;
+  if (policyAlias !== void 0) {
+    verificationPolicy = profile.verificationPolicies?.[policyAlias];
+    if (verificationPolicy === void 0 || verificationPolicy.policyAlias !== policyAlias) {
+      throw new PolicyError("VERIFICATION_POLICY_NOT_ALLOWED", "The verification policy alias is not approved");
+    }
+    if (verificationPolicy.passCount > verificationPolicy.requiredSamples) {
+      throw new PolicyError("INVALID_VERIFICATION_POLICY", "passCount cannot exceed requiredSamples");
+    }
+    const criterionIds = verificationPolicy.criteria.map((criterion) => criterion.criterionId);
+    if (new Set(criterionIds).size !== criterionIds.length) {
+      throw new PolicyError("INVALID_VERIFICATION_POLICY", "Verification criterion IDs must be unique");
+    }
+    for (const criterion of verificationPolicy.criteria) {
+      const compiledOperation2 = operations[criterion.operationId];
+      const snapshot = snapshots.get(criterion.operationId);
+      if (compiledOperation2 === void 0 || snapshot === void 0) {
+        throw new PolicyError(
+          "VERIFICATION_OPERATION_NOT_SELECTED",
+          "Verification operation ".concat(criterion.operationId, " is not in the sealed run ledger")
+        );
+      }
+      if (criterion.maxEvidenceAgeMs > compiledOperation2.limits.maxAgeMs) {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Verification freshness cannot widen the operation limit");
+      }
+      if (criterion.requiredDurationSeconds !== void 0 && criterion.requiredDurationSeconds > verificationPolicy.windowDurationSeconds) {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Criterion duration cannot exceed the verification window");
+      }
+      if (snapshot.definition.normalization.resultKind !== criterion.valueSelector.kind) {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Verification selector kind differs from the operation contract");
+      }
+      if ((/* @__PURE__ */ new Set(["LT", "LTE", "GT", "GTE"])).has(criterion.comparator) && (typeof criterion.expected !== "number" || !Number.isFinite(criterion.expected))) {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Numeric verification comparators require a finite numeric expected value");
+      }
+      if ((/* @__PURE__ */ new Set(["ACTIVE", "INACTIVE"])).has(criterion.comparator) && criterion.expected !== true) {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Activity comparators require the canonical expected value true");
+      }
+      if (criterion.valueSelector.reducer === "ALL" && criterion.valueSelector.kind !== "TIMESERIES" || verificationPolicy.requiredSamples > 1 && criterion.valueSelector.kind === "SCALAR") {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Verification sample count is incompatible with its selector");
+      }
+      if (snapshot.definition.normalization.targetUnit !== void 0 && criterion.unit !== snapshot.definition.normalization.targetUnit) {
+        throw new PolicyError("INVALID_VERIFICATION_POLICY", "Verification unit differs from the normalized operation unit");
+      }
+    }
+  } else if (options.request.workflow === "verify") {
+    throw new PolicyError("VERIFICATION_POLICY_REQUIRED", "Verification requires an administrator-owned policy");
+  }
+  return deepFreeze4({
+    requestSha256: sha256Canonical(options.request),
+    trustBundleSha256: options.trustBundle.integrity.contentSha256,
+    profileAlias: profile.profileAlias,
+    scopeAlias: options.request.scopeAlias,
+    scope: { ...scope },
+    origin: options.request.origin,
+    window: { ...options.request.window },
+    ...options.request.baselineWindow === void 0 ? {} : { baselineWindow: { ...options.request.baselineWindow } },
+    auditRequired: profile.policy.auditRequired,
+    ...verificationPolicy === void 0 ? {} : { verificationPolicy: structuredClone(verificationPolicy) },
+    operations,
+    capabilityPacks,
+    runLimits: validateRunBudgetLimits(options.runLimits)
+  });
+}
+function authorizeOperationLimits(policy, operationId, requested = {}) {
+  const operation2 = policy.operations[operationId];
+  if (operation2 === void 0) {
+    throw new PolicyError("OPERATION_NOT_ALLOWED", "Operation ".concat(operationId, " is not in the sealed policy"));
+  }
+  const keys = ["timeoutMs", "maxAgeMs", "maxBytes", "maxRows", "maxSeries", "maxPoints"];
+  const zeroAllowed = /* @__PURE__ */ new Set(["maxAgeMs", "maxRows", "maxSeries", "maxPoints"]);
+  const limits2 = { ...operation2.limits };
+  for (const key of keys) {
+    const value = requested[key];
+    if (value === void 0) continue;
+    if (zeroAllowed.has(key)) nonNegativeInteger(value, key);
+    else positiveInteger(value, key);
+    if (value > operation2.limits[key]) {
+      throw new PolicyError("BUDGET_WIDENING", "".concat(key, " exceeds the sealed operation limit"));
+    }
+    limits2[key] = value;
+  }
+  return deepFreeze4(limits2);
+}
+
+// packages/policy/src/budget-ledger.ts
+var ZERO_USAGE = { timeoutMs: 0, bytes: 0, rows: 0, series: 0, points: 0 };
+function cloneUsage(usage) {
+  return { ...usage };
+}
+function addLimits(target, limits2, direction) {
+  target.timeoutMs += direction * limits2.timeoutMs;
+  target.bytes += direction * limits2.maxBytes;
+  target.rows += direction * limits2.maxRows;
+  target.series += direction * limits2.maxSeries;
+  target.points += direction * limits2.maxPoints;
+}
+function assertUsage(usage) {
+  for (const [name, value] of Object.entries(usage)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new PolicyError("INVALID_USAGE", "".concat(name, " must be a non-negative safe integer"));
+    }
+  }
+}
+var BudgetLedger = class {
+  #policy;
+  #reservations = /* @__PURE__ */ new Map();
+  #requests = 0;
+  #requestsBySource = /* @__PURE__ */ new Map();
+  #costUnits = 0;
+  #counter = 0;
+  #used = cloneUsage(ZERO_USAGE);
+  #reserved = cloneUsage(ZERO_USAGE);
+  constructor(policy) {
+    this.#policy = policy;
+  }
+  reserve(operationId, requested = {}) {
+    if (this.#requests >= this.#policy.runLimits.maxRequests) {
+      throw new PolicyError("REQUEST_BUDGET_EXHAUSTED", "The run request budget is exhausted");
+    }
+    if (this.#reservations.size >= this.#policy.runLimits.maxConcurrent) {
+      throw new PolicyError("CONCURRENCY_BUDGET_EXHAUSTED", "The run concurrency budget is exhausted");
+    }
+    const operation2 = this.#policy.operations[operationId];
+    if (operation2 === void 0) {
+      throw new PolicyError("OPERATION_NOT_ALLOWED", "Operation ".concat(operationId, " is not in the sealed policy"));
+    }
+    const sourceRequests = this.#requestsBySource.get(operation2.sourceAlias) ?? 0;
+    if (sourceRequests >= this.#policy.runLimits.maxRequestsPerSource) {
+      throw new PolicyError("SOURCE_REQUEST_BUDGET_EXHAUSTED", "The provider-source request quota is exhausted");
+    }
+    if (this.#costUnits + operation2.costUnits > this.#policy.runLimits.maxTotalCostUnits) {
+      throw new PolicyError("COST_BUDGET_EXHAUSTED", "The run resource-cost budget is exhausted");
+    }
+    const limits2 = authorizeOperationLimits(this.#policy, operationId, requested);
+    const prospective = cloneUsage(this.#reserved);
+    addLimits(prospective, limits2, 1);
+    const totals = this.#policy.runLimits;
+    if (this.#used.timeoutMs + prospective.timeoutMs > totals.maxTotalTimeoutMs) throw new PolicyError("TIME_BUDGET_EXHAUSTED", "The run timeout budget is exhausted");
+    if (this.#used.bytes + prospective.bytes > totals.maxTotalBytes) throw new PolicyError("BYTE_BUDGET_EXHAUSTED", "The run byte budget is exhausted");
+    if (this.#used.rows + prospective.rows > totals.maxTotalRows) throw new PolicyError("ROW_BUDGET_EXHAUSTED", "The run row budget is exhausted");
+    if (this.#used.series + prospective.series > totals.maxTotalSeries) throw new PolicyError("SERIES_BUDGET_EXHAUSTED", "The run series budget is exhausted");
+    if (this.#used.points + prospective.points > totals.maxTotalPoints) throw new PolicyError("POINT_BUDGET_EXHAUSTED", "The run point budget is exhausted");
+    this.#counter += 1;
+    const reservationId = "budget_".concat(this.#counter.toString(36));
+    const reservation = {
+      reservationId,
+      operationId,
+      sourceAlias: operation2.sourceAlias,
+      costUnits: operation2.costUnits,
+      limits: limits2
+    };
+    this.#reservations.set(reservationId, reservation);
+    this.#reserved = prospective;
+    this.#requests += 1;
+    this.#requestsBySource.set(operation2.sourceAlias, sourceRequests + 1);
+    this.#costUnits += operation2.costUnits;
+    return Object.freeze({ ...reservation });
+  }
+  settle(reservationId, usage) {
+    const reservation = this.#reservations.get(reservationId);
+    if (reservation === void 0) {
+      throw new PolicyError("UNKNOWN_RESERVATION", "The budget reservation is unknown or already settled");
+    }
+    assertUsage(usage);
+    if (usage.timeoutMs > reservation.limits.timeoutMs || usage.bytes > reservation.limits.maxBytes || usage.rows > reservation.limits.maxRows || usage.series > reservation.limits.maxSeries || usage.points > reservation.limits.maxPoints) {
+      throw new PolicyError("OPERATION_BUDGET_EXCEEDED", "Actual usage exceeds the reservation");
+    }
+    this.#reservations.delete(reservationId);
+    addLimits(this.#reserved, reservation.limits, -1);
+    this.#used.timeoutMs += usage.timeoutMs;
+    this.#used.bytes += usage.bytes;
+    this.#used.rows += usage.rows;
+    this.#used.series += usage.series;
+    this.#used.points += usage.points;
+    return this.snapshot();
+  }
+  cancel(reservationId) {
+    const reservation = this.#reservations.get(reservationId);
+    if (reservation === void 0) {
+      throw new PolicyError("UNKNOWN_RESERVATION", "The budget reservation is unknown or already settled");
+    }
+    this.#reservations.delete(reservationId);
+    addLimits(this.#reserved, reservation.limits, -1);
+    return this.snapshot();
+  }
+  snapshot() {
+    return Object.freeze({
+      requests: this.#requests,
+      requestsBySource: Object.freeze(Object.fromEntries(
+        [...this.#requestsBySource.entries()].sort(([left], [right]) => left.localeCompare(right))
+      )),
+      active: this.#reservations.size,
+      costUnits: this.#costUnits,
+      used: Object.freeze(cloneUsage(this.#used)),
+      reserved: Object.freeze(cloneUsage(this.#reserved))
+    });
+  }
+};
+
+// packages/evidence-server/src/checkpoint.ts
+function safeCollectionKey(key) {
+  return /^[A-Za-z0-9._:-]{1,128}\|[a-f0-9]{64}$/u.test(key);
+}
+var USAGE_KEYS = ["timeoutMs", "bytes", "rows", "series", "points"];
+var RUN_LIMIT_KEYS = [
+  "maxRequests",
+  "maxRequestsPerSource",
+  "maxConcurrent",
+  "maxTotalCostUnits",
+  "maxTotalTimeoutMs",
+  "maxTotalBytes",
+  "maxTotalRows",
+  "maxTotalSeries",
+  "maxTotalPoints"
+];
+var OPERATION_LIMIT_KEYS2 = [
+  "timeoutMs",
+  "maxAgeMs",
+  "maxBytes",
+  "maxRows",
+  "maxSeries",
+  "maxPoints"
+];
+function hasExactKeys(value, expected) {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === [...expected].sort()[index]);
+}
+function assertUsage2(usage) {
+  if (usage === void 0 || usage === null || typeof usage !== "object" || Array.isArray(usage) || !hasExactKeys(usage, USAGE_KEYS)) {
+    throw new RunStoreError("STATE_CORRUPT", "Settled budget history has invalid usage");
+  }
+  for (const key of USAGE_KEYS) {
+    const value = usage[key];
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RunStoreError("STATE_CORRUPT", "Budget history is invalid");
+    }
+  }
+}
+function assertCompiledBudgetPolicy(policy) {
+  try {
+    if (policy.runLimits === null || typeof policy.runLimits !== "object" || Array.isArray(policy.runLimits) || !hasExactKeys(policy.runLimits, RUN_LIMIT_KEYS)) {
+      throw new Error("run limits are malformed");
+    }
+    validateRunBudgetLimits(policy.runLimits);
+    if (policy.operations === null || typeof policy.operations !== "object" || Array.isArray(policy.operations) || Object.keys(policy.operations).length === 0) {
+      throw new Error("operation policy is malformed");
+    }
+    for (const [key, operation2] of Object.entries(policy.operations)) {
+      if (operation2 === null || typeof operation2 !== "object" || Array.isArray(operation2) || !hasExactKeys(operation2, ["operationId", "definitionSha256", "sourceAlias", "costUnits", "limits"]) || key !== operation2.operationId || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(operation2.operationId) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(operation2.sourceAlias) || !/^[a-f0-9]{64}$/u.test(operation2.definitionSha256) || operation2.limits === null || typeof operation2.limits !== "object" || Array.isArray(operation2.limits) || !hasExactKeys(operation2.limits, OPERATION_LIMIT_KEYS2)) {
+        throw new Error("compiled operation is malformed");
+      }
+      const limits2 = operation2.limits;
+      if (!Number.isSafeInteger(limits2.timeoutMs) || limits2.timeoutMs < 1 || limits2.timeoutMs > 3e5 || !Number.isSafeInteger(limits2.maxAgeMs) || limits2.maxAgeMs < 0 || limits2.maxAgeMs > 31536e6 || !Number.isSafeInteger(limits2.maxBytes) || limits2.maxBytes < 1 || limits2.maxBytes > 1073741824 || !Number.isSafeInteger(limits2.maxRows) || limits2.maxRows < 0 || limits2.maxRows > 1e6 || !Number.isSafeInteger(limits2.maxSeries) || limits2.maxSeries < 0 || limits2.maxSeries > 1e5 || !Number.isSafeInteger(limits2.maxPoints) || limits2.maxPoints < 0 || limits2.maxPoints > 1e7 || !Number.isSafeInteger(operation2.costUnits) || operation2.costUnits !== estimateOperationCostUnits(limits2)) {
+        throw new Error("compiled operation budget is invalid");
+      }
+    }
+  } catch {
+    throw new RunStoreError("STATE_CORRUPT", "Runtime checkpoint budget policy is invalid");
+  }
+}
+function validateRuntimeCheckpoint(value, expected) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || value.request === null || typeof value.request !== "object" || Array.isArray(value.request) || value.policy === null || typeof value.policy !== "object" || Array.isArray(value.policy) || value.schemaVersion !== "1.0.0" || value.runId !== expected.runId || !Number.isSafeInteger(value.checkpointRevision) || value.checkpointRevision < 1 || !Number.isSafeInteger(value.runRevision) || value.runRevision < 0 || value.request.profileAlias !== expected.profileAlias || sha256Canonical(value.request) !== value.policy.requestSha256 || value.policy.trustBundleSha256 !== expected.trustBundleSha256 || !Array.isArray(value.evidence) || !Array.isArray(value.contradictions) || !Array.isArray(value.budgetHistory) || !Array.isArray(value.completedByKey) || !Array.isArray(value.incompleteKeys) || !(value.deferredOperations === void 0 || Array.isArray(value.deferredOperations)) || !Number.isSafeInteger(value.auditEventCount) || value.auditEventCount < 0) {
+    throw new RunStoreError("STATE_CORRUPT", "Runtime session checkpoint is invalid");
+  }
+  assertCompiledBudgetPolicy(value.policy);
+  const evidenceIds = /* @__PURE__ */ new Set();
+  for (const envelope of value.evidence) {
+    if (envelope.runId !== expected.runId || envelope.trustBundleSha256 !== expected.trustBundleSha256 || !verifyIntegrity(envelope) || evidenceIds.has(envelope.evidenceId)) {
+      throw new RunStoreError("STATE_CORRUPT", "Checkpointed evidence failed integrity validation");
+    }
+    evidenceIds.add(envelope.evidenceId);
+  }
+  for (const contradiction of value.contradictions) {
+    if (contradiction.runId !== expected.runId || !verifyIntegrity(contradiction)) {
+      throw new RunStoreError("STATE_CORRUPT", "Checkpointed contradiction failed integrity validation");
+    }
+  }
+  const keys = /* @__PURE__ */ new Set();
+  for (const item of value.completedByKey) {
+    if (!Array.isArray(item) || item.length !== 2 || !safeCollectionKey(item[0]) || !evidenceIds.has(item[1]) || keys.has(item[0])) {
+      throw new RunStoreError("STATE_CORRUPT", "Checkpointed collection index is invalid");
+    }
+    keys.add(item[0]);
+  }
+  for (const key of value.incompleteKeys) {
+    if (!safeCollectionKey(key) || keys.has(key)) {
+      throw new RunStoreError("STATE_CORRUPT", "Checkpointed incomplete collection index is invalid");
+    }
+  }
+  const deferredOperationIds = /* @__PURE__ */ new Set();
+  for (const item of value.deferredOperations ?? []) {
+    if (!Array.isArray(item) || item.length !== 2 || value.policy.operations[item[0]] === void 0 || deferredOperationIds.has(item[0]) || !/^[A-Z][A-Z0-9_]{0,127}$/u.test(item[1])) {
+      throw new RunStoreError("STATE_CORRUPT", "Checkpointed deferred-operation ledger is invalid");
+    }
+    deferredOperationIds.add(item[0]);
+  }
+  const reservationIds = /* @__PURE__ */ new Set();
+  for (const history of value.budgetHistory) {
+    if (history === null || typeof history !== "object" || Array.isArray(history) || !/^budget_[1-9a-z][0-9a-z]{0,31}$/u.test(history.reservationId) || reservationIds.has(history.reservationId) || value.policy.operations[history.operationId] === void 0 || !(/* @__PURE__ */ new Set(["RESERVED", "SETTLED", "CANCELLED"])).has(history.outcome)) {
+      throw new RunStoreError("STATE_CORRUPT", "Budget history names an unauthorized operation");
+    }
+    reservationIds.add(history.reservationId);
+    if (history.outcome === "SETTLED") assertUsage2(history.usage);
+    else if (history.usage !== void 0) {
+      throw new RunStoreError("STATE_CORRUPT", "Unsettled budget history unexpectedly contains usage");
+    }
+  }
+  if (value.verificationContract !== void 0 && value.verificationContract.contractSha256 !== sha256Canonical({
+    policyAlias: value.verificationContract.policyAlias,
+    scope: value.verificationContract.scope,
+    ...value.verificationContract.cohort === void 0 ? {} : { cohort: value.verificationContract.cohort },
+    windowStrategy: value.verificationContract.windowStrategy,
+    windowDurationSeconds: value.verificationContract.windowDurationSeconds,
+    requiredSamples: value.verificationContract.requiredSamples,
+    passCount: value.verificationContract.passCount,
+    criteria: value.verificationContract.criteria
+  })) {
+    throw new RunStoreError("STATE_CORRUPT", "Verification contract checkpoint is invalid");
+  }
+  return structuredClone(value);
+}
+var RuntimeCheckpointStore = class {
+  #stateRoot;
+  constructor(stateRoot) {
+    this.#stateRoot = stateRoot;
+  }
+  read(runId) {
+    return this.#file(runId).read();
+  }
+  write(checkpoint, expectedCheckpointRevision) {
+    if (!Number.isSafeInteger(expectedCheckpointRevision) || expectedCheckpointRevision < 0 || !Number.isSafeInteger(checkpoint.runRevision) || checkpoint.runRevision < 0) {
+      throw new RunStoreError("STALE_REVISION", "Checkpoint revision is invalid");
+    }
+    return this.#file(checkpoint.runId).transact((current) => {
+      if (current !== void 0 && (!Number.isSafeInteger(current.checkpointRevision) || current.checkpointRevision < 1 || current.checkpointRevision === Number.MAX_SAFE_INTEGER || !Number.isSafeInteger(current.runRevision) || current.runRevision < 0)) {
+        throw new RunStoreError("STATE_CORRUPT", "Checkpoint fencing metadata is invalid");
+      }
+      if (current === void 0 && expectedCheckpointRevision !== 0) {
+        throw new RunStoreError("STALE_REVISION", "The checkpoint revision has changed");
+      }
+      const currentCheckpointRevision = current?.checkpointRevision ?? 0;
+      const currentRunRevision = current?.runRevision ?? -1;
+      if (checkpoint.runRevision < currentRunRevision) {
+        throw new RunStoreError("STALE_REVISION", "A newer run owner already persisted this checkpoint");
+      }
+      if (checkpoint.runRevision === currentRunRevision && expectedCheckpointRevision !== currentCheckpointRevision) {
+        throw new RunStoreError("STALE_REVISION", "The checkpoint revision has changed");
+      }
+      const checkpointRevision = currentCheckpointRevision + 1;
+      return {
+        payload: { ...checkpoint, checkpointRevision },
+        result: checkpointRevision
+      };
+    });
+  }
+  #file(runId) {
+    if (!/^pmrun_[A-Za-z0-9_-]{20,128}$/u.test(runId)) {
+      throw new RunStoreError("STATE_FILE_INVALID", "Run ID cannot name a checkpoint file");
+    }
+    return new AtomicStateFile({
+      stateRoot: this.#stateRoot,
+      filename: "session-".concat(runId, ".json"),
+      kind: "production-monitoring-runtime-session-v1"
+    });
+  }
+};
+
+// packages/evidence-server/src/audit.ts
+var import_node_fs10 = require("node:fs");
+var LEGACY_FILENAME2 = "audit-log.json";
+var RETAINED_LEGACY_FILENAME2 = "audit-log-v1-retained.json";
+var HEAD_FILENAME = "audit-head.json";
+var DEFAULT_SEGMENT_ENTRY_LIMIT = 128;
+var DEFAULT_SEGMENT_MAXIMUM_BYTES = 1024 * 1024;
+var DEFAULT_RUN_CACHE_MAXIMUM_RUNS = 64;
+var DEFAULT_RUN_CACHE_MAXIMUM_EVENTS = 1024;
+var DEFAULT_RUN_CACHE_MAXIMUM_BYTES = 4 * 1024 * 1024;
+var DEFAULT_VOLATILE_MAXIMUM_EVENTS = 4096;
+var DEFAULT_VOLATILE_MAXIMUM_BYTES = 8 * 1024 * 1024;
+var HEAD_MAXIMUM_BYTES = DEFAULT_SEGMENT_MAXIMUM_BYTES + 64 * 1024;
+var SEGMENT_FILENAME = /^audit-segment-(\d{8})\.json$/u;
+var SEGMENT_LOCK_FILENAME = /^audit-segment-(\d{8})\.json\.lock(?:\.reclaim)?$/u;
+var SEGMENT_TEMP_FILENAME = /^\.state-audit-segment-(\d{8})\.json(?:-[a-f0-9-]{36})?\.tmp$/u;
+var ZERO_SHA2562 = "0".repeat(64);
+function exactKeys2(value, expected) {
+  return canonicalJson(Object.keys(value).sort()) === canonicalJson([...expected].sort());
+}
+function validateEvent(event) {
+  if (event === null || typeof event !== "object" || event.schemaVersion !== "1.0.0" || typeof event.event !== "string" || !["COLLECTION_STARTED", "COLLECTION_COMPLETED", "COLLECTION_FAILED"].includes(event.event) || typeof event.at !== "string" || !Number.isFinite(Date.parse(event.at)) || typeof event.runId !== "string" || !event.runId.startsWith("pmrun_") || typeof event.operationId !== "string" || event.operationId.length === 0 || typeof event.adapterPackageId !== "string" || event.adapterPackageId.length === 0) {
+    throw new RunStoreError("AUDIT_CORRUPT", "Audit event is invalid");
+  }
+}
+function entryHash(entry) {
+  return sha256Canonical({
+    domain: "pm-durable-audit-v1",
+    sequence: entry.sequence,
+    previousSha256: entry.previousSha256,
+    event: entry.event
+  });
+}
+function validateEntries(entries, firstSequence, previousEntrySha256) {
+  let previousSha256 = previousEntrySha256;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry === void 0 || entry === null || typeof entry !== "object" || Array.isArray(entry) || !exactKeys2(entry, ["entrySha256", "event", "previousSha256", "sequence"]) || !Number.isSafeInteger(entry.sequence) || typeof entry.previousSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(entry.previousSha256) || entry.event === null || typeof entry.event !== "object") {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit entry is invalid");
+    }
+    validateEvent(entry.event);
+    if (entry.sequence !== firstSequence + index || entry.previousSha256 !== previousSha256 || !/^[a-f0-9]{64}$/u.test(entry.entrySha256) || entryHash({ sequence: entry.sequence, previousSha256, event: entry.event }) !== entry.entrySha256) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit append chain integrity failed");
+    }
+    previousSha256 = entry.entrySha256;
+  }
+  return previousSha256;
+}
+function validateLegacyState(value) {
+  if (value === void 0 || value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys2(value, ["entries", "schemaVersion"]) || value.schemaVersion !== "1.0.0" || !Array.isArray(value.entries)) {
+    throw new RunStoreError("AUDIT_CORRUPT", "Audit v1 state is invalid");
+  }
+  validateEntries(value.entries, 1, ZERO_SHA2562);
+  return structuredClone(value);
+}
+function validateTombstone2(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys2(value, ["migratedTo", "retainedFilename", "schemaVersion", "sourceEntryCount", "sourcePayloadSha256"])) {
+    throw new RunStoreError("AUDIT_CORRUPT", "Audit v1 migration tombstone is invalid");
+  }
+  const tombstone = value;
+  if (tombstone.schemaVersion !== "2.0.0" || tombstone.migratedTo !== HEAD_FILENAME || tombstone.retainedFilename !== RETAINED_LEGACY_FILENAME2 || !Number.isSafeInteger(tombstone.sourceEntryCount) || tombstone.sourceEntryCount < 0 || !/^[a-f0-9]{64}$/u.test(tombstone.sourcePayloadSha256)) {
+    throw new RunStoreError("AUDIT_CORRUPT", "Audit v1 migration tombstone is invalid");
+  }
+  return structuredClone(tombstone);
+}
+function validateHead(value) {
+  if (value === void 0 || value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys2(value, [
+    "entryCount",
+    "format",
+    "lastEntrySha256",
+    "lastSegmentSha256",
+    "legacyEntryCount",
+    "legacySourceSha256",
+    "schemaVersion",
+    "segmentCount",
+    "segmentEntryLimit",
+    "segmentMaximumBytes",
+    "tailEntries"
+  ]) || value.schemaVersion !== "2.0.0" || value.format !== "segmented-chain" || !Number.isSafeInteger(value.segmentEntryLimit) || value.segmentEntryLimit < 1 || value.segmentEntryLimit > DEFAULT_SEGMENT_ENTRY_LIMIT || !Number.isSafeInteger(value.segmentMaximumBytes) || value.segmentMaximumBytes < 1 || value.segmentMaximumBytes > DEFAULT_SEGMENT_MAXIMUM_BYTES || !Number.isSafeInteger(value.segmentCount) || value.segmentCount < 0 || !Number.isSafeInteger(value.entryCount) || value.entryCount < 0 || !/^[a-f0-9]{64}$/u.test(value.lastEntrySha256) || !/^[a-f0-9]{64}$/u.test(value.lastSegmentSha256) || !/^[a-f0-9]{64}$/u.test(value.legacySourceSha256) || !Number.isSafeInteger(value.legacyEntryCount) || value.legacyEntryCount < 0 || !Array.isArray(value.tailEntries) || value.tailEntries.length > value.segmentEntryLimit) {
+    throw new RunStoreError("AUDIT_CORRUPT", "Audit v2 head is invalid");
+  }
+  return structuredClone(value);
+}
+function segmentFilename(segment) {
+  return "audit-segment-".concat(segment.toString().padStart(8, "0"), ".json");
+}
+function atomicEnvelopeBytes(payload, kind) {
+  const withoutIntegrity = { schemaVersion: "1.0.0", kind, generation: 1, payload };
+  const envelope = { ...withoutIntegrity, integrity: computeIntegrity(withoutIntegrity) };
+  return Buffer.byteLength("".concat(canonicalJson(envelope), "\n"), "utf8");
+}
+var DurableAuditSink = class {
+  durable = true;
+  #stateRoot;
+  #head;
+  #configuredEntryLimit;
+  #configuredMaximumBytes;
+  #runCacheMaximumRuns;
+  #runCacheMaximumEvents;
+  #runCacheMaximumBytes;
+  #runCache = /* @__PURE__ */ new Map();
+  #runCacheEventCount = 0;
+  #runCacheCanonicalBytes = 0;
+  #cachedHead;
+  constructor(stateRoot, options = {}) {
+    this.#stateRoot = stateRoot;
+    this.#configuredEntryLimit = options.segmentEntryLimit ?? DEFAULT_SEGMENT_ENTRY_LIMIT;
+    this.#configuredMaximumBytes = options.segmentMaximumBytes ?? DEFAULT_SEGMENT_MAXIMUM_BYTES;
+    this.#runCacheMaximumRuns = options.runCacheMaximumRuns ?? DEFAULT_RUN_CACHE_MAXIMUM_RUNS;
+    this.#runCacheMaximumEvents = options.runCacheMaximumEvents ?? DEFAULT_RUN_CACHE_MAXIMUM_EVENTS;
+    this.#runCacheMaximumBytes = options.runCacheMaximumBytes ?? DEFAULT_RUN_CACHE_MAXIMUM_BYTES;
+    if (!Number.isSafeInteger(this.#configuredEntryLimit) || this.#configuredEntryLimit < 1 || this.#configuredEntryLimit > DEFAULT_SEGMENT_ENTRY_LIMIT || !Number.isSafeInteger(this.#configuredMaximumBytes) || this.#configuredMaximumBytes < 1 || this.#configuredMaximumBytes > DEFAULT_SEGMENT_MAXIMUM_BYTES || !Number.isSafeInteger(this.#runCacheMaximumRuns) || this.#runCacheMaximumRuns < 1 || this.#runCacheMaximumRuns > DEFAULT_RUN_CACHE_MAXIMUM_RUNS || !Number.isSafeInteger(this.#runCacheMaximumEvents) || this.#runCacheMaximumEvents < 1 || this.#runCacheMaximumEvents > DEFAULT_RUN_CACHE_MAXIMUM_EVENTS || !Number.isSafeInteger(this.#runCacheMaximumBytes) || this.#runCacheMaximumBytes < 1 || this.#runCacheMaximumBytes > DEFAULT_RUN_CACHE_MAXIMUM_BYTES) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit segment or cache limits are invalid");
+    }
+    this.#head = new AtomicStateFile({
+      stateRoot,
+      filename: HEAD_FILENAME,
+      kind: "production-monitoring-audit-head-v2",
+      maximumBytes: HEAD_MAXIMUM_BYTES
+    });
+    this.#head.recoverAbandonedArtifacts();
+    this.#head.transact((current) => {
+      if (current !== void 0) {
+        let head = validateHead(current);
+        if (head.segmentEntryLimit !== this.#configuredEntryLimit || head.segmentMaximumBytes !== this.#configuredMaximumBytes) {
+          throw new RunStoreError("AUDIT_CORRUPT", "Audit segment limits changed after initialization");
+        }
+        this.#verifyLegacy(head);
+        head = this.#reconcileCrashTail(head, true);
+        this.#verifySegments(head, false);
+        this.#cachedHead = structuredClone(head);
+        return { payload: head, result: void 0 };
+      }
+      return this.#legacyFile().transact((legacyCurrent) => {
+        const legacy = this.#prepareLegacyLocked(legacyCurrent);
+        const head = this.#migrateLegacy(legacy);
+        this.#verifySegments(head, false);
+        this.#cachedHead = structuredClone(head);
+        return {
+          payload: this.#legacyTombstone(head.legacySourceSha256, head.legacyEntryCount),
+          result: { payload: head, result: void 0 }
+        };
+      });
+    });
+  }
+  async append(event) {
+    validateEvent(event);
+    try {
+      this.#head.transact((current) => {
+        const head = this.#reconcileCrashTail(validateHead(current));
+        this.#ensureValidatedHead(head);
+        const previousEntrySha256 = head.lastEntrySha256;
+        const draft = {
+          sequence: head.entryCount + 1,
+          previousSha256: previousEntrySha256,
+          event: structuredClone(event)
+        };
+        const entry = { ...draft, entrySha256: entryHash(draft) };
+        const single = this.#segmentPayload(head.segmentCount + 1, head.lastSegmentSha256, [entry]);
+        if (atomicEnvelopeBytes(single, "production-monitoring-audit-segment-v2") > head.segmentMaximumBytes) {
+          throw new RunStoreError("STATE_TOO_LARGE", "One audit entry exceeds the segment size limit");
+        }
+        const candidateTail = [...head.tailEntries, entry];
+        const candidate = this.#segmentPayload(
+          head.segmentCount + 1,
+          head.lastSegmentSha256,
+          candidateTail
+        );
+        if (candidateTail.length <= head.segmentEntryLimit && atomicEnvelopeBytes(candidate, "production-monitoring-audit-segment-v2") <= head.segmentMaximumBytes) {
+          const nextHead2 = {
+            ...head,
+            entryCount: entry.sequence,
+            lastEntrySha256: entry.entrySha256,
+            tailEntries: candidateTail
+          };
+          this.#assertHeadFits(nextHead2);
+          this.#recordValidatedAppend(nextHead2, entry);
+          return { payload: nextHead2, result: void 0 };
+        }
+        if (head.tailEntries.length === 0) {
+          throw new RunStoreError("STATE_TOO_LARGE", "One audit entry exceeds the configured segment bounds");
+        }
+        const published = this.#segmentPayload(
+          head.segmentCount + 1,
+          head.lastSegmentSha256,
+          head.tailEntries
+        );
+        const nextHead = {
+          ...head,
+          segmentCount: head.segmentCount + 1,
+          entryCount: entry.sequence,
+          lastEntrySha256: entry.entrySha256,
+          lastSegmentSha256: sha256Canonical(published),
+          tailEntries: [entry]
+        };
+        this.#assertHeadFits(nextHead);
+        this.#segmentFile(published.segment, head.segmentMaximumBytes).write(published);
+        this.#recordValidatedAppend(nextHead, entry);
+        return { payload: nextHead, result: void 0 };
+      });
+    } catch (error2) {
+      if (!(error2 instanceof RunStoreError && error2.code === "STATE_TOO_LARGE")) {
+        this.#invalidateValidation();
+      }
+      throw error2;
+    }
+  }
+  snapshot() {
+    return this.#snapshot();
+  }
+  snapshotRun(runId, startIndex = 0) {
+    if (!Number.isSafeInteger(startIndex) || s

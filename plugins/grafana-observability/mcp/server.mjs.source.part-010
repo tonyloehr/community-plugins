@@ -1,0 +1,2951 @@
+tartIndex < 0) {
+      throw new TypeError("Audit run snapshot start index is invalid");
+    }
+    return this.#snapshot(runId, startIndex);
+  }
+  countRun(runId) {
+    try {
+      let needsCrashCommit = false;
+      const inspected = this.#head.inspect((current) => {
+        const head = this.#reconcileCrashTail(validateHead(current));
+        if (canonicalJson(head) !== canonicalJson(current)) {
+          needsCrashCommit = true;
+          return void 0;
+        }
+        return this.#countForHead(head, runId);
+      });
+      if (!needsCrashCommit) return inspected;
+      return this.#head.transact((current) => {
+        const head = this.#reconcileCrashTail(validateHead(current));
+        return { payload: head, result: this.#countForHead(head, runId) };
+      });
+    } catch (error2) {
+      this.#invalidateValidation();
+      throw error2;
+    }
+  }
+  #snapshot(runId, startIndex = 0) {
+    try {
+      let needsCrashCommit = false;
+      const inspected = this.#head.inspect((current) => {
+        const head = this.#reconcileCrashTail(validateHead(current), runId === void 0);
+        if (canonicalJson(head) !== canonicalJson(current)) {
+          needsCrashCommit = true;
+          return void 0;
+        }
+        return this.#eventsForHead(head, runId, startIndex);
+      });
+      if (!needsCrashCommit) return inspected;
+      return this.#head.transact((current) => {
+        const head = this.#reconcileCrashTail(validateHead(current), runId === void 0);
+        return { payload: head, result: this.#eventsForHead(head, runId, startIndex) };
+      });
+    } catch (error2) {
+      this.#invalidateValidation();
+      throw error2;
+    }
+  }
+  #eventsForHead(head, runId, startIndex = 0) {
+    if (runId !== void 0) {
+      this.#ensureValidatedHead(head);
+      const cached2 = this.#cachedRun(runId);
+      if (cached2 !== void 0) return cached2.slice(startIndex);
+    }
+    const events = [];
+    let matchingIndex = 0;
+    this.#verifySegments(head, false, runId === void 0, (segment) => {
+      for (const entry of segment.entries) {
+        if (runId === void 0 || entry.event.runId === runId) {
+          if (matchingIndex >= startIndex) events.push(structuredClone(entry.event));
+          matchingIndex += 1;
+        }
+      }
+    });
+    for (const entry of head.tailEntries) {
+      if (runId === void 0 || entry.event.runId === runId) {
+        if (matchingIndex >= startIndex) events.push(structuredClone(entry.event));
+        matchingIndex += 1;
+      }
+    }
+    this.#cachedHead = structuredClone(head);
+    if (runId !== void 0 && startIndex === 0) this.#storeRunCache(runId, events);
+    return events;
+  }
+  #countForHead(head, runId) {
+    this.#ensureValidatedHead(head);
+    const cached2 = this.#runCache.get(runId);
+    if (cached2 !== void 0) return cached2.eventCount;
+    let count = 0;
+    this.#verifySegments(head, false, false, (segment) => {
+      for (const entry of segment.entries) {
+        if (entry.event.runId === runId) count += 1;
+      }
+    });
+    for (const entry of head.tailEntries) {
+      if (entry.event.runId === runId) count += 1;
+    }
+    this.#cachedHead = structuredClone(head);
+    return count;
+  }
+  #invalidateValidation() {
+    this.#cachedHead = void 0;
+    this.#clearRunCache();
+  }
+  #clearRunCache() {
+    this.#runCache.clear();
+    this.#runCacheEventCount = 0;
+    this.#runCacheCanonicalBytes = 0;
+  }
+  #removeRunCache(runId) {
+    const cached2 = this.#runCache.get(runId);
+    if (cached2 === void 0) return;
+    this.#runCache.delete(runId);
+    this.#runCacheEventCount -= cached2.eventCount;
+    this.#runCacheCanonicalBytes -= cached2.canonicalBytes;
+  }
+  #cachedRun(runId) {
+    const cached2 = this.#runCache.get(runId);
+    if (cached2 === void 0) return void 0;
+    this.#runCache.delete(runId);
+    this.#runCache.set(runId, cached2);
+    return structuredClone(cached2.events);
+  }
+  #storeRunCache(runId, sourceEvents) {
+    const events = structuredClone([...sourceEvents]);
+    const eventCount = events.length;
+    const canonicalBytes = Buffer.byteLength(canonicalJson(events), "utf8");
+    this.#removeRunCache(runId);
+    if (eventCount > this.#runCacheMaximumEvents || canonicalBytes > this.#runCacheMaximumBytes) return;
+    while (this.#runCache.size >= this.#runCacheMaximumRuns || this.#runCacheEventCount + eventCount > this.#runCacheMaximumEvents || this.#runCacheCanonicalBytes + canonicalBytes > this.#runCacheMaximumBytes) {
+      const oldest = this.#runCache.keys().next().value;
+      if (oldest === void 0) break;
+      this.#removeRunCache(oldest);
+    }
+    this.#runCache.set(runId, { events, eventCount, canonicalBytes });
+    this.#runCacheEventCount += eventCount;
+    this.#runCacheCanonicalBytes += canonicalBytes;
+  }
+  #recordValidatedAppend(head, entry) {
+    const cached2 = this.#runCache.get(entry.event.runId);
+    if (cached2 !== void 0) {
+      this.#storeRunCache(entry.event.runId, [...cached2.events, entry.event]);
+    }
+    this.#cachedHead = structuredClone(head);
+  }
+  #ensureValidatedHead(head) {
+    const cached2 = this.#cachedHead;
+    if (cached2 === void 0) {
+      this.#verifySegments(head, false, false);
+      this.#cachedHead = structuredClone(head);
+      return;
+    }
+    if (canonicalJson(cached2) === canonicalJson(head)) return;
+    this.#clearRunCache();
+    if (head.segmentCount < cached2.segmentCount || head.entryCount < cached2.entryCount || head.segmentEntryLimit !== cached2.segmentEntryLimit || head.segmentMaximumBytes !== cached2.segmentMaximumBytes || head.legacySourceSha256 !== cached2.legacySourceSha256 || head.legacyEntryCount !== cached2.legacyEntryCount) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit head rolled back or changed immutable configuration");
+    }
+    let previousEntrySha256 = cached2.lastEntrySha256;
+    let expectedSequence = cached2.entryCount + 1;
+    let previousSegmentSha256 = cached2.lastSegmentSha256;
+    if (head.segmentCount === cached2.segmentCount) {
+      if (head.lastSegmentSha256 !== cached2.lastSegmentSha256 || head.tailEntries.length < cached2.tailEntries.length || canonicalJson(head.tailEntries.slice(0, cached2.tailEntries.length)) !== canonicalJson(cached2.tailEntries)) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Audit active tail is not append-only");
+      }
+      const suffix = head.tailEntries.slice(cached2.tailEntries.length);
+      previousEntrySha256 = validateEntries(suffix, expectedSequence, previousEntrySha256);
+      expectedSequence += suffix.length;
+    } else {
+      for (let number3 = cached2.segmentCount + 1; number3 <= head.segmentCount; number3 += 1) {
+        const segment = this.#readSegment(number3, head);
+        const firstNewSegment = number3 === cached2.segmentCount + 1;
+        const expectedFirst = firstNewSegment ? cached2.entryCount - cached2.tailEntries.length + 1 : expectedSequence;
+        const priorEntry = firstNewSegment && cached2.tailEntries.length > 0 ? cached2.tailEntries[0].previousSha256 : previousEntrySha256;
+        if (segment.previousSegmentSha256 !== previousSegmentSha256 || segment.firstSequence !== expectedFirst || firstNewSegment && canonicalJson(segment.entries.slice(0, cached2.tailEntries.length)) !== canonicalJson(cached2.tailEntries)) {
+          throw new RunStoreError("AUDIT_CORRUPT", "New audit segment does not extend the validated cache");
+        }
+        validateEntries(segment.entries, expectedFirst, priorEntry);
+        const suffix = firstNewSegment ? segment.entries.slice(cached2.tailEntries.length) : segment.entries;
+        if (suffix.length > 0) {
+          previousEntrySha256 = suffix.at(-1).entrySha256;
+          expectedSequence += suffix.length;
+        }
+        previousSegmentSha256 = sha256Canonical(segment);
+      }
+      previousEntrySha256 = validateEntries(head.tailEntries, expectedSequence, previousEntrySha256);
+      expectedSequence += head.tailEntries.length;
+    }
+    if (expectedSequence !== head.entryCount + 1 || previousEntrySha256 !== head.lastEntrySha256 || previousSegmentSha256 !== head.lastSegmentSha256) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit cache catch-up does not match the committed head");
+    }
+    this.#cachedHead = structuredClone(head);
+  }
+  #readSegment(segment, head) {
+    const value = this.#segmentFile(segment, head.segmentMaximumBytes).read();
+    if (value === void 0 || value === null || typeof value !== "object" || Array.isArray(value) || !exactKeys2(value, ["entries", "firstSequence", "previousSegmentSha256", "schemaVersion", "segment"])) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit segment envelope payload is invalid");
+    }
+    const candidate = value;
+    if (candidate.schemaVersion !== "2.0.0" || candidate.segment !== segment || !Number.isSafeInteger(candidate.firstSequence) || candidate.firstSequence < 1 || !/^[a-f0-9]{64}$/u.test(candidate.previousSegmentSha256) || !Array.isArray(candidate.entries) || candidate.entries.length < 1 || candidate.entries.length > head.segmentEntryLimit || atomicEnvelopeBytes(candidate, "production-monitoring-audit-segment-v2") > head.segmentMaximumBytes) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit segment metadata is invalid");
+    }
+    return structuredClone(candidate);
+  }
+  #segmentPayload(segment, previousSegmentSha256, entries) {
+    return {
+      schemaVersion: "2.0.0",
+      segment,
+      previousSegmentSha256,
+      firstSequence: entries[0].sequence,
+      entries: structuredClone(entries)
+    };
+  }
+  #segmentFile(segment, maximumBytes) {
+    return new AtomicStateFile({
+      stateRoot: this.#stateRoot,
+      filename: segmentFilename(segment),
+      kind: "production-monitoring-audit-segment-v2",
+      maximumBytes
+    });
+  }
+  #assertHeadFits(head) {
+    if (atomicEnvelopeBytes(head, "production-monitoring-audit-head-v2") > HEAD_MAXIMUM_BYTES) {
+      throw new RunStoreError("STATE_TOO_LARGE", "Audit active tail exceeds the head size limit");
+    }
+  }
+  #verifySegments(head, allowNextCrash, fullInventory = true, visit) {
+    const hasCrashTail = fullInventory && this.#segmentInventory(head, allowNextCrash).length === head.segmentCount + 1;
+    let previousSegmentSha256 = ZERO_SHA2562;
+    let previousEntrySha256 = ZERO_SHA2562;
+    let entryCount = 0;
+    for (let segmentNumber = 1; segmentNumber <= head.segmentCount; segmentNumber += 1) {
+      const segment = this.#readSegment(segmentNumber, head);
+      if (segment.previousSegmentSha256 !== previousSegmentSha256 || segment.firstSequence !== entryCount + 1) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Audit segment chain metadata is invalid");
+      }
+      previousEntrySha256 = validateEntries(segment.entries, segment.firstSequence, previousEntrySha256);
+      entryCount += segment.entries.length;
+      previousSegmentSha256 = sha256Canonical(segment);
+      visit?.(segment);
+    }
+    const tailLastSha256 = validateEntries(head.tailEntries, entryCount + 1, previousEntrySha256);
+    const tailPayload = head.tailEntries.length === 0 ? void 0 : this.#segmentPayload(head.segmentCount + 1, previousSegmentSha256, head.tailEntries);
+    if (entryCount + head.tailEntries.length !== head.entryCount || tailLastSha256 !== head.lastEntrySha256 || (head.segmentCount === 0 ? head.lastSegmentSha256 !== ZERO_SHA2562 : previousSegmentSha256 !== head.lastSegmentSha256) || tailPayload !== void 0 && atomicEnvelopeBytes(tailPayload, "production-monitoring-audit-segment-v2") > head.segmentMaximumBytes) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit head does not match its committed segments");
+    }
+    if (hasCrashTail) {
+      const crashTail = this.#validateCrashTail(head);
+      if (allowNextCrash) visit?.(crashTail);
+    }
+  }
+  #segmentInventory(head, allowNextCrash) {
+    const inventory = (0, import_node_fs10.readdirSync)(this.#stateRoot);
+    for (const name of inventory) {
+      const artifact = SEGMENT_LOCK_FILENAME.exec(name) ?? SEGMENT_TEMP_FILENAME.exec(name);
+      if (artifact !== null) {
+        const segment = Number.parseInt(artifact[1], 10);
+        if (segment < 1 || artifact[1] !== segment.toString().padStart(8, "0")) {
+          throw new RunStoreError("AUDIT_CORRUPT", "Audit contains an invalid segment artifact filename");
+        }
+        this.#segmentFile(segment, head.segmentMaximumBytes).recoverAbandonedArtifacts();
+      }
+      if (name.startsWith(".state-audit-segment-") && artifact === null) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Audit contains malformed owned segment temporary state");
+      }
+    }
+    const names = inventory.filter((name) => name.startsWith("audit-segment-") && SEGMENT_FILENAME.test(name)).sort();
+    if (inventory.some((name) => name.startsWith("audit-segment-") && !SEGMENT_FILENAME.test(name) && !SEGMENT_LOCK_FILENAME.test(name))) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit contains an invalid segment filename");
+    }
+    const maximumAllowed = head.segmentCount + (allowNextCrash ? 1 : 0);
+    if (names.length < head.segmentCount || names.length > maximumAllowed) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit contains uncommitted segment files beyond one bounded crash tail");
+    }
+    for (let segmentNumber = 1; segmentNumber <= names.length; segmentNumber += 1) {
+      const expectedName = segmentFilename(segmentNumber);
+      if (names[segmentNumber - 1] !== expectedName || !SEGMENT_FILENAME.test(expectedName)) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Audit segment sequence has a gap or invalid filename");
+      }
+    }
+    return names;
+  }
+  #validateCrashTail(head) {
+    const crashTail = this.#readSegment(head.segmentCount + 1, head);
+    if (crashTail.previousSegmentSha256 !== head.lastSegmentSha256 || head.tailEntries.length === 0 || crashTail.firstSequence !== head.entryCount - head.tailEntries.length + 1 || canonicalJson(crashTail.entries) !== canonicalJson(head.tailEntries)) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Uncommitted audit segment is not the exact authoritative head tail");
+    }
+    return crashTail;
+  }
+  #reconcileCrashTail(head, fullInventory = false) {
+    let hasCrashTail;
+    if (fullInventory) {
+      hasCrashTail = this.#segmentInventory(head, true).length === head.segmentCount + 1;
+    } else {
+      const next = head.segmentCount + 1;
+      const beyond = next + 1;
+      const nextBase = "".concat(this.#stateRoot, "/").concat(segmentFilename(next));
+      if ((0, import_node_fs10.existsSync)("".concat(nextBase, ".lock")) || (0, import_node_fs10.existsSync)("".concat(nextBase, ".lock.reclaim")) || (0, import_node_fs10.existsSync)("".concat(this.#stateRoot, "/.state-").concat(segmentFilename(next), ".tmp"))) {
+        this.#segmentFile(next, head.segmentMaximumBytes).recoverAbandonedExactArtifacts();
+      }
+      const beyondBase = "".concat(this.#stateRoot, "/").concat(segmentFilename(beyond));
+      if ((0, import_node_fs10.existsSync)(beyondBase) || (0, import_node_fs10.existsSync)("".concat(beyondBase, ".lock")) || (0, import_node_fs10.existsSync)("".concat(beyondBase, ".lock.reclaim")) || (0, import_node_fs10.existsSync)("".concat(this.#stateRoot, "/.state-").concat(segmentFilename(beyond), ".tmp"))) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Audit contains state beyond one bounded crash tail");
+      }
+      hasCrashTail = (0, import_node_fs10.existsSync)(nextBase);
+    }
+    if (!hasCrashTail) return head;
+    const tail = this.#validateCrashTail(head);
+    return {
+      ...head,
+      segmentCount: tail.segment,
+      lastSegmentSha256: sha256Canonical(tail),
+      tailEntries: []
+    };
+  }
+  #migrateLegacy(legacy) {
+    let previousSegmentSha256 = ZERO_SHA2562;
+    const expected = /* @__PURE__ */ new Map();
+    const chunks = [];
+    let active = [];
+    for (const entry of legacy.entries) {
+      const candidate = [...active, entry];
+      const candidatePayload = this.#segmentPayload(chunks.length + 1, previousSegmentSha256, candidate);
+      if (candidate.length > this.#configuredEntryLimit || atomicEnvelopeBytes(candidatePayload, "production-monitoring-audit-segment-v2") > this.#configuredMaximumBytes) {
+        if (active.length === 0) {
+          throw new RunStoreError("STATE_TOO_LARGE", "Legacy audit entry exceeds the configured segment size");
+        }
+        chunks.push(active);
+        active = [entry];
+        const single = this.#segmentPayload(chunks.length + 1, previousSegmentSha256, active);
+        if (atomicEnvelopeBytes(single, "production-monitoring-audit-segment-v2") > this.#configuredMaximumBytes) {
+          throw new RunStoreError("STATE_TOO_LARGE", "Legacy audit entry exceeds the configured segment size");
+        }
+      } else {
+        active = candidate;
+      }
+    }
+    for (let index = 0; index < chunks.length; index += 1) {
+      const segment = this.#segmentPayload(index + 1, previousSegmentSha256, chunks[index]);
+      expected.set(index + 1, segment);
+      previousSegmentSha256 = sha256Canonical(segment);
+    }
+    const segmentCount = expected.size;
+    const tailEntries = active;
+    const existingNames = (0, import_node_fs10.readdirSync)(this.#stateRoot).filter((name) => name.startsWith("audit-segment-") && !name.endsWith(".json.lock") && !name.endsWith(".json.lock.reclaim")).sort();
+    for (const name of existingNames) {
+      const match = SEGMENT_FILENAME.exec(name);
+      if (match === null) throw new RunStoreError("AUDIT_CORRUPT", "Invalid audit segment exists during v1 migration");
+      const number3 = Number.parseInt(match[1], 10);
+      const expectedSegment = expected.get(number3);
+      if (expectedSegment === void 0 || name !== segmentFilename(number3)) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Unexpected audit segment exists during v1 migration");
+      }
+      const current = this.#segmentFile(number3, this.#configuredMaximumBytes).read();
+      if (canonicalJson(current) !== canonicalJson(expectedSegment)) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Partial audit v1 migration segment is not the exact append-only prefix");
+      }
+    }
+    for (const [number3, segment] of expected) {
+      if (!(0, import_node_fs10.existsSync)("".concat(this.#stateRoot, "/").concat(segmentFilename(number3)))) {
+        this.#segmentFile(number3, this.#configuredMaximumBytes).write(segment);
+      }
+    }
+    const sourcePayloadSha256 = sha256Canonical(legacy);
+    const head = {
+      schemaVersion: "2.0.0",
+      format: "segmented-chain",
+      segmentEntryLimit: this.#configuredEntryLimit,
+      segmentMaximumBytes: this.#configuredMaximumBytes,
+      segmentCount,
+      entryCount: legacy.entries.length,
+      lastEntrySha256: legacy.entries.at(-1)?.entrySha256 ?? ZERO_SHA2562,
+      lastSegmentSha256: previousSegmentSha256,
+      legacySourceSha256: sourcePayloadSha256,
+      legacyEntryCount: legacy.entries.length,
+      tailEntries: structuredClone(tailEntries)
+    };
+    this.#assertHeadFits(head);
+    return head;
+  }
+  #prepareLegacyLocked(legacy) {
+    const retainedExists = (0, import_node_fs10.existsSync)("".concat(this.#stateRoot, "/").concat(RETAINED_LEGACY_FILENAME2));
+    if (legacy === void 0 && !retainedExists) {
+      const empty = { schemaVersion: "1.0.0", entries: [] };
+      this.#retainedLegacyFile().write(empty);
+      return empty;
+    }
+    if (legacy === void 0) {
+      const retained2 = validateLegacyState(this.#retainedLegacyFile().read());
+      const segmentNames = (0, import_node_fs10.readdirSync)(this.#stateRoot).filter((name) => SEGMENT_FILENAME.test(name));
+      if (retained2.entries.length !== 0 || segmentNames.length !== 0) {
+        throw new RunStoreError("AUDIT_CORRUPT", "Uncommitted fresh audit migration staging is invalid");
+      }
+      return retained2;
+    }
+    if (legacy?.schemaVersion === "1.0.0") {
+      const state = validateLegacyState(legacy);
+      this.#retainedLegacyFile().write(state);
+      return state;
+    }
+    const tombstone = validateTombstone2(legacy);
+    const retained = validateLegacyState(this.#retainedLegacyFile().read());
+    if (sha256Canonical(retained) !== tombstone.sourcePayloadSha256 || retained.entries.length !== tombstone.sourceEntryCount) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Retained audit v1 state does not match its tombstone");
+    }
+    return retained;
+  }
+  #legacyTombstone(sourcePayloadSha256, sourceEntryCount) {
+    return {
+      schemaVersion: "2.0.0",
+      migratedTo: HEAD_FILENAME,
+      retainedFilename: RETAINED_LEGACY_FILENAME2,
+      sourcePayloadSha256,
+      sourceEntryCount
+    };
+  }
+  #legacyFile() {
+    return new AtomicStateFile({
+      stateRoot: this.#stateRoot,
+      filename: LEGACY_FILENAME2,
+      kind: "production-monitoring-audit-log-v1"
+    });
+  }
+  #retainedLegacyFile() {
+    return new AtomicStateFile({
+      stateRoot: this.#stateRoot,
+      filename: RETAINED_LEGACY_FILENAME2,
+      kind: "production-monitoring-audit-log-v1-retained"
+    });
+  }
+  #verifyLegacy(head) {
+    if (!(0, import_node_fs10.existsSync)("".concat(this.#stateRoot, "/").concat(LEGACY_FILENAME2))) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit migration tombstone is missing");
+    }
+    const tombstone = validateTombstone2(this.#legacyFile().read());
+    const retained = validateLegacyState(this.#retainedLegacyFile().read());
+    if (tombstone.sourcePayloadSha256 !== head.legacySourceSha256 || tombstone.sourceEntryCount !== head.legacyEntryCount || sha256Canonical(retained) !== head.legacySourceSha256 || retained.entries.length !== head.legacyEntryCount) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Audit migration evidence does not match the committed head");
+    }
+  }
+};
+var VolatileAuditSink = class {
+  durable = false;
+  #events = [];
+  #maximumEvents;
+  #maximumBytes;
+  #canonicalBytes = 0;
+  constructor(options = {}) {
+    this.#maximumEvents = options.maximumEvents ?? DEFAULT_VOLATILE_MAXIMUM_EVENTS;
+    this.#maximumBytes = options.maximumBytes ?? DEFAULT_VOLATILE_MAXIMUM_BYTES;
+    if (!Number.isSafeInteger(this.#maximumEvents) || this.#maximumEvents < 1 || this.#maximumEvents > DEFAULT_VOLATILE_MAXIMUM_EVENTS || !Number.isSafeInteger(this.#maximumBytes) || this.#maximumBytes < 1 || this.#maximumBytes > DEFAULT_VOLATILE_MAXIMUM_BYTES) {
+      throw new RunStoreError("AUDIT_CORRUPT", "Volatile audit capacity is invalid");
+    }
+  }
+  async append(event) {
+    validateEvent(event);
+    const cloned = structuredClone(event);
+    const bytes = Buffer.byteLength(canonicalJson(cloned), "utf8");
+    if (this.#events.length + 1 > this.#maximumEvents || this.#canonicalBytes + bytes > this.#maximumBytes) {
+      throw new RunStoreError("STATE_TOO_LARGE", "Volatile audit capacity is exhausted");
+    }
+    this.#events.push(cloned);
+    this.#canonicalBytes += bytes;
+  }
+  snapshot() {
+    return structuredClone(this.#events);
+  }
+  snapshotRun(runId, startIndex = 0) {
+    if (!Number.isSafeInteger(startIndex) || startIndex < 0) {
+      throw new TypeError("Audit run snapshot start index is invalid");
+    }
+    return structuredClone(this.#events.filter((event) => event.runId === runId).slice(startIndex));
+  }
+  countRun(runId) {
+    return this.#events.reduce((count, event) => count + (event.runId === runId ? 1 : 0), 0);
+  }
+};
+
+// packages/evidence-server/src/workbench.ts
+var MAX_WORKBENCH_RUNS = 20;
+var MAX_EVIDENCE_CARDS = 24;
+var MAX_ACTIVITY = 40;
+var MAX_PATCH_VERIFICATION_CRITERIA = 16;
+var AUTHORITY_PHASE_WIDTH = 1073741824;
+var RUN_STATE_VERSION_STRIDE = 4294967296;
+function bounded2(value, maximum) {
+  if (value.length <= maximum) return value;
+  return "".concat(value.slice(0, Math.max(1, maximum - 1)).trimEnd(), "…");
+}
+var SENSITIVE_WORKBENCH_TEXT = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/u,
+  /\b[a-f0-9]{64}\b/iu,
+  /\b[a-f0-9]{40}\b/iu,
+  /\b[a-z][a-z0-9+.-]{1,15}:\/\/\S+/iu,
+  /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{4,}/iu,
+  /\b(?:authorization|api[ _-]?key|access[ _-]?token|refresh[ _-]?token|token|password|passwd|secret|credential|cookie)\b\s*[:=]\s*\S+/iu,
+  /\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/iu,
+  /\bAKIA[A-Z0-9]{12,}\b/u,
+  /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/u,
+  /(?:^|[\s"'`([{<:=])\/(?!\/)[^\s"'`)\]}>;,]+/u,
+  /(?:^|[\s"'`([{<:=])[A-Za-z]:\\[^\s"'`)\]}>;,]+/u,
+  /\b(?:pmrun|pmev|pmbundle|pmh)_[A-Za-z0-9_-]+\b/u
+];
+function safeWorkbenchText(value, maximum) {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || [...trimmed].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code < 32 || code === 127;
+  }) || SENSITIVE_WORKBENCH_TEXT.some((pattern) => pattern.test(trimmed))) return void 0;
+  return bounded2(trimmed, maximum);
+}
+function requiredWorkbenchText(value, maximum, fallback) {
+  return safeWorkbenchText(value, maximum) ?? fallback;
+}
+function uniqueBounded(values, maximumItems, maximumLength) {
+  return [...new Set(values.map((value) => safeWorkbenchText(value, maximumLength)).filter((value) => value !== void 0))].slice(0, maximumItems);
+}
+function workspaceDigest(value) {
+  const encoded = Buffer.from(sha256Canonical(value), "hex").toString("base64url");
+  return encoded.match(/.{1,8}/gu).join("_");
+}
+function latestWorkspaceId(input) {
+  return "pmws_".concat(workspaceDigest({
+    domain: "pm-workbench-latest-v1",
+    principal: input.principal,
+    profileAlias: input.profileAlias,
+    trustBundleSha256: input.trustBundleSha256
+  }));
+}
+function workspaceIdForRun(input) {
+  return "pmws_".concat(workspaceDigest({
+    domain: "pm-workbench-run-v1",
+    principal: input.principal,
+    profileAlias: input.profileAlias,
+    trustBundleSha256: input.trustBundleSha256,
+    runId: input.runId
+  }));
+}
+function evidenceRef(workspaceId, id) {
+  return "pmwsev_".concat(workspaceDigest({ domain: "pm-workbench-evidence-v1", workspaceId, id }));
+}
+function hypothesisRefFor(hypothesisId) {
+  return "hypothesis.".concat(workspaceDigest(hypothesisId).slice(0, 24).toLowerCase());
+}
+function issueRefFor(workspaceId, material) {
+  return "pmwsiss_".concat(workspaceDigest({ domain: "pm-workbench-issue-v1", workspaceId, material }));
+}
+function linkRef(workspaceId, id, candidate) {
+  return "pmwslnk_".concat(workspaceDigest({
+    domain: "pm-workbench-link-v1",
+    workspaceId,
+    id,
+    candidate
+  }));
+}
+function authorityStateVersion(run, checkpointRevision) {
+  if (run === void 0) return 1;
+  const sequence = run.revision + checkpointRevision;
+  if (!Number.isSafeInteger(run.creationSequence) || run.creationSequence < 0 || run.creationSequence > MAXIMUM_RUN_CREATION_SEQUENCE || !Number.isSafeInteger(run.revision) || run.revision < 1 || run.revision > MAXIMUM_AUTHORITY_COMPONENT_REVISION || !Number.isSafeInteger(checkpointRevision) || checkpointRevision < 0 || checkpointRevision > MAXIMUM_AUTHORITY_COMPONENT_REVISION || !Number.isSafeInteger(sequence) || sequence < 1 || sequence >= AUTHORITY_PHASE_WIDTH) {
+    throw new TypeError("Workbench authority cannot be represented by the bounded state-version contract");
+  }
+  const phase2 = run.state === "OPEN" ? 0 : run.state === "FINALIZING" ? AUTHORITY_PHASE_WIDTH : AUTHORITY_PHASE_WIDTH * 2;
+  const stateVersion = run.creationSequence * RUN_STATE_VERSION_STRIDE + phase2 + sequence;
+  if (!Number.isSafeInteger(stateVersion)) {
+    throw new TypeError("Workbench state version exceeds the safe integer range");
+  }
+  return stateVersion;
+}
+function evidenceState(envelope, contradictoryEvidenceIds) {
+  return deriveEvidenceState({
+    collectionState: envelope.collectionState,
+    freshnessState: envelope.freshnessState,
+    hasUnresolvedContradiction: contradictoryEvidenceIds.has(envelope.evidenceId)
+  });
+}
+function primitiveText(value) {
+  if (value === null) return "No value";
+  if (typeof value === "number") return Number.isFinite(value) ? String(Number(value.toPrecision(6))) : "Unavailable";
+  return requiredWorkbenchText(String(value), 256, "Unavailable");
+}
+function displayMetric(value, unit) {
+  if (value === null || !Number.isFinite(value)) return "No value";
+  if (unit === "ratio") return "".concat(Number((value * 100).toPrecision(4)), "%");
+  return primitiveText(value);
+}
+function isTechnicalTableColumn(name) {
+  const tokens = name.replace(/([a-z0-9])([A-Z])/gu, "$1 $2").toLowerCase().split(/[^a-z0-9]+/u).filter((token) => token.length > 0);
+  return tokens.some((token) => (/* @__PURE__ */ new Set([
+    "auth",
+    "authorization",
+    "commit",
+    "cookie",
+    "credential",
+    "hash",
+    "head",
+    "index",
+    "password",
+    "passwd",
+    "path",
+    "revision",
+    "secret",
+    "sha",
+    "sha1",
+    "sha256",
+    "sha512",
+    "token",
+    "tree",
+    "uri",
+    "url",
+    "worktree"
+  ])).has(token));
+}
+function detailValues(envelope) {
+  const values = [];
+  for (const normalized of envelope.values) {
+    if (values.length >= 24) break;
+    if (normalized.kind === "SCALAR") {
+      const label = safeWorkbenchText(normalized.name, 96);
+      if (label === void 0) continue;
+      if (typeof normalized.value === "number" || normalized.value === null) {
+        const unit = normalized.unit === void 0 ? void 0 : safeWorkbenchText(normalized.unit, 32);
+        values.push({
+          kind: "METRIC",
+          label,
+          value: normalized.value,
+          ...unit === void 0 ? {} : { unit },
+          points: [{ at: normalized.observedAt ?? envelope.evaluatedAt, value: normalized.value }]
+        });
+      } else {
+        const value = typeof normalized.value === "string" ? safeWorkbenchText(normalized.value, 256) : normalized.value;
+        if (value !== void 0) values.push({ kind: "FACT", label, value });
+      }
+      continue;
+    }
+    if (normalized.kind === "TIMESERIES") {
+      const label = safeWorkbenchText(normalized.name, 96);
+      if (label === void 0) continue;
+      const points = normalized.points.slice(-60);
+      const unit = normalized.unit === void 0 ? void 0 : safeWorkbenchText(normalized.unit, 32);
+      values.push({
+        kind: "METRIC",
+        label,
+        value: points.at(-1)?.value ?? null,
+        ...unit === void 0 ? {} : { unit },
+        points: points.map((point) => ({ at: point.at, value: point.value }))
+      });
+      continue;
+    }
+    if (normalized.kind === "EVENT") {
+      const summary = safeWorkbenchText(normalized.summary, 512);
+      if (summary !== void 0) values.push({ kind: "EVENT", at: normalized.occurredAt, summary });
+      continue;
+    }
+    for (let rowIndex = 0; rowIndex < normalized.rows.length && values.length < 24; rowIndex += 1) {
+      const row = normalized.rows[rowIndex];
+      for (let columnIndex = 0; columnIndex < normalized.columns.length && values.length < 24; columnIndex += 1) {
+        const column = normalized.columns[columnIndex];
+        if (isTechnicalTableColumn(column.name)) continue;
+        const value = row[columnIndex];
+        if (value === void 0) continue;
+        const label = safeWorkbenchText("".concat(normalized.name, " ").concat(rowIndex + 1, " ").concat(column.name), 96);
+        const safeValue = typeof value === "string" ? safeWorkbenchText(value, 256) : value;
+        if (label === void 0 || safeValue === void 0) continue;
+        values.push({
+          kind: "FACT",
+          label,
+          value: safeValue
+        });
+      }
+    }
+  }
+  return values;
+}
+function detailSummary(envelope, state) {
+  const operation2 = requiredWorkbenchText(envelope.operationId, 128, "The reviewed operation");
+  const provider = requiredWorkbenchText(envelope.source.provider, 64, "the reviewed source");
+  if (envelope.error !== void 0) {
+    return bounded2(
+      "".concat(operation2, " returned ").concat(state.toLowerCase(), " evidence (").concat(envelope.error.category, "; ").concat(envelope.error.retryable ? "retryable" : "not retryable", ")."),
+      1024
+    );
+  }
+  const first = envelope.values[0];
+  if (first?.kind === "SCALAR") {
+    const name = requiredWorkbenchText(first.name, 96, "The normalized value");
+    return bounded2(
+      "".concat(name, " is ").concat(displayMetric(typeof first.value === "number" ? first.value : null, first.unit), " from ").concat(provider, "."),
+      1024
+    );
+  }
+  if (first?.kind === "TIMESERIES") {
+    const name = requiredWorkbenchText(first.name, 96, "The normalized metric");
+    return bounded2(
+      "".concat(name, " latest value is ").concat(displayMetric(first.points.at(-1)?.value ?? null, first.unit), " from ").concat(provider, "."),
+      1024
+    );
+  }
+  if (first?.kind === "EVENT") {
+    return requiredWorkbenchText(
+      first.summary,
+      1024,
+      "".concat(operation2, " returned ").concat(state.toLowerCase(), " event evidence.")
+    );
+  }
+  return bounded2("".concat(operation2, " returned ").concat(state.toLowerCase(), " normalized evidence."), 1024);
+}
+function safeProviderPath(reference, provider) {
+  const prefix = "".concat(provider, ":");
+  if (!reference.startsWith(prefix)) return void 0;
+  const path = reference.slice(prefix.length);
+  if (path.length < 1 || path.length > 1024 || !path.startsWith("/") || path.startsWith("//") || path.includes("\\") || [...path].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code < 32 || code === 127;
+  })) return void 0;
+  return path;
+}
+function grafanaDeepLinks(envelope) {
+  const links = envelope.source.sanitizedReference === void 0 ? [] : [envelope.source.sanitizedReference];
+  for (const value of envelope.values) {
+    if (value.kind === "EVENT") {
+      const candidate = value.attributes.deepLink;
+      if (typeof candidate === "string") links.push(candidate);
+    } else if (value.kind === "TABLE") {
+      const index = value.columns.findIndex((column) => column.name === "deepLink");
+      if (index >= 0) {
+        for (const row of value.rows) {
+          const candidate = row[index];
+          if (typeof candidate === "string") links.push(candidate);
+        }
+      }
+    }
+  }
+  return [...new Set(links)].filter((reference) => {
+    const path = safeProviderPath(reference, "grafana");
+    return path !== void 0 && (/^\/d\/[A-Za-z0-9_-]{1,128}$/u.test(path) || /^\/d\/[A-Za-z0-9_-]{1,128}\?viewPanel=[1-9][0-9]{0,9}$/u.test(path) || /^\/dashboards\/f\/[A-Za-z0-9_-]{1,128}$/u.test(path) || /^\/alerting\/grafana\/[A-Za-z0-9_-]{1,128}\/view$/u.test(path));
+  }).slice(0, 4);
+}
+function linkCandidates(envelope) {
+  const reference = envelope.source.sanitizedReference;
+  if (envelope.source.provider.toLowerCase() === "grafana") {
+    const deepLinks = grafanaDeepLinks(envelope);
+    if (deepLinks.length > 0) {
+      return deepLinks.map((path, index) => ({
+        kind: "GRAFANA_DASHBOARD",
+        label: deepLinks.length === 1 ? "Open Grafana evidence" : "Open Grafana evidence ".concat(index + 1),
+        targetMode: "EXTERNAL",
+        path: safeProviderPath(path, "grafana")
+      }));
+    }
+    return [{ kind: "GRAFANA_DASHBOARD", label: "Open Grafana", targetMode: "EXTERNAL", path: "/" }];
+  }
+  if (envelope.source.provider.toLowerCase() === "prometheus") {
+    return [{ kind: "PROMETHEUS_VIEW", label: "Open Prometheus", targetMode: "EXTERNAL", path: "/graph" }];
+  }
+  if (reference?.startsWith("git:") === true && /^git:[A-Za-z0-9._:-]{1,512}$/u.test(reference)) {
+    return [{ kind: "CODE_REVISION", label: "Open code evidence", targetMode: "CODE" }];
+  }
+  if (reference === "loki:query-range") {
+    return [{ kind: "LOG_VIEW", label: "Log source link unavailable", targetMode: "EXTERNAL" }];
+  }
+  if (reference === "tempo:search" || reference === "tempo:trace") {
+    return [{ kind: "TRACE_VIEW", label: "Trace source link unavailable", targetMode: "EXTERNAL" }];
+  }
+  return [];
+}
+function endpointFor2(operation2, endpoints, profileEndpointIds) {
+  const active = new Set(profileEndpointIds);
+  const candidates = endpoints.filter(
+    (endpoint) => active.has(endpoint.endpointId) && endpoint.endpointId === operation2.definition.sourceAlias && endpoint.adapterId === operation2.definition.adapterPackageId
+  );
+  return candidates.length === 1 ? candidates[0] : void 0;
+}
+function resolvedExternalTarget(workspaceId, reference, label, endpoint, path) {
+  if (endpoint === void 0 || path === void 0) return void 0;
+  let base;
+  let target;
+  try {
+    base = new URL(endpoint.baseUrl);
+    target = new URL(path, base);
+  } catch {
+    return void 0;
+  }
+  if (target.origin !== base.origin) return void 0;
+  const allowed = target.protocol === "https:" || target.protocol === "http:" && (/* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"])).has(target.hostname);
+  if (!allowed || target.username !== "" || target.password !== "") return void 0;
+  return {
+    schemaVersion: "1.0.0",
+    workspaceId,
+    linkRef: reference,
+    mode: "OPEN_EXTERNAL",
+    label,
+    url: target.toString()
+  };
+}
+function evidenceProjection(input) {
+  const details = /* @__PURE__ */ new Map();
+  const links = /* @__PURE__ */ new Map();
+  const refsById = /* @__PURE__ */ new Map();
+  const statesById = /* @__PURE__ */ new Map();
+  const operations = new Map(input.operations.map((operation2) => [operation2.operationId, operation2]));
+  const contradictory = new Set(
+    input.contradictions.filter((item) => item.resolutionState === "UNRESOLVED").flatMap((item) => item.claimRefs.map((claim) => claim.evidenceId))
+  );
+  for (const envelope of [...input.evidence].sort((left, right) => left.operationId.localeCompare(right.operationId) || left.evidenceId.localeCompare(right.evidenceId)).slice(0, MAX_EVIDENCE_CARDS)) {
+    const operation2 = operations.get(envelope.operationId);
+    if (operation2 === void 0) continue;
+    const ref = evidenceRef(input.workspaceId, envelope.evidenceId);
+    const state = evidenceState(envelope, contradictory);
+    const linkRefs = [];
+    for (const candidate of linkCandidates(envelope)) {
+      const candidateRef = linkRef(input.workspaceId, envelope.evidenceId, candidate);
+      const target = candidate.targetMode === "CODE" ? void 0 : resolvedExternalTarget(
+        input.workspaceId,
+        candidateRef,
+        candidate.label,
+        endpointFor2(operation2, input.endpoints, input.profileEndpointIds),
+        candidate.path
+      );
+      const link = {
+        schemaVersion: "1.0.0",
+        workspaceId: input.workspaceId,
+        linkRef: candidateRef,
+        evidenceRef: ref,
+        kind: candidate.kind,
+        label: candidate.label,
+        availability: target === void 0 ? "UNAVAILABLE" : "AVAILABLE",
+        ...target === void 0 ? { unavailableReason: "No unique reviewed navigation target is available for this evidence." } : {}
+      };
+      links.set(candidateRef, { link, ...target === void 0 ? {} : { target } });
+      linkRefs.push(candidateRef);
+    }
+    const summary = detailSummary(envelope, state);
+    details.set(ref, {
+      schemaVersion: "1.0.0",
+      workspaceId: input.workspaceId,
+      evidenceRef: ref,
+      title: requiredWorkbenchText(envelope.operationId, 160, "Reviewed evidence"),
+      domain: operation2.definition.domain,
+      origin: envelope.origin,
+      authority: envelope.authority,
+      state,
+      source: {
+        provider: /^[a-z][a-z0-9._-]{0,63}$/u.test(envelope.source.provider) ? envelope.source.provider : "unavailable",
+        sourceAlias: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(envelope.source.sourceAlias) ? envelope.source.sourceAlias : "unavailable"
+      },
+      evaluatedAt: envelope.evaluatedAt,
+      collectedAt: envelope.collectedAt,
+      window: structuredClone(envelope.window),
+      summary,
+      values: detailValues(envelope),
+      limitations: uniqueBounded([
+        ...envelope.limitations,
+        ...envelope.providerWarnings,
+        ...envelope.pagination.complete ? [] : ["The provider result was truncated by a reviewed collection limit."]
+      ], 12, 512),
+      linkRefs
+    });
+    refsById.set(envelope.evidenceId, ref);
+    statesById.set(envelope.evidenceId, state);
+  }
+  return { details, links, refsById, statesById };
+}
+function signalCards(input, refsById, statesById) {
+  const signals = [];
+  for (const envelope of input.evidence) {
+    const ref = refsById.get(envelope.evidenceId);
+    if (ref === void 0) continue;
+    for (const value of envelope.values) {
+      if (signals.length >= 3) return signals;
+      if (value.kind !== "SCALAR" && value.kind !== "TIMESERIES") continue;
+      const numeric = value.kind === "SCALAR" ? typeof value.value === "number" ? value.value : null : value.points.at(-1)?.value ?? null;
+      const points = value.kind === "SCALAR" ? [numeric] : value.points.slice(-30).map((point) => point.value);
+      const first = points.find((point) => point !== null);
+      const last = [...points].reverse().find((point) => point !== null);
+      const direction = first === void 0 || last === void 0 ? "UNKNOWN" : last > first ? "UP" : last < first ? "DOWN" : "FLAT";
+      const state = statesById.get(envelope.evidenceId) ?? "ERROR";
+      const title = safeWorkbenchText(value.name, 96);
+      if (title === void 0) continue;
+      const unit = value.unit === void 0 ? void 0 : safeWorkbenchText(value.unit, 32);
+      signals.push({
+        signalRef: "signal.".concat(workspaceDigest({ envelope: envelope.evidenceId, value: value.name }).slice(0, 24)),
+        title,
+        displayValue: displayMetric(numeric, value.unit),
+        ...unit === void 0 ? {} : { unit },
+        severity: state === "ERROR" || state === "CONTRADICTORY" ? "CRITICAL" : state === "STALE" ? "WARNING" : "NEUTRAL",
+        direction,
+        points,
+        evidenceRefs: [ref]
+      });
+    }
+  }
+  return signals;
+}
+function hypothesisCards(input, refsById) {
+  return [...input.investigation?.hypotheses ?? []].sort((left, right) => left.rank - right.rank || left.hypothesisId.localeCompare(right.hypothesisId)).slice(0, 3).map((hypothesis, index) => ({
+    hypothesisRef: hypothesisRefFor(hypothesis.hypothesisId),
+    rank: index + 1,
+    statement: requiredWorkbenchText(
+      hypothesis.statement,
+      512,
+      "A sensitive technical hypothesis was omitted from the workbench projection."
+    ),
+    status: hypothesis.status,
+    rationale: requiredWorkbenchText(
+      hypothesis.rationale,
+      512,
+      "Review the sealed incident artifact for the omitted technical rationale."
+    ),
+    evidenceRefs: [...new Set([
+      ...hypothesis.supportingEvidenceIds,
+      ...hypothesis.contradictingEvidenceIds
+    ].map((id) => refsById.get(id)).filter((ref) => ref !== void 0))].slice(0, 8)
+  }));
+}
+function supportedHypotheses(investigation) {
+  return [...investigation?.hypotheses ?? []].filter((hypothesis) => hypothesis.status === "SUPPORTED").sort((left, right) => left.rank - right.rank || left.hypothesisId.localeCompare(right.hypothesisId));
+}
+function isLocalPatchEvidence(input, envelope) {
+  const provider = envelope.source.provider.toLowerCase();
+  if (provider === "git" && envelope.source.sanitizedReference?.startsWith("git:") === true) return true;
+  return envelope.origin === "SIMULATED" && provider === "fixture" && input.run?.origin === "SIMULATED";
+}
+function independentEvidenceIds(evidence, ids) {
+  const requested = new Set(ids);
+  const identities = /* @__PURE__ */ new Set();
+  const independent = [];
+  for (const envelope of evidence.filter((candidate) => requested.has(candidate.evidenceId)).sort((left, right) => left.evidenceId.localeCompare(right.evidenceId))) {
+    const identity = evidenceSourceIndependenceKey(envelope);
+    if (identities.has(identity)) continue;
+    identities.add(identity);
+    independent.push(envelope.evidenceId);
+  }
+  return independent;
+}
+function patchStatus(input, refsById, statesById) {
+  const supportedList = supportedHypotheses(input.investigation);
+  const supported = supportedList[0];
+  const unresolved = input.contradictions.some((item) => item.resolutionState === "UNRESOLVED");
+  const gaps = (input.investigation?.missingEvidence.length ?? 0) > 0 || capabilityEvidenceGaps(input, statesById).length > 0;
+  const evidenceById = new Map(input.evidence.map((item) => [item.evidenceId, item]));
+  const hasLocalSource = supported?.supportingEvidenceIds.some((id) => {
+    const envelope = evidenceById.get(id);
+    return envelope !== void 0 && isLocalPatchEvidence(input, envelope);
+  }) ?? false;
+  const eligible = input.run?.state === "SEALED" && input.capabilityProfile === "prepare_patch" && input.investigation?.status === "COMPLETE" && input.investigation.verificationContract !== void 0 && input.coverage?.overall === "COMPLETE" && supportedList.length === 1 && hasLocalSource && !unresolved && !gaps && input.authorityFailure === void 0;
+  const evidenceRefs = supported === void 0 ? [] : independentEvidenceIds(input.evidence, supported.supportingEvidenceIds).map((id) => refsById.get(id)).filter((ref) => ref !== void 0).slice(0, 16);
+  const reason = eligible ? "A complete sealed investigation has one supported, uncontested hypothesis with eligible local-source evidence." : input.capabilityProfile !== "prepare_patch" ? "The active administrator-owned profile does not authorize patch preparation." : input.run?.state !== "SEALED" ? "Patch handoff requires a sealed investigation." : input.investigation?.verificationContract === void 0 ? "Patch handoff requires a begin-time verification contract." : supportedList.length !== 1 ? "Patch handoff requires exactly one supported hypothesis." : !hasLocalSource ? "Patch handoff requires eligible local-source evidence; provider telemetry alone is read-only." : unresolved ? "Unresolved contradictions block patch handoff." : gaps ? "Named evidence gaps block patch handoff." : "The sealed investigation is not complete enough for patch handoff.";
+  return {
+    schemaVersion: "1.0.0",
+    state: eligible ? "ELIGIBLE" : "NOT_ELIGIBLE",
+    eligible,
+    updatedAt: input.asOf,
+    title: eligible ? "Generate a bounded local patch" : "Patch handoff unavailable",
+    reason,
+    evidenceRefs: [...new Set(evidenceRefs)],
+    limitations: ["Patch generation is performed by Codex under the host sandbox; this monitoring runtime remains read-only."]
+  };
+}
+function sameWindow(left, right) {
+  return left.start === right.start && left.end === right.end;
+}
+function latestOperationEvidence(input, operationId, window) {
+  return input.evidence.filter((envelope) => envelope.operationId === operationId && (window === void 0 || sameWindow(envelope.window, window))).sort((left, right) => right.collectedAt.localeCompare(left.collectedAt) || right.evidenceId.localeCompare(left.evidenceId))[0];
+}
+function numericResult(envelope, resultName, reducer = "SINGLE", expectedUnit) {
+  if (envelope === void 0) return { error: "MISSING_OR_AMBIGUOUS_VALUE" };
+  const candidates = [];
+  for (const value of envelope.values) {
+    if (value.kind === "SCALAR" && value.name === resultName && typeof value.value === "number") {
+      candidates.push({ value: value.value, ...value.unit === void 0 ? {} : { unit: value.unit } });
+    }
+    if (value.kind === "TIMESERIES" && value.name === resultName) {
+      const latest = [...value.points].reverse().find((point) => point.value !== null)?.value;
+      if (latest !== void 0 && latest !== null) {
+        candidates.push({ value: latest, ...value.unit === void 0 ? {} : { unit: value.unit } });
+      }
+    }
+    if (value.kind === "TABLE") {
+      const index = value.columns.findIndex((column) => column.name === resultName);
+      if (index >= 0) {
+        for (const row of value.rows) {
+          const cell = row[index];
+          if (typeof cell === "number") candidates.push({ value: cell });
+        }
+      }
+    }
+  }
+  if (candidates.length === 0 || reducer === "SINGLE" && candidates.length !== 1) {
+    return { error: "MISSING_OR_AMBIGUOUS_VALUE" };
+  }
+  const units = new Set(candidates.map((candidate) => candidate.unit ?? ""));
+  if (units.size !== 1 || candidates.some((candidate) => candidate.unit !== expectedUnit)) {
+    return { error: "INCOMPATIBLE_UNIT" };
+  }
+  const values = candidates.map((candidate) => candidate.value);
+  const selected = reducer === "MAX" ? Math.max(...values) : reducer === "MIN" ? Math.min(...values) : values[0];
+  return { value: selected, ...expectedUnit === void 0 ? {} : { unit: expectedUnit } };
+}
+function selectedCapabilityPacks(input) {
+  const requestedPackIds = input.request?.requiredCapabilityPacks;
+  return input.capabilityPacks.filter((pack) => requestedPackIds === void 0 || requestedPackIds.includes(pack.packId));
+}
+function declaredRuleUnit(pack, operationId, resultName) {
+  return pack.signals.find((signal) => signal.operationId === operationId && signal.resultName === resultName)?.unit;
+}
+function comparableBaselineWindows(input) {
+  const baseline = input.request?.baselineWindow;
+  if (baseline === void 0) return true;
+  const currentStart = Date.parse(input.run?.window.start ?? input.request.window.start);
+  const currentEnd = Date.parse(input.run?.window.end ?? input.request.window.end);
+  const baselineStart = Date.parse(baseline.start);
+  const baselineEnd = Date.parse(baseline.end);
+  return [currentStart, currentEnd, baselineStart, baselineEnd].every(Number.isFinite) && baselineEnd <= currentStart && baselineEnd - baselineStart === currentEnd - currentStart;
+}
+function capabilityEvidenceGaps(input, statesById) {
+  if (input.run === void 0) return [];
+  const gaps = /* @__PURE__ */ new Map();
+  const add = (gap) => {
+    if (!gaps.has(gap.key)) gaps.set(gap.key, gap);
+  };
+  const packs = selectedCapabilityPacks(input);
+  const windows = [
+    { kind: "current", window: input.run.window },
+    ...input.request?.baselineWindow === void 0 ? [] : [{ kind: "baseline", window: input.request.baselineWindow }]
+  ];
+  for (const pack of packs) {
+    for (const operationId of pack.requiredOperationIds) {
+      for (const selected of windows) {
+        const envelope = latestOperationEvidence(input, operationId, selected.window);
+        const state = envelope === void 0 ? void 0 : statesById.get(envelope.evidenceId);
+        if (state === "COMPLETE") continue;
+        add({
+          key: "".concat(pack.packId, ":required:").concat(selected.kind, ":").concat(operationId),
+          title: "Required ".concat(selected.kind, " evidence is incomplete"),
+          summary: envelope === void 0 ? "".concat(operationId, " did not produce evidence for the sealed ").concat(selected.kind, " window.") : "".concat(operationId, " produced ").concat(state ?? "ERROR", " evidence for the sealed ").concat(selected.kind, " window."),
+          evidence: envelope === void 0 ? [] : [envelope]
+        });
+      }
+    }
+    for (const rule of pack.issueRules) {
+      if (rule.comparison !== "THRESHOLD" && rule.comparison !== "BASELINE_DELTA") continue;
+      if (rule.resultName === void 0) continue;
+      const current = latestOperationEvidence(input, rule.operationId, input.run.window);
+      const currentState = current === void 0 ? void 0 : statesById.get(current.evidenceId);
+      if (currentState === "COMPLETE" && current !== void 0) {
+        if (!current.pagination.complete) {
+          add({
+            key: "".concat(pack.packId, ":rule:").concat(rule.ruleId, ":current-truncated"),
+            title: "Signed rule input was truncated",
+            summary: "".concat(rule.operationId, " reached a reviewed collection limit, so ").concat(rule.ruleId, " was not evaluated."),
+            evidence: [current]
+          });
+        } else {
+          const selected = numericResult(
+            current,
+            rule.resultName,
+            rule.reducer,
+            declaredRuleUnit(pack, rule.operationId, rule.resultName)
+          );
+          if (selected.error !== void 0) {
+            add({
+              key: "".concat(pack.packId, ":rule:").concat(rule.ruleId, ":current-").concat(selected.error),
+              title: "Signed rule input is not comparable",
+              summary: "".concat(rule.resultName, " was missing, ambiguous, or used an incompatible unit, so ").concat(rule.ruleId, " was not evaluated."),
+              evidence: [current]
+            });
+          }
+        }
+      }
+      if (rule.comparison !== "BASELINE_DELTA" || input.request?.baselineWindow === void 0) continue;
+      if (!comparableBaselineWindows(input)) {
+        add({
+          key: "".concat(pack.packId, ":rule:").concat(rule.ruleId, ":incomparable-windows"),
+          title: "Baseline window is not comparable",
+          summary: "Signed baseline rules require an earlier, non-overlapping window with the same duration as the current window.",
+          evidence: current === void 0 ? [] : [current]
+        });
+        continue;
+      }
+      const comparisonOperationId = rule.comparisonOperationId ?? rule.operationId;
+      const baseline = latestOperationEvidence(input, comparisonOperationId, input.request.baselineWindow);
+      const baselineState = baseline === void 0 ? void 0 : statesById.get(baseline.evidenceId);
+      if (baseline === void 0 || baselineState !== "COMPLETE") {
+        if (!pack.requiredOperationIds.includes(comparisonOperationId)) {
+          add({
+            key: "".concat(pack.packId, ":rule:").concat(rule.ruleId, ":baseline-state"),
+            title: "Required baseline evidence is incomplete",
+            summary: baseline === void 0 ? "".concat(comparisonOperationId, " did not produce evidence for the sealed baseline window.") : "".concat(comparisonOperationId, " produced ").concat(baselineState ?? "ERROR", " evidence for the sealed baseline window."),
+            evidence: baseline === void 0 ? [] : [baseline]
+          });
+        }
+        continue;
+      }
+      if (!baseline.pagination.complete) {
+        add({
+          key: "".concat(pack.packId, ":rule:").concat(rule.ruleId, ":baseline-truncated"),
+          title: "Signed baseline input was truncated",
+          summary: "".concat(comparisonOperationId, " reached a reviewed collection limit, so ").concat(rule.ruleId, " was not evaluated."),
+          evidence: [baseline]
+        });
+        continue;
+      }
+      const baselineValue = numericResult(
+        baseline,
+        rule.resultName,
+        rule.reducer,
+        declaredRuleUnit(pack, comparisonOperationId, rule.resultName)
+      );
+      if (baselineValue.error !== void 0) {
+        add({
+          key: "".concat(pack.packId, ":rule:").concat(rule.ruleId, ":baseline-").concat(baselineValue.error),
+          title: "Signed baseline input is not comparable",
+          summary: "".concat(rule.resultName, " was missing, ambiguous, or used an incompatible unit in the baseline, so ").concat(rule.ruleId, " was not evaluated."),
+          evidence: [baseline]
+        });
+      }
+    }
+  }
+  return [...gaps.values()].sort((left, right) => left.key.localeCompare(right.key));
+}
+function comparisonSatisfied(actual, comparator, expected) {
+  switch (comparator) {
+    case "LT":
+      return actual < expected;
+    case "LTE":
+      return actual <= expected;
+    case "GT":
+      return actual > expected;
+    case "GTE":
+      return actual >= expected;
+    case "EQ":
+      return actual === expected;
+  }
+}
+function issuePatchStatus(input, aggregate, hypothesisRefs, kind, issueEvidenceRefs) {
+  const supported = supportedHypotheses(input.investigation);
+  const supportedRef = supported.length === 1 ? hypothesisRefFor(supported[0].hypothesisId) : void 0;
+  const refsById = new Map(input.evidence.map((envelope) => [
+    envelope.evidenceId,
+    evidenceRef(input.workspaceId, envelope.evidenceId)
+  ]));
+  const eligibleLocalRefs = new Set(
+    (supported[0]?.supportingEvidenceIds ?? []).filter((id) => {
+      const envelope = input.evidence.find((candidate) => candidate.evidenceId === id);
+      return envelope !== void 0 && isLocalPatchEvidence(input, envelope);
+    }).map((id) => refsById.get(id)).filter((ref) => ref !== void 0)
+  );
+  const issueLocalRefs = issueEvidenceRefs.filter((ref) => eligibleLocalRefs.has(ref));
+  const eligible = aggregate.eligible && supportedRef !== void 0 && hypothesisRefs.length === 1 && hypothesisRefs[0] === supportedRef && issueLocalRefs.length > 0 && kind !== "CONTRADICTION" && kind !== "EVIDENCE_GAP";
+  return {
+    schemaVersion: "1.0.0",
+    state: eligible ? "ELIGIBLE" : "NOT_ELIGIBLE",
+    eligible,
+    updatedAt: input.asOf,
+    title: eligible ? "Prepare a bounded local patch" : "Read-only issue",
+    reason: eligible ? "This exact issue is linked to the one supported hypothesis and eligible local-source evidence." : "Grafana and provider evidence remain read-only unless this issue is linked to one supported local-source hypothesis.",
+    evidenceRefs: eligible ? [...new Set(issueLocalRefs)] : [],
+    limitations: ["This status never authorizes provider, Grafana, runtime, deployment, or production mutation."]
+  };
+}
+function issueCards(input, refsById, statesById, aggregatePatch) {
+  if (input.run === void 0) return [];
+  const issues = [];
+  const packs = selectedCapabilityPacks(input);
+  const hypotheses = input.investigation?.hypotheses ?? [];
+  const hypothesisRefsFor = (ids) => {
+    const cited = new Set(ids);
+    return hypotheses.filter((hypothesis) => [...hypothesis.supportingEvidenceIds, ...hypothesis.contradictingEvidenceIds].some((id) => cited.has(id))).sort((left, right) => left.rank - right.rank || left.hypothesisId.localeCompare(right.hypothesisId)).map((hypothesis) => hypothesisRefFor(hypothesis.hypothesisId)).slice(0, 8);
+  };
+  const refsFor = (envelopes) => independentEvidenceIds(input.evidence, envelopes.map((envelope) => envelope.evidenceId)).map((id) => refsById.get(id)).filter((ref) => ref !== void 0).slice(0, 8);
+  for (const gap of capabilityEvidenceGaps(input, statesById)) {
+    const evidenceIds = gap.evidence.map((envelope) => envelope.evidenceId);
+    issues.push({
+      issueRef: issueRefFor(input.workspaceId, { kind: "capability-gap", key: gap.key, evidenceIds }),
+      kind: "EVIDENCE_GAP",
+      severity: "WARNING",
+      status: "BLOCKED",
+      classification: "DEVIATION",
+      title: gap.title,
+      summary: bounded2(gap.summary, 512),
+      evidenceRefs: refsFor(gap.evidence),
+      hypothesisRefs: hypothesisRefsFor(evidenceIds)
+    });
+  }
+  for (const pack of packs) {
+    for (const rule of pack.issueRules) {
+      const current = latestOperationEvidence(input, rule.operationId, input.run.window);
+      const baseline = rule.comparison === "BASELINE_DELTA" && input.request?.baselineWindow !== void 0 ? latestOperationEvidence(
+        input,
+        rule.comparisonOperationId ?? rule.operationId,
+        input.request.baselineWindow
+      ) : void 0;
+      const currentState = current === void 0 ? void 0 : statesById.get(current.evidenceId);
+      const baselineState = baseline === void 0 ? void 0 : statesById.get(baseline.evidenceId);
+      let triggered = false;
+      let summary = "The reviewed rule matched the sealed evidence.";
+      if (rule.comparison === "THRESHOLD" && rule.resultName !== void 0 && rule.comparator !== void 0 && rule.threshold !== void 0) {
+        const selected = numericResult(
+          current,
+          rule.resultName,
+          rule.reducer,
+          declaredRuleUnit(pack, rule.operationId, rule.resultName)
+        );
+        triggered = selected.value !== void 0 && currentState === "COMPLETE" && current?.pagination.complete === true && comparisonSatisfied(selected.value, rule.comparator, rule.threshold);
+        if (selected.value !== void 0) {
+          const prefix = rule.reducer === "MAX" ? "maximum " : rule.reducer === "MIN" ? "minimum " : "";
+          summary = "".concat(prefix).concat(rule.resultName, " was ").concat(primitiveText(selected.value), "; the signed ").concat(rule.comparator, " ").concat(primitiveText(rule.threshold), " rule matched.");
+        }
+      } else if (rule.comparison === "BASELINE_DELTA" && rule.resultName !== void 0 && rule.comparator !== void 0 && rule.delta !== void 0) {
+        const actual = numericResult(
+          current,
+          rule.resultName,
+          rule.reducer,
+          declaredRuleUnit(pack, rule.operationId, rule.resultName)
+        );
+        const comparisonOperationId = rule.comparisonOperationId ?? rule.operationId;
+        const baselineValue = numericResult(
+          baseline,
+          rule.resultName,
+          rule.reducer,
+          declaredRuleUnit(pack, comparisonOperationId, rule.resultName)
+        );
+        const delta = actual.value === void 0 || baselineValue.value === void 0 ? void 0 : actual.value - baselineValue.value;
+        triggered = delta !== void 0 && currentState === "COMPLETE" && baselineState === "COMPLETE" && current?.pagination.complete === true && baseline?.pagination.complete === true && input.request?.baselineWindow !== void 0 && comparableBaselineWindows(input) && comparisonSatisfied(delta, rule.comparator, rule.delta);
+        if (delta !== void 0) summary = "".concat(rule.resultName, " changed by ").concat(primitiveText(delta), " from the sealed baseline; the signed rule matched.");
+      } else if (rule.comparison === "STALE") {
+        const evaluatedAt = current === void 0 ? Number.NaN : Date.parse(current.evaluatedAt);
+        const asOf = Date.parse(input.asOf);
+        const ageMs = asOf - evaluatedAt;
+        triggered = rule.maxAgeMs !== void 0 && Number.isFinite(ageMs) && ageMs >= 0 && ageMs > rule.maxAgeMs && current?.collectionState === "COMPLETE" && current.pagination.complete === true && (currentState === "COMPLETE" || currentState === "STALE");
+        summary = "The reviewed signal age exceeded its signed ".concat(primitiveText(rule.maxAgeMs ?? 0), " ms freshness boundary.");
+      } else if (rule.comparison === "EMPTY") {
+        triggered = currentState === "EMPTY";
+        summary = "The reviewed operation completed with an explicit empty result.";
+      } else if (rule.comparison === "ERROR") {
+        triggered = currentState === "ERROR";
+        summary = "The reviewed operation returned an explicit error result.";
+      } else if (rule.comparison === "CONTRADICTION") {
+        triggered = currentState === "CONTRADICTORY";
+        summary = "The reviewed signal participates in an unresolved contradiction.";
+      }
+      if (!triggered || current === void 0) continue;
+      const cited = baseline === void 0 ? [current] : [current, baseline];
+      const evidenceIds = cited.map((envelope) => envelope.evidenceId);
+      const hypothesisRefs = hypothesisRefsFor(evidenceIds);
+      issues.push({
+        issueRef: issueRefFor(input.workspaceId, { packId: pack.packId, revision: pack.revision, ruleId: rule.ruleId, evidenceIds }),
+        kind: rule.issueKind,
+        severity: rule.severity,
+        status: hypothesisRefs.some((reference) => supportedHypotheses(input.investigation).some((hypothesis) => hypothesisRefFor(hypothesis.hypothesisId) === reference)) ? "SUPPORTED" : "OPEN",
+        classification: rule.signedThreshold ? "SIGNED_RULE" : "DEVIATION",
+        title: rule.signedThreshold ? "Reviewed capability rule matched" : "Reviewed evidence deviation",
+        summary: bounded2(summary, 512),
+        evidenceRefs: refsFor(cited),
+        hypothesisRefs
+      });
+    }
+  }
+  for (const contradiction of input.contradictions.filter((item) => item.resolutionState === "UNRESOLVED")) {
+    const evidenceIds = contradiction.claimRefs.map((claim) => claim.evidenceId);
+    issues.push({
+      issueRef: issueRefFor(input.workspaceId, { contradictionId: contradiction.contradictionId }),
+      kind: "CONTRADICTION",
+      severity: "CRITICAL",
+      status: "BLOCKED",
+      classification: "SIGNED_RULE",
+      title: "Unresolved evidence contradiction",
+      summary: requiredWorkbenchText(contradiction.summary, 512, "Reviewed evidence contradicts another source."),
+      evidenceRefs: evidenceIds.map((id) => refsById.get(id)).filter((ref) => ref !== void 0).slice(0, 8),
+      hypothesisRefs: hypothesisRefsFor(evidenceIds)
+    });
+  }
+  for (const [index, gap] of (input.investigation?.missingEvidence ?? []).slice(0, 8).entries()) {
+    issues.push({
+      issueRef: issueRefFor(input.workspaceId, { kind: "investigation-gap", index, gap }),
+      kind: "EVIDENCE_GAP",
+      severity: "WARNING",
+      status: "BLOCKED",
+      classification: "DEVIATION",
+      title: "Named evidence gap",
+      summary: requiredWorkbenchText(gap, 512, "The sealed investigation names an unresolved evidence gap."),
+      evidenceRefs: [],
+      hypothesisRefs: []
+    });
+  }
+  for (const hypothesis of supportedHypotheses(input.investigation)) {
+    const reference = hypothesisRefFor(hypothesis.hypothesisId);
+    const ids = independentEvidenceIds(input.evidence, hypothesis.supportingEvidenceIds);
+    const localIds = ids.filter((id) => {
+      const envelope = input.evidence.find((candidate) => candidate.evidenceId === id);
+      return envelope !== void 0 && isLocalPatchEvidence(input, envelope);
+    });
+    const localRefs = new Set(localIds.map((id) => refsById.get(id)).filter((ref) => ref !== void 0));
+    const hasLocalIssue = issues.some((issue2) => issue2.hypothesisRefs.includes(reference) && issue2.evidenceRefs.some((ref) => localRefs.has(ref)));
+    if (localIds.length > 0 && !hasLocalIssue) {
+      issues.push({
+        issueRef: issueRefFor(input.workspaceId, { kind: "supported-local-hypothesis", hypothesisId: hypothesis.hypothesisId }),
+        kind: "REGRESSION",
+        severity: "WARNING",
+        status: "SUPPORTED",
+        classification: "DEVIATION",
+        title: "Local source evidence-linked regression",
+        summary: requiredWorkbenchText(hypothesis.statement, 512, "A supported local-source deviation was found."),
+        evidenceRefs: localIds.map((id) => refsById.get(id)).filter((ref) => ref !== void 0).slice(0, 8),
+        hypothesisRefs: [reference]
+      });
+      continue;
+    }
+    if (issues.some((issue2) => issue2.hypothesisRefs.includes(reference))) continue;
+    issues.push({
+      issueRef: issueRefFor(input.workspaceId, { kind: "supported-hypothesis", hypothesisId: hypothesis.hypothesisId }),
+      kind: "REGRESSION",
+      severity: "WARNING",
+      status: "SUPPORTED",
+      classification: "DEVIATION",
+      title: "Evidence-linked regression",
+      summary: requiredWorkbenchText(hypothesis.statement, 512, "A supported evidence-linked deviation was found."),
+      evidenceRefs: ids.map((id) => refsById.get(id)).filter((ref) => ref !== void 0).slice(0, 8),
+      hypothesisRefs: [reference]
+    });
+  }
+  const severityRank = { CRITICAL: 0, WARNING: 1, INFO: 2 };
+  return issues.map((issue2) => ({
+    ...issue2,
+    patch: issuePatchStatus(input, aggregatePatch, issue2.hypothesisRefs, issue2.kind, issue2.evidenceRefs)
+  })).sort((left, right) => Number(right.patch.eligible) - Number(left.patch.eligible) || severityRank[left.severity] - severityRank[right.severity] || left.issueRef.localeCompare(right.issueRef)).slice(0, 24);
+}
+function lifecycle(input) {
+  if (input.run === void 0) return "IDLE";
+  if (input.authorityFailure !== void 0) return "BLOCKED";
+  if (input.run.state === "ABORTED") return "CANCELLED";
+  if (input.run.state === "EXPIRED") return "BLOCKED";
+  if (input.run.state === "OPEN" || input.run.state === "FINALIZING") return "RUNNING";
+  if (input.investigation?.status === "COMPLETE") return "SEALED";
+  if (input.investigation?.status === "PARTIAL") return "PARTIAL";
+  return "BLOCKED";
+}
+function phase(input) {
+  if (input.run === void 0) return "READINESS";
+  if (input.run.workflow === "verify") return "VERIFYING";
+  if (input.run.state === "FINALIZING" || input.run.state === "SEALED") return "FINALIZING";
+  if (input.evidence.length === 0) return "SCOPING";
+  if (input.run.baselineWindow !== void 0 && input.evidence.some((item) => sha256Canonical(item.window) === sha256Canonical(input.run.baselineWindow))) return "COMPARING";
+  return "COLLECTING";
+}
+function recoveryStatus(investigation) {
+  const value = investigation?.recoveryState;
+  return value === void 0 || value === "NONE" ? "NOT_ASSESSED" : value;
+}
+function auditStatus(input) {
+  if (input.run === void 0) return "INITIALIZING";
+  if (input.run.audit.state === "HEALTHY") return "HEALTHY";
+  if (input.run.audit.state === "FAILED") return "ERROR";
+  return "DEGRADED";
+}
+function collectionStatus(input, states) {
+  if (input.authorityFailure !== void 0) return "ERROR";
+  if (input.run === void 0 || input.evidence.length === 0 && input.run.state === "OPEN") return "NOT_STARTED";
+  if (input.run.state === "OPEN" || input.run.state === "FINALIZING") {
+    if (states.includes("ERROR")) return "ERROR";
+    const required2 = input.request?.requiredOperations?.length ?? input.operations.length;
+    return new Set(input.evidence.map((item) => item.operationId)).size >= required2 ? states.some((state) => state === "STALE" || state === "CONTRADICTORY") ? "PARTIAL" : "COMPLETE" : "IN_PROGRESS";
+  }
+  if (input.coverage?.overall === "COMPLETE") return "COMPLETE";
+  if (input.coverage?.overall === "PARTIAL") return "PARTIAL";
+  return states.includes("ERROR") ? "ERROR" : input.evidence.length > 0 ? "PARTIAL" : "NOT_STARTED";
+}
+function causalityStatus(input) {
+  const hypotheses = input.investigation?.hypotheses ?? [];
+  if (hypotheses.length === 0) return "NOT_ASSESSED";
+  if (hypotheses.some((item) => item.status === "SUPPORTED")) return "SUPPORTED";
+  if (hypotheses.some((item) => item.status === "OPEN")) return "OPEN";
+  return "INCONCLUSIVE";
+}
+function activityItems(input, details, patch) {
+  if (input.run === void 0) {
+    return [{
+      activityRef: "readiness.waiting",
+      at: input.asOf,
+      kind: "READINESS",
+      state: "PENDING",
+      title: "Ready for a bounded monitoring run"
+    }];
+  }
+  const activity = [{
+    activityRef: "scope.".concat(workspaceDigest(input.run.runId).slice(0, 24)),
+    at: input.run.createdAt,
+    kind: "SCOPE",
+    state: "COMPLETE",
+    title: "Incident scope sealed",
+    detail: requiredWorkbenchText(
+      "".concat(input.run.scope.service ?? "Service", " · ").concat(input.run.scope.environment),
+      512,
+      "Reviewed incident scope"
+    )
+  }];
+  for (const detail of details.values()) {
+    activity.push({
+      activityRef: "evidence.".concat(detail.evidenceRef.slice(-24)),
+      at: detail.collectedAt,
+      kind: "EVIDENCE",
+      state: detail.state === "COMPLETE" || detail.state === "EMPTY" ? "COMPLETE" : detail.state === "ERROR" ? "ERROR" : "PARTIAL",
+      title: bounded2(detail.title, 128),
+      detail: bounded2(detail.summary, 512)
+    });
+  }
+  if (input.investigation !== void 0) {
+    activity.push({
+      activityRef: "analysis.".concat(workspaceDigest(input.run.runId).slice(0, 24)),
+      at: input.run.finalizedAt ?? input.asOf,
+      kind: "ANALYSIS",
+      state: input.investigation.status === "COMPLETE" ? "COMPLETE" : input.investigation.status === "PARTIAL" ? "PARTIAL" : "ERROR",
+      title: "Evidence-linked analysis sealed",
+      detail: requiredWorkbenchText(
+        input.investigation.smallestSafeNextStep,
+        512,
+        "Review the sealed incident artifact for the next bounded step."
+      )
+    });
+  }
+  if (patch.eligible) {
+    activity.push({
+      activityRef: "patch.".concat(workspaceDigest(input.run.runId).slice(0, 24)),
+      at: patch.updatedAt,
+      kind: "PATCH",
+      state: "PENDING",
+      title: "Bounded patch handoff is available"
+    });
+  }
+  if (input.run.workflow === "verify" && input.investigation !== void 0) {
+    activity.push({
+      activityRef: "recovery.".concat(workspaceDigest(input.run.runId).slice(0, 24)),
+      at: input.run.finalizedAt ?? input.asOf,
+      kind: "RECOVERY",
+      state: input.investigation.recoveryState === "RECOVERED" ? "COMPLETE" : "PARTIAL",
+      title: input.investigation.recoveryState === "RECOVERED" ? "Recovery criteria passed" : "Recovery is not proven"
+    });
+  }
+  if (input.authorityFailure !== void 0) {
+    activity.push({
+      activityRef: "system.".concat(workspaceDigest(input.run.runId).slice(0, 24)),
+      at: input.asOf,
+      kind: "SYSTEM",
+      state: "ERROR",
+      title: "Authoritative workbench state is unavailable"
+    });
+  }
+  return activity.sort((left, right) => left.at.localeCompare(right.at) || left.activityRef.localeCompare(right.activityRef)).slice(-MAX_ACTIVITY);
+}
+function authorityLimitations(input) {
+  const failures = {
+    CHECKPOINT_UNAVAILABLE: "The active run has no recoverable runtime checkpoint; progress is partial.",
+    CHECKPOINT_INVALID: "The active runtime checkpoint failed integrity validation.",
+    ARTIFACT_UNAVAILABLE: "The sealed run has no immutable incident bundle.",
+    ARTIFACT_INVALID: "The immutable incident bundle failed validation."
+  };
+  return uniqueBounded([
+    ...input.authorityFailure === void 0 ? [] : [failures[input.authorityFailure]],
+    ...input.run?.state === "EXPIRED" ? ["The run expired before it reached a sealed terminal artifact."] : [],
+    ...input.run?.state === "ABORTED" ? ["The run was cancelled; retained evidence is shown without a causal conclusion."] : [],
+    ...input.inventoryOmittedCount > 0 ? ["".concat(input.inventoryOmittedCount, " older owned run").concat(input.inventoryOmittedCount === 1 ? " was" : "s were", " omitted by the bounded inventory.")] : [],
+    ...input.investigation?.missingEvidence ?? [],
+    ...input.investigation?.remainingUncertainty ?? []
+  ], 16, 512);
+}
+function nextAction(input, collection, patch) {
+  if (patch.eligible) return { action: "GENERATE_PATCH", enabled: true, label: "Generate patch" };
+  if (input.run === void 0) {
+    return { action: "NONE", enabled: false, label: "Start an investigation in chat" };
+  }
+  if (input.run.state === "OPEN" && collection === "NOT_STARTED") {
+    return { action: "COLLECT_EVIDENCE", enabled: true, label: "Collect bounded evidence" };
+  }
+  if (collection === "PARTIAL" || collection === "ERROR" || input.run.state === "EXPIRED") {
+    return {
+      action: "RETRY_COLLECTION",
+      enabled: true,
+      label: "Retry in a fresh run",
+      reason: "Terminal or failed evidence is never rewritten in place."
+    };
+  }
+  if (input.run.workflow !== "verify" && input.investigation?.verificationContract !== void 0 && input.run.state === "SEALED") {
+    return { action: "VERIFY_RECOVERY", enabled: true, label: "Verify recovery" };
+  }
+  return { action: "NONE", enabled: false, label: "No safe action is currently available" };
+}
+function buildWorkbenchProjection(input) {
+  const projected = evidenceProjection(input);
+  const states = [...projected.statesById.values()];
+  const patch = patchStatus(input, projected.refsById, projected.statesById);
+  const issues = issueCards(input, projected.refsById, projected.statesById, patch);
+  const collection = collectionStatus(input, states);
+  const lifecycleState = lifecycle(input);
+  const evidence = [...projected.details.values()].map((detail) => ({
+    evidenceRef: detail.evidenceRef,
+    title: bounded2(detail.title, 128),
+    domain: detail.domain,
+    state: detail.state,
+    authority: detail.authority,
+    sourceLabel: bounded2("".concat(detail.source.provider, " · ").concat(detail.source.sourceAlias), 96),
+    summary: bounded2(detail.summary, 512),
+    observedAt: detail.evaluatedAt,
+    linkRefs: detail.linkRefs.slice(0, 4)
+  }));
+  const sourceStates = states.reduce((counts, state) => {
+    counts[state] = (counts[state] ?? 0) + 1;
+    return counts;
+  }, {});
+  const completedOperations = new Set(
+    input.evidence.filter((item) => projected.statesById.get(item.evidenceId) === "COMPLETE").map((item) => item.operationId)
+  ).size;
+  const snapshot = {
+    schemaVersion: "1.1.0",
+    workspaceId: input.workspaceId,
+    stateVersion: authorityStateVersion(input.run, input.checkpointRevision),
+    asOf: input.asOf,
+    lifecycle: lifecycleState,
+    phase: phase(input),
+    ...input.run === void 0 ? {} : {
+      origin: input.run.origin,
+      scope: {
+        ...input.run.scope.service === void 0 || safeWorkbenchText(input.run.scope.service, 128) === void 0 ? {} : { service: safeWorkbenchText(input.run.scope.service, 128) },
+        environment: requiredWorkbenchText(input.run.scope.environment, 128, "unavailable"),
+        window: structuredClone(input.run.window)
+      }
+    },
+    status: {
+      service: input.investigation?.recoveryState === "RECOVERED" ? "HEALTHY" : input.investigation?.recoveryState === "NOT_RECOVERED" ? "DEGRADED" : input.run?.workflow === "verify" && lifecycleState === "RUNNING" ? "RECOVERING" : "UNKNOWN",
+      collection,
+      causality: causalityStatus(input),
+      recovery: recoveryStatus(input.investigation),
+      audit: auditStatus(input)
+    },
+    progress: {
+      completedOperations,
+      requiredOperations: Math.min(1024, input.operations.length),
+      sourceStates
+    },
+    signals: signalCards(input, projected.refsById, projected.statesById),
+    hypotheses: hypothesisCards(input, projected.refsById),
+    issues,
+    evidence,
+    activity: [],
+    patch,
+    nextAction: nextAction(input, collection, patch),
+    limitations: authorityLimitations(input)
+  };
+  snapshot.activity = activityItems(input, projected.details, patch);
+  return { snapshot, evidence: projected.details, links: projected.links };
+}
+function patchContextForProjection(input, projection, issueRef, hypothesisRef) {
+  if (!projection.snapshot.patch.eligible || input.investigation === void 0 || input.run === void 0) {
+    throw new TypeError("This workbench is not eligible for patch handoff");
+  }
+  const verificationContract = input.investigation.verificationContract;
+  if (verificationContract === void 0) {
+    throw new TypeError("This workbench has no begin-time verification contract");
+  }
+  const issue2 = projection.snapshot.issues?.find((candidate) => candidate.issueRef === issueRef);
+  if (issue2 === void 0 || !issue2.patch.eligible) {
+    throw new TypeError("This issue is not eligible for patch handoff");
+  }
+  if (!issue2.hypothesisRefs.includes(hypothesisRef)) {
+    throw new TypeError("This issue is not linked to the requested hypothesis");
+  }
+  const hypothesis = supportedHypotheses(input.investigation).find(
+    (candidate) => hypothesisRefFor(candidate.hypothesisId) === hypothesisRef
+  );
+  if (hypothesis === void 0 || supportedHypotheses(input.investigation).length !== 1) {
+    throw new TypeError("This workbench does not have exactly one matching supported hypothesis");
+  }
+  const evidenceFor = (ids) => ids.map((id) => evidenceRef(input.workspaceId, id)).map((ref) => projection.evidence.get(ref)).filter((detail) => detail !== void 0).slice(0, 8).map((detail) => ({ evidenceRef: detail.evidenceRef, title: detail.title, summary: detail.summary }));
+  return {
+    schemaVersion: "1.1.0",
+    workspaceId: input.workspaceId,
+    issueRef,
+    hypothesisRef,
+    issue: {
+      kind: issue2.kind,
+      severity: issue2.severity,
+      title: issue2.title,
+      summary: issue2.summary
+    },
+    origin: input.run.origin,
+    scope: {
+      ...input.run.scope.service === void 0 || safeWorkbenchText(input.run.scope.service, 128) === void 0 ? {} : { service: safeWorkbenchText(input.run.scope.service, 128) },
+      environment: requiredWorkbenchText(input.run.scope.environment, 128, "unavailable"),
+      window: structuredClone(input.run.window)
+    },
+    profileAlias: requiredWorkbenchText(input.profileAlias, 128, "unavailable"),
+    hypothesis: {
+      statement: requiredWorkbenchText(
+        hypothesis.statement,
+        512,
+        "A sensitive technical hypothesis was omitted from the patch handoff."
+      ),
+      rationale: requiredWorkbenchText(
+        hypothesis.rationale,
+        512,
+        "Review the sealed incident artifact for the omitted technical rationale."
+      ),
+      supportingEvidence: evidenceFor(hypothesis.supportingEvidenceIds),
+      counterEvidence: evidenceFor(hypothesis.contradictingEvidenceIds)
+    },
+    verification: {
+      policyAlias: requiredWorkbenchText(verificationContract.policyAlias, 128, "unavailable"),
+      windowStrategy: verificationContract.windowStrategy,
+      windowDurationSeconds: verificationContract.windowDurationSeconds,
+      requiredSamples: verificationContract.requiredSamples,
+      passCount: verificationContract.passCount,
+      criteria: verificationContract.criteria.slice(0, MAX_PATCH_VERIFICATION_CRITERIA).map((criterion) => ({
+        criterionId: requiredWorkbenchText(criterion.criterionId, 128, "unavailable"),
+        operationId: requiredWorkbenchText(criterion.operationId, 128, "unavailable"),
+        signalName: requiredWorkbenchText(criterion.valueSelector.name, 128, "unavailable"),
+        signalKind: criterion.valueSelector.kind,
+        reducer: criterion.valueSelector.reducer,
+        comparator: criterion.comparator,
+        expected: typeof criterion.expected === "string" ? requiredWorkbenchText(
+          criterion.expected,
+          128,
+          "A sensitive expected value was omitted from the patch handoff."
+        ) : criterion.expected,
+        ...criterion.unit === void 0 || safeWorkbenchText(criterion.unit, 64) === void 0 ? {} : { unit: safeWorkbenchText(criterion.unit, 64) },
+        maxEvidenceAgeMs: criterion.maxEvidenceAgeMs,
+        ...criterion.requiredDurationSeconds === void 0 ? {} : { requiredDurationSeconds: criterion.requiredDurationSeconds }
+      })),
+      omittedCriteria: Math.max(0, verificationContract.criteria.length - MAX_PATCH_VERIFICATION_CRITERIA)
+    },
+    nextSafeStep: requiredWorkbenchText(
+      input.investigation.smallestSafeNextStep,
+      512,
+      "Review the sealed incident artifact before preparing a bounded local patch."
+    ),
+    limitations: uniqueBounded([
+      ...input.investigation.remainingUncertainty,
+      ...verificationContract.criteria.length <= MAX_PATCH_VERIFICATION_CRITERIA ? [] : ["".concat(verificationContract.criteria.length - MAX_PATCH_VERIFICATION_CRITERIA, " additional verification criteria remain available only in the sealed incident artifact.")],
+      "This context authorizes local patch preparation only; it does not authorize apply, merge, push, deploy, restart, rollback, or recovery claims."
+    ], 12, 512)
+  };
+}
+var WORKBENCH_RUN_INVENTORY_LIMIT = MAX_WORKBENCH_RUNS;
+
+// packages/evidence-server/src/validation.ts
+var import__3 = __toESM(require__(), 1);
+var import_ajv_formats3 = __toESM(require_dist(), 1);
+var ajv3 = new import__3.Ajv2020({ allErrors: true, allowUnionTypes: true, strict: true });
+var addFormats3 = import_ajv_formats3.default;
+addFormats3(ajv3);
+for (const schema of loadSchemaRegistry().values()) ajv3.addSchema(schema);
+var workflowValidator = ajv3.getSchema(SCHEMA_IDS.workflowRequest);
+if (workflowValidator === void 0) throw new Error("Workflow request schema is not registered");
+var analysisValidator = ajv3.getSchema(SCHEMA_IDS.analysisDraft);
+if (analysisValidator === void 0) throw new Error("Analysis draft schema is not registered");
+function summarize(errors) {
+  return (errors ?? []).slice(0, 5).map((error2) => "".concat(error2.instancePath || "/", " ").concat(error2.message ?? "is invalid")).join("; ");
+}
+var WorkflowValidationError = class extends Error {
+  code = "INVALID_WORKFLOW_REQUEST";
+  constructor(message) {
+    super(message);
+    this.name = "WorkflowValidationError";
+  }
+};
+function validateWorkflowRequest(value) {
+  const validate = workflowValidator;
+  if (!validate(value)) {
+    throw new WorkflowValidationError("Workflow request is invalid: ".concat(summarize(validate.errors)));
+  }
+  return structuredClone(value);
+}
+function validateAnalysisDraft(value, allowedEvidenceIds) {
+  const validate = analysisValidator;
+  if (!validate(value)) {
+    throw new WorkflowValidationError("Analysis draft is invalid: ".concat(summarize(validate.errors)));
+  }
+  assertAnalysisDraftSemantics(value, allowedEvidenceIds);
+  return structuredClone(value);
+}
+
+// packages/evidence-server/src/service.ts
+var DEFAULT_RUN_TTL_MS = 60 * 60 * 1e3;
+var DEFAULT_LEASE_TTL_MS = 60 * 1e3;
+var DEFAULT_MAX_CACHED_SESSIONS = 128;
+var MAX_MAX_CACHED_SESSIONS = 4096;
+var DEFAULT_MAX_DIAGNOSTIC_EVENTS = 256;
+var MAX_MAX_DIAGNOSTIC_EVENTS = 4096;
+function boundedRuntimeLimit(value, fallback, maximum, name) {
+  const selected = value ?? fallback;
+  if (!Number.isSafeInteger(selected) || selected < 1 || selected > maximum) {
+    throw new TypeError("".concat(name, " must be a positive safe integer no greater than ").concat(maximum));
+  }
+  return selected;
+}
+function assertAlias(value, label) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value)) {
+    throw new TypeError("".concat(label, " is not a configured alias"));
+  }
+}
+function uniqueOperationIds(values) {
+  const operationIds = values.map((value) => {
+    assertAlias(value, "operation ID");
+    return value;
+  });
+  if (new Set(operationIds).size !== operationIds.length) {
+    throw new TypeError("Operation IDs must be unique");
+  }
+  return operationIds;
+}
+function evidenceUsage(envelope, elapsedMs) {
+  let rows = 0;
+  let series = 0;
+  let points = 0;
+  for (const value of envelope.values) {
+    if (value.kind === "TABLE") rows += value.rows.length;
+    else if (value.kind === "TIMESERIES") {
+      series += 1;
+      points += value.points.length;
+    } else rows += 1;
+  }
+  return {
+    timeoutMs: Math.max(0, Math.ceil(elapsedMs)),
+    bytes: Buffer.byteLength(canonicalJson(envelope), "utf8"),
+    rows,
+    series,
+    points
+  };
+}
+function safeObservationStatement(envelope) {
+  const state = deriveEvidenceState({
+    collectionState: envelope.collectionState,
+    freshnessState: envelope.freshnessState,
+    hasUnresolvedContradiction: false
+  });
+  return "".concat(envelope.operationId, " returned ").concat(state, " ").concat(envelope.source.provider, " evidence for the authorized scope.");
+}
+function operationSnapshotHash(operations) {
+  return sha256Canonical(
+    operations.map((operation2) => ({
+      operationId: operation2.operationId,
+      revision: operation2.revision,
+      definitionSha256: operation2.definitionSha256
+    }))
+  );
+}
+function collectionKey(operationId, window) {
+  return "".concat(operationId, "|").concat(sha256Canonical(window));
+}
+function safeFailureCode(error2) {
+  const code = error2.code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,127}$/u.test(code) ? code : "COLLECTION_FAILED";
+}
+function finalizedEvidenceSummary(evidence, contradictions) {
+  const contradictoryEvidenceIds = new Set(
+    contradictions.filter((contradiction) => contradiction.resolutionState === "UNRESOLVED").flatMap((contradiction) => contradiction.claimRefs.map((claim) => claim.evidenceId))
+  );
+  const summary = {
+    COMPLETE: 0,
+    EMPTY: 0,
+    STALE: 0,
+    CONTRADICTORY: 0,
+    ERROR: 0
+  };
+  for (const envelope of evidence) {
+    const state = deriveEvidenceState({
+      collectionState: envelope.collectionState,
+      freshnessState: envelope.freshnessState,
+      hasUnresolvedContradiction: contradictoryEvidenceIds.has(envelope.evidenceId)
+    });
+    summary[state] += 1;
+  }
+  return summary;
+}
+function isLeaseAuthorityFailure(error2) {
+  const code = error2.code;
+  return typeof code === "string" && (/* @__PURE__ */ new Set([
+    "ACCESS_DENIED",
+    "LEASE_REQUIRED",
+    "RUN_EXPIRED",
+    "RUN_TERMINAL",
+    "STALE_REVISION"
+  ])).has(code);
+}
+function buildVerificationContract(policy) {
+  const configured = policy.verificationPolicy;
+  if (configured === void 0) return void 0;
+  const semantic = {
+    policyAlias: configured.policyAlias,
+    scope: structuredClone(policy.scope),
+    windowStrategy: configured.windowStrategy,
+    windowDurationSeconds: configured.windowDurationSeconds,
+    requiredSamples: configured.requiredSamples,
+    passCount: configured.passCount,
+    criteria: configured.criteria.map((criterion) => ({
+      ...structuredClone(criterion),
+      operationDefinitionSha256: policy.operations[criterion.operationId].definitionSha256
+    }))
+  };
+  return { ...semantic, contractSha256: computeVerificationContractHash(semantic) };
+}
+function comparePrimitive(left, comparator, right) {
+  if (comparator === "EQ") return canonicalJson(left) === canonicalJson(right);
+  if (typeof left !== "number" || typeof right !== "number") return false;
+  if (comparator === "LT") return left < right;
+  if (comparator === "LTE") return left <= right;
+  if (comparator === "GT") return left > right;
+  if (comparator === "GTE") return left >= right;
+  return false;
+}
+function activityState(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value !== 0;
+  if (typeof value !== "string") return void 0;
+  const normalized = value.trim().toLowerCase();
+  if ((/* @__PURE__ */ new Set(["active", "firing", "open", "true", "1"])).has(normalized)) return true;
+  if ((/* @__PURE__ */ new Set(["inactive", "resolved", "closed", "false", "0"])).has(normalized)) return false;
+  return void 0;
+}
+function evaluateVerification(contract, evidence, contradictions, currentWindow, nowMs) {
+  const cited = /* @__PURE__ */ new Set();
+  let failed = false;
+  let incomplete = false;
+  if ((Date.parse(currentWindow.end) - Date.parse(currentWindow.start)) / 1e3 < contract.windowDurationSeconds) {
+    incomplete = true;
+  }
+  const contradictoryEvidence = new Set(
+    contradictions.filter((item) => item.resolutionState === "UNRESOLVED").flatMap((item) => item.claimRefs.map((claim) => claim.evidenceId))
+  );
+  for (const criterion of contract.criteria) {
+    const matches2 = evidence.filter(
+      (envelope) => envelope.operationId === criterion.operationId && sha256Canonical(envelope.window) === sha256Canonical(currentWindow)
+    );
+    matches2.forEach((envelope) => cited.add(envelope.evidenceId));
+    const usable = matches2.filter((envelope) => {
+      const evaluatedAt = Date.parse(envelope.evaluatedAt);
+      return envelope.operationDefinitionSha256 === criterion.operationDefinitionSha256 && envelope.authority === "AUTHORITATIVE" && envelope.freshnessState === "FRESH" && envelope.pagination.complete && !contradictoryEvidence.has(envelope.evidenceId) && Number.isFinite(evaluatedAt) && nowMs - evaluatedAt <= criterion.maxEvidenceAgeMs;
+    });
+    if (usable.length === 0 || usable.length !== matches2.length) {
+      incomplete = true;
+      continue;
+    }
+    const complete = usable.filter((envelope) => envelope.collectionState === "COMPLETE");
+    if (complete.length !== usable.length) {
+      incomplete = true;
+      continue;
+    }
+    const selected = complete.map((envelope) => selectedSamples(envelope, criterion));
+    if (selected.some((samples) => samples === void 0)) {
+      incomplete = true;
+      continue;
+    }
+    const candidates = selected.flatMap((samples) => samples);
+    if (candidates.length < contract.requiredSamples) {
+      incomplete = true;
+      continue;
+    }
+    if (criterion.unit !== void 0 && candidates.some((candidate) => candidate.unit !== criterion.unit)) {
+      incomplete = true;
+      continue;
+    }
+    const satisfying = criterion.comparator === "ACTIVE" || criterion.comparator === "INACTIVE" ? (() => {
+      const desired = criterion.comparator === "ACTIVE";
+      const states = candidates.map((candidate) => activityState(candidate.value));
+      if (states.some((state) => state === void 0)) return void 0;
+      return candidates.filter((_candidate, index) => states[index] === desired);
+    })() : candidates.filter((candidate) => comparePrimitive(candidate.value, criterion.comparator, criterion.expected));
+    if (satisfying === void 0) {
+      incomplete = true;
+      continue;
+    }
+    if (satisfying.length < contract.passCount) {
+      failed = true;
+      continue;
+    }
+    if (criterion.requiredDurationSeconds !== void 0) {
+      const times = satisfying.map((candidate) => Date.parse(candidate.at)).filter(Number.isFinite);
+      if (times.length < 2 || (Math.max(...times) - Math.min(...times)) / 1e3 < criterion.requiredDurationSeconds) {
+        incomplete = true;
+      }
+    }
+  }
+  return {
+    status: incomplete ? "INCOMPLETE" : failed ? "FAILED" : "PASSED",
+    evidenceIds: [...cited].sort()
+  };
+}
+function selectedSamples(envelope, criterion) {
+  const selected = [];
+  const matching = envelope.values.filter(
+    (value2) => value2.kind === criterion.valueSelector.kind && value2.name === criterion.valueSelector.name && (criterion.valueSelector.dimensions === void 0 || "dimensions" in value2 && canonicalJson(value2.dimensions) === canonicalJson(criterion.valueSelector.dimensions))
+  );
+  if (matching.length !== 1) return void 0;
+  const value = matching[0];
+  if (value.kind === "SCALAR") {
+    selected.push({
+      value: value.value,
+      ...value.unit === void 0 ? {} : { unit: value.unit },
+      at: value.observedAt ?? envelope.evaluatedAt
+    });
+  } else if (value.kind === "TIMESERIES") {
+    const points = value.points.filter((point) => point.value !== null);
+    if (criterion.valueSelector.reducer === "LATEST") {
+      const latest = points.at(-1);
+      if (latest !== void 0) selected.push({ value: latest.value, ...value.unit === void 0 ? {} : { unit: value.unit }, at: latest.at });
+    } else if (criterion.valueSelector.reducer === "ALL") {
+      selected.push(...points.map((point) => ({
+        value: point.value,
+        ...value.unit === void 0 ? {} : { unit: value.unit },
+        at: point.at
+      })));
+    } else if (points.length === 1) {
+      selected.push({ value: points[0].value, ...value.unit === void 0 ? {} : { unit: value.unit }, at: points[0].at });
+    }
+  }
+  if (criterion.valueSelector.reducer === "SINGLE" && selected.length !== 1) return [];
+  return selected;
+}
+function restoreBudget(policy, history) {
+  const budget = new BudgetLedger(policy);
+  for (const entry of history) {
+    const reservation = budget.reserve(entry.operationId);
+    if (reservation.reservationId !== entry.reservationId) {
+      throw new TypeError("Checkpoint budget reservation order cannot be reproduced");
+    }
+    if (entry.outcome === "SETTLED") budget.settle(reservation.reservationId, entry.usage);
+    else if (entry.outcome === "RESERVED") {
+      budget.settle(reservation.reservationId, {
+        timeoutMs: reservation.limits.timeoutMs,
+        bytes: reservation.limits.maxBytes,
+        rows: reservation.limits.maxRows,
+        series: reservation.limits.maxSeries,
+        points: reservation.limits.maxPoints
+      });
+    } else budget.cancel(reservation.reservationId);
+  }
+  return budget;
+}
+function pendingBudgetHistory(session, reservationId) {
+  return session.budgetHistory.find(
+    (entry) => entry.reservationId === reservationId && entry.outcome === "RESERVED"
+  );
+}
+function settleBudgetHistory(session, reservationId, usage) {
+  const entry = pendingBudgetHistory(session, reservationId);
+  if (entry === void 0) throw new TypeError("Budget reservation history is not pending");
+  entry.outcome = "SETTLED";
+  entry.usage = { ...usage };
+}
+function cancelBudgetHistory(session, reservationId) {
+  const entry = pendingBudgetHistory(session, reservationId);
+  if (entry === void 0) return;
+  session.budget.cancel(reservationId);
+  entry.outcome = "CANCELLED";
+}
+function assertRawProviderRetentionDisabled(bundle) {
+  const retention = bundle.profile.policy.rawEvidenceRetention;
+  if (retention === null || typeof retention !== "object" || Array.isArray(retention) || retention.mode !== "NONE" || Object.keys(retention).length !== 1) {
+    throw new TypeError(
+      "The core runtime requires rawEvidenceRetention NONE and never persists opaque provider payloads"
+    );
+  }
+}
+var MonitoringRuntime = class {
+  #bundle;
+  #registrations;
+  #registry;
+  #artifactStore;
+  #principal;
+  #surface;
+  #routeDescription;
+  #clock;
+  #workbenchStartedAt;
+  #runTtlMs;
+  #leaseTtlMs;
+  #maxCachedSessions;
+  #maxDiagnosticEvents;
+  #runStore;
+  #checkpointStore;
+  #audit;
+  #diagnosticEvents = [];
+  #configurationIssues;
+  #onClose;
+  #sessions = /* @__PURE__ */ new Map();
+  /** Bounded one-to-one replay index: entries exist only while their session is cached. */
+  #idempotencyRuns = /* @__PURE__ */ new Map();
+  #diagnosticEventsDropped = 0;
+  #closed = false;
+  #closePromise;
+  constructor(options) {
+    assertRawProviderRetentionDisabled(options.bundle);
+    this.#bundle = structuredClone(options.bundle);
+    this.#registrations = [...options.registrations];
+    this.#registry = new StaticAdapterRegistry(options.registrations);
+    this.#artifactStore = new ArtifactStore({
+      root: options.artifactRoot,
+      ...options.artifactProducer === void 0 ? {} : { producer: options.artifactProducer }
+    });
+    this.#principal = { ...options.principal };
+    this.#surface = options.surface ?? "local-stdio";
+    this.#routeDescription = options.routeDescription ?? "No implicit route beyond the active local process";
+    this.#clock = options.clock ?? systemClock;
+    this.#workbenchStartedAt = this.#clock.now().toISOString();
+    this.#runTtlMs = options.runTtlMs ?? DEFAULT_RUN_TTL_MS;
+    this.#leaseTtlMs = options.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
+    this.#maxCachedSessions = boundedRuntimeLimit(
+      options.maxCachedSessions,
+      DEFAULT_MAX_CACHED_SESSIONS,
+      MAX_MAX_CACHED_SESSIONS,
+      "maxCachedSessions"
+    );
+    this.#maxDiagnosticEvents = boundedRuntimeLimit(
+      options.maxDiagnosticEvents,
+      DEFAULT_MAX_DIAGNOSTIC_EVENTS,
+      MAX_MAX_DIAGNOSTIC_EVENTS,
+      "maxDiagnosticEvents"
+    );
+    this.#runStore = options.runStore ?? (options.stateRoot === void 0 ? new InMemoryRunStore({ now: () => this.#clock.now().getTime() }) : new DurableRunStore({ stateRoot: options.stateRoot, now: () => this.#clock.now().getTime() }));
+    this.#checkpointStore = options.stateRoot === void 0 ? void 0 : new RuntimeCheckpointStore(options.stateRoot);
+    this.#audit = options.auditSink ?? (options.stateRoot === void 0 ? new VolatileAuditSink() : new DurableAuditSink(options.stateRoot));
+    this.#configurationIssues = [...options.configurationIssues ?? []];
+    this.#onClose = options.onClose;
+  }
+  get profileAlias() {
+    return this.#bundle.profile.profileAlias;
+  }
+  get artifactRoot() {
+    return this.#artifactStore.root;
+  }
+  /** Mount or refresh the principal-owned latest-run workbench. */
+  openWorkbench(profileAlias) {
+    this.#requireOpen();
+    this.#requireProfile(profileAlias);
+    return this.#workbenchProjection().projection.snapshot;
+  }
+  /** Read the workbench projection bound to one exact owned run. */
+  openWorkbenchForRun(runId) {
+    this.#requireOpen();
+    if (!/^pmrun_[A-Za-z0-9_-]{20,128}$/u.test(runId)) {
+      throw new RunStoreError("INVALID_INPUT", "Run ID is invalid");
+    }
+    const workspaceId = workspaceIdForRun({
+      principal: this.#principal,
+      profileAlias: this.profileAlias,
+      trustBundleSha256: this.#bundle.integrity.contentSha256,
+      runId
+    });
+    return this.#workbenchProjection(workspaceId).projection.snapshot;
+  }
+  /** Read one monotonic, bearer-free workbench projection without mutating run authority. */
+  workspaceSnapshot(workspaceId, afterStateVersion) {
+    this.#requireOpen();
+    this.#assertWorkspaceId(workspaceId);
+    if (afterStateVersion !== void 0 && (!Number.isSafeInteger(afterStateVersion) || afterStateVersion < 0)) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench state version is invalid");
+    }
+    const snapshot = this.#workbenchProjection(workspaceId).projection.snapshot;
+    if (afterStateVersion !== void 0 && afterStateVersion > snapshot.stateVersion) {
+      throw new RunStoreError("FUTURE_CURSOR", "Workbench state cursor is newer than authority");
+    }
+    if (afterStateVersion === snapshot.stateVersion) {
+      return {
+        schemaVersion: "1.0.0",
+        changed: false,
+        workspaceId: snapshot.workspaceId,
+        stateVersion: snapshot.stateVersion,
+        asOf: snapshot.asOf
+      };
+    }
+    return { schemaVersion: "1.0.0", changed: true, snapshot };
+  }
+  workspaceEvidence(workspaceId, evidenceRef4) {
+    this.#requireOpen();
+    this.#assertWorkspaceId(workspaceId);
+    if (!/^pmwsev_[A-Za-z0-9_-]{20,128}$/u.test(evidenceRef4)) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench evidence reference is invalid");
+    }
+    const detail = this.#workbenchProjection(workspaceId).projection.evidence.get(evidenceRef4);
+    if (detail === void 0) {
+      throw new RunStoreError("WORKBENCH_NOT_FOUND", "Workbench evidence is unavailable");
+    }
+    return structuredClone(detail);
+  }
+  resolveWorkspaceLink(workspaceId, linkRef4) {
+    this.#requireOpen();
+    this.#assertWorkspaceId(workspaceId);
+    if (!/^pmwslnk_[A-Za-z0-9_-]{20,128}$/u.test(linkRef4)) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench link reference is invalid");
+    }
+    const link = this.#workbenchProjection(workspaceId).projection.links.get(linkRef4);
+    if (link?.target === void 0) {
+      throw new RunStoreError("LINK_UNAVAILABLE", "The reviewed evidence link is unavailable");
+    }
+    return structuredClone(link.target);
+  }
+  workspacePatchContext(workspaceId, issueRef, hypothesisRef, expectedStateVersion) {
+    this.#requireOpen();
+    this.#assertWorkspaceId(workspaceId);
+    if (!Number.isSafeInteger(expectedStateVersion) || expectedStateVersion < 1) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench state version is invalid");
+    }
+    const selected = this.#workbenchProjection(workspaceId);
+    if (selected.projection.snapshot.stateVersion !== expectedStateVersion) {
+      throw new RunStoreError(
+        "STALE_WORKBENCH",
+        "Workbench authority changed before patch handoff"
+      );
+    }
+    if (!/^pmwsiss_[A-Za-z0-9_-]{20,128}$/u.test(issueRef)) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench issue reference is invalid");
+    }
+    if (!/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u.test(hypothesisRef)) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench hypothesis reference is invalid");
+    }
+    return patchContextForProjection(selected.authority, selected.projection, issueRef, hypothesisRef);
+  }
+  #recordDiagnostic(event, outcome) {
+    if (this.#diagnosticEvents.length === this.#maxDiagnosticEvents) {
+      this.#diagnosticEvents.shift();
+      this.#diagnosticEventsDropped += 1;
+    }
+    this.#diagnosticEvents.push({
+      at: this.#clock.now().toISOString(),
+      event,
+      profileAlias: this.profileAlias,
+      outcome
+    });
+  }
+  #assertWorkspaceId(workspaceId) {
+    if (!/^pmws_[A-Za-z0-9_-]{20,128}$/u.test(workspaceId)) {
+      throw new RunStoreError("INVALID_INPUT", "Workbench ID is invalid");
+    }
+  }
+  #workbenchProjection(requestedWorkspaceId) {
+    const trustBundleSha256 = this.#bundle.integrity.contentSha256;
+    const latestId = latestWorkspaceId({
+      principal: this.#principal,
+      profileAlias: this.profileAlias,
+      trustBundleSha256
+    });
+    const inventory = this.#runStore.listOwnedRuns({
+      principal: this.#principal,
+      expectedProfileAlias: this.profileAlias,
+      expectedTrustBundleSha256: trustBundleSha256,
+      limit: WORKBENCH_RUN_INVENTORY_LIMIT
+    });
+    const selectedId = requestedWorkspaceId ?? latestId;
+    const selectedRun = selectedId === latestId ? inventory.runs[0] : inventory.runs.find((run) => workspaceIdForRun({
+      principal: this.#principal,
+      profileAlias: this.profileAlias,
+      trustBundleSha256,
+      runId: run.runId
+    }) === selectedId);
+    if (requestedWorkspaceId !== void 0 && selectedId !== latestId && selectedRun === void 0) {
+      throw new RunStoreError("WORKBENCH_NOT_FOUND", "Workbench is unavailable");
+    }
+    const workspaceId = selectedId;
+    let authority;
+    if (selectedRun === void 0) {
+      authority = {
+        workspaceId,
+        asOf: this.#workbenchStartedAt,
+        profileAlias: this.profileAlias,
+        capabilityProfile: this.#bundle.profile.capabilityProfile,
+        profileEndpointIds: this.#bundle.profile.endpointIds,
+        endpoints: this.#bundle.endpoints,
+        inventoryOmittedCount: inventory.omittedCount,
+        operations: [],
+        capabilityPacks: this.#bundle.capabilityPacks ?? [],
+        evidence: [],
+        contradictions: [],
+        checkpointRevision: 0
+      };
+    } else if (selectedRun.state === "SEALED") {
+      try {
+        const bundle = this.#artifactStore.validateBundle(bundleIdForRunId(selectedRun.runId));
+        if (bundle.runId !== selectedRun.runId) {
+          throw new Error("Immutable bundle run identity mismatch");
+        }
+        authority = {
+          workspaceId,
+          asOf: bundle.manifest.sealedAt,
+          profileAlias: bundle.profile.profileAlias,
+          capabilityProfile: bundle.profile.capabilityProfile,
+          profileEndpointIds: bundle.profile.endpointIds,
+          endpoints: this.#bundle.endpoints,
+          inventoryOmittedCount: inventory.omittedCount,
+          run: selectedRun,
+          request: bundle.request,
+          operations: bundle.operations,
+          capabilityPacks: (this.#bundle.capabilityPacks ?? []).filter((pack) => bundle.profile.capabilityPackIds?.includes(pack.packId) ?? false),
+          evidence: bundle.evidence,
+          contradictions: bundle.contradictions,
+          investigation: bundle.investigation,
+          coverage: bundle.coverage,
+          checkpointRevision: 0
+        };
+      } catch (error2) {
+        authority = {
+          workspaceId,
+          asOf: selectedRun.finalizedAt ?? selectedRun.createdAt,
+          profileAlias: this.profileAlias,
+          capabilityProfile: this.#bundle.profile.capabilityProfile,
+          profileEndpointIds: this.#bundle.profile.endpointIds,
+          endpoints: this.#bundle.endpoints,
+          inventoryOmittedCount: inventory.omittedCount,
+          run: selectedRun,
+          operations: [],
+          capabilityPacks: this.#bundle.capabilityPacks ?? [],
+          evidence: [],
+          contradictions: [],
+          checkpointRevision: 0,
+          authorityFailure: error2.code === "ENOENT" ? "ARTIFACT_UNAVAILABLE" : "ARTIFACT_INVALID"
+        };
+      }
+    } else {
+      authority = this.#activeWorkbenchAuthority(workspaceId, selectedRun, inventory.omittedCount);
+    }
+    return { authority, projection: buildWorkbenchProjection(authority) };
+  }
+  #activeWorkbenchAuthority(workspaceId, run, inventoryOmittedCount) {
+    const common = {
+      workspaceId,
+      profileAlias: this.profileAlias,
+      capabilityProfile: this.#bundle.profile.capabilityProfile,
+      profileEndpointIds: this.#bundle.profile.endpointIds,
+      endpoints: this.#bundle.endpoints,
+      capabilityPacks: this.#bundle.capabilityPacks ?? [],
+      inventoryOmittedCount,
+      run
+    };
+    const cached2 = this.#sessions.get(run.runId);
+    if (cached2 !== void 0) {
+      const evidence = [...cached2.evidence.values()];
+      return {
+        ...common,
+        asOf: this.#workbenchAsOf(run.createdAt, evidence),
+        request: cached2.request,
+        operations: this.#selectedOperations(cached2.request),
+        evidence,
+        contradictions: cached2.contradictions,
+        checkpointRevision: cached2.checkpointRevision
+      };
+    }
+    if (this.#checkpointStore === void 0) {
+      return {
+        ...common,
+        asOf: run.abortedAt ?? run.createdAt,
+        operations: [],
+        evidence: [],
+        contradictions: [],
+        checkpointRevision: 0,
+        authorityFailure: "CHECKPOINT_UNAVAILABLE"
+      };
+    }
+    try {
+      const checkpoint = this.#checkpointStore.read(run.runId);
+      if (checkpoint === void 0) {
+        return {
+          ...common,
+          asOf: run.abortedAt ?? run.createdAt,
+          operations: [],
+          evidence: [],
+          contradictions: [],
+          checkpointRevision: 0,
+          authorityFailure: "CHECKPOINT_UNAVAILABLE"
+        };
+      }
+      const validated = validateRuntimeCheckpoint(checkpoint, {
+        runId: run.runId,
+        trustBundleSha256: this.#bundle.integrity.contentSha256,
+        profileAlias: this.profileAlias
+      });
+      if (validated.runRevision > run.revision) {
+        throw new RunStoreError("STATE_CORRUPT", "Runtime checkpoint is newer than run authority");
+      }
+      if (validated.checkpointRevision > MAXIMUM_AUTHORITY_COMPONENT_REVISION) {
+        throw new RunStoreError("RUNTIME_CAPACITY", "Runtime checkpoint exceeds workbench authority capacity");
+      }
+      const operations = Object.values(validated.policy.operations).map((policyOperation) => {
+        const operation2 = this.#bundle.operations.find(
+          (candidate) => candidate.operationId === policyOperation.operationId && candidate.definitionSha256 === policyOperation.definitionSha256
+        );
+        if (operation2 === void 0) {
+          throw new RunStoreError("STATE_CORRUPT", "Runtime checkpoint operation cannot be reproduced");
+        }
+        return operation2;
+      });
+      return {
+        ...common,
+        asOf: this.#workbenchAsOf(run.abortedAt ?? run.createdAt, validated.evidence),
+        request: validated.request,
+        operations,
+        evidence: validated.evidence,
+        contradictions: validated.contradictions,
+        checkpointRevision: validated.checkpointRevision
+      };
+    } catch {
+      return {
+        ...common,
+        asOf: run.abortedAt ?? run.createdAt,
+        operations: [],
+        evidence: [],
+        contradictions: [],
+        checkpointRevision: 0,
+        authorityFailure: "CHECKPOINT_INVALID"
+      };
+    }
+  }
+  #workbenchAsOf(fallback, evidence) {
+    return evidence.reduce(
+      (latest, envelope) => envelope.collectedAt.localeCompare(latest) > 0 ? envelope.collectedAt : latest,
+      fallback
+    );
+  }
+  async doctor(profileAlias) {
+    this.#requireOpen();
+    assertAlias(profileAlias, "profile alias");
+    if (profileAlias !== this.profileAlias) {
+      this.#recordDiagnostic("DOCTOR", "BLOCKED");
+      return {
+        status: "BLOCKED",
+        profileAlias,
+        surface: this.#surface,
+        originModes: [],
+        checks: [{ name: "active-profile", status: "FAIL", message: "The profile is not active" }]
+      };
+    }
+    const checks = [
+      { name: "trust-bundle", status: "PASS", message: "Active trust bundle is integrity sealed" },
+      { name: "production-mutation", status: "PASS", message: "No provider mutation operations are exposed" },
+      { name: "raw-provider-retention", status: "PASS", message: "Opaque provider payload retention is disabled by contract" }
+    ];
+    const registeredPackages = new Set(
+      this.#registrations.map((registration) => registration.adapterPackage.packageId)
+    );
+    const activePackages = /* @__PURE__ */ new Set([
+      ...this.#bundle.endpoints.filter((endpoint) => this.#bundle.profile.endpointIds.includes(endpoint.endpointId)).map((endpoint) => endpoint.adapterId),
+      ...this.#bundle.operations.filter((operation2) => this.#bundle.profile.operationIds.includes(operation2.operationId)).map((operation2) => operation2.definition.adapterPackageId)
+    ]);
+    for (const packageId of activePackages) {
+      if (!registeredPackages.has(packageId)) {
+        checks.push({
+          name: "adapter-registration:".concat(packageId),
+          status: "FAIL",
+          message: "Active adapter ".concat(packageId, " is not registered and cannot collect evidence")
+        });
+      }
+    }
+    for (const issue2 of this.#configurationIssues) {
+      checks.push({
+        name: "provider-runtime:".concat(issue2.packageId ?? "configuration", ":").concat(issue2.code),
+        status: "FAIL",
+        message: issue2.message
+      });
+    }
+    for (const registration of this.#registrations) {
+      try {
+        const result = await registration.adapter.doctor({ signal: AbortSignal.timeout(5e3), clock: this.#clock });
+        checks.push(...result.checks);
+        if (result.status === "BLOCKED" && !result.checks.some((check2) => check2.status === "FAIL")) {
+          checks.push({
+            name: "adapter-doctor:".concat(registration.adapterPackage.packageId),
+            status: "FAIL",
+            message: "Adapter ".concat(registration.adapterPackage.packageId, " reported a blocked state")
+          });
+        }
+      } catch {
+        checks.push({
+          name: "adapter-doctor:".concat(registration.adapterPackage.packageId),
+          status: "FAIL",
+          message: "Adapter ".concat(registration.adapterPackage.packageId, " health check was unavailable")
+        });
+      }
+    }
+    const status = checks.some((check2) => check2.status === "FAIL") ? "BLOCKED" : checks.some((check2) => check2.status === "WARN") ? "WARN" : "READY";
+    this.#recordDiagnostic("DOCTOR", status);
+    return {
+      status,
+      profileAlias,
+      surface: this.#surface,
+      originModes: [...this.#bundle.profile.allowedOrigins],
+      checks
+    };
+  }
+  listCapabilities(profileAlias) {
+    this.#requireOpen();
+    this.#requireProfile(profileAlias);
+    const available = new Map(this.#registrations.map((registration) => [registration.adapterPackage.packageId, registration]));
+    const capabilities = this.#bundle.adapters.map((adapter) => ({
+      provider: adapter.providerCompatibility[0]?.provider ?? adapter.name,
+      packageId: adapter.packageId,
+      domains: [...adapter.domains],
+      operations: this.#bundle.operations.filter((operation2) => this.#bundle.profile.operationIds.includes(operation2.operationId) && operation2.definition.adapterPackageId === adapter.packageId).map((operation2) => operation2.operationId),
+      status: available.has(adapter.packageId) ? "AVAILABLE" : "UNAVAILABLE"
+    }));
+    this.#recordDiagnostic("LIST_CAPABILITIES", "COMPLETE");
+    const reachability = this.#surface === "fixture" ? "NOT_APPLICABLE" : this.#surface === "local-stdio" ? "HOST_DEPENDENT" : this.#surface === "customer-vpc" ? "VPC_ONLY" : this.#surface === "customer-relay" ? "RELAY_ONLY" : "NONE";
+    return {
+      profileAlias,
+      surface: this.#surface,
+      route: this.#routeDescription,
+      privateNetworkReachability: reachability,
+      capabilities,
+      capabilityPacks: (this.#bundle.capabilityPacks ?? []).filter((pack) => this.#bundle.profile.capabilityPackIds?.includes(pack.packId) ?? false).map((pack) => ({
+        packId: pack.packId,
+        revision: pack.revision,
+        useCase: pack.useCase,
+        requiredOperationIds: [...pack.requiredOperationIds],
+        optionalOperationIds: [...pack.optionalOperationIds],
+        signals: structuredClone(pack.signals),
+        definitionSha256: pack.definitionSha256
+      })),
+      limitations: [
+        "Destinations are fixed by the administrator-owned endpoint registry.",
+        "This surface does not imply reachability available to any other surface."
+      ]
+    };
+  }
+  listOperations(profileAlias, domain2) {
+    this.#requireOpen();
+    this.#requireProfile(profileAlias);
+    if (domain2 !== void 0) assertAlias(domain2, "domain");
+    this.#recordDiagnostic("LIST_OPERATIONS", "COMPLETE");
+    const activeOperations = new Set(this.#bundle.profile.operationIds);
+    return this.#bundle.operations.filter((operation2) => activeOperations.has(operation2.operationId) && (domain2 === void 0 || operation2.definition.domain === domain2)).map((operation2) => ({
+      operationId: operation2.operationId,
+      domain: operation2.definition.domain,
+      authority: operation2.definition.authority,
+      sourceAlias: operation2.definition.sourceAlias
+    }));
+  }
+  resolveScope(profileAlias, scopeAlias) {
+    this.#requireOpen();
+    this.#requireProfile(profileAlias);
+    assertAlias(scopeAlias, "scope alias");
+    const scope = this.#bundle.profile.scopes[scopeAlias];
+    if (scope === void 0) throw new TypeError("Scope alias is not active in this profile");
+    this.#recordDiagnostic("RESOLVE_SCOPE", "COMPLETE");
+    return {
+      profileAlias,
+      scopeAlias,
+      scope: structuredClone(scope),
+      correlationKeys: ["environment", ...scope.service === void 0 ? [] : ["service"]]
+    };
+  }
+  beginRun(rawRequest, idempotencyKey) {
+    this.#requireOpen();
+    const request = validateWorkflowRequest(rawRequest);
+    this.#requireProfile(request.profileAlias);
+    assertAlias(idempotencyKey, "idempotency key");
+    const knownRun = this.#idempotencyRuns.get(idempotencyKey);
+    if (knownRun === void 0 || !this.#sessions.has(knownRun)) {
+      this.#ensureSessionSlot();
+    }
+    let policy;
+    let configuredContract;
+    let childContract;
+    let started;
+    if (request.workflow === "verify") {
+      if (request.parentRunId === void 0) throw new TypeError("Verification requires a sealed parent run");
+      const parent = this.#runStore.getSealedParent({
+        principal: this.#principal,
+        runId: request.parentRunId,
+        expectedProfileAlias: this.profileAlias,
+        expectedTrustBundleSha256: this.#bundle.integrity.contentSha256
+      });
+      childContract = this.#sealedParentContract(request.parentRunId, parent.verificationContractSha256);
+      if (childContract.contractSha256 !== parent.verificationContractSha256) {
+        throw new TypeError("Verification request does not match the sealed parent contract");
+      }
+      policy = this.#compilePolicy(request, childContract.policyAlias);
+      configuredContract = buildVerificationContract(policy);
+      if (configuredContract === void 0 || configuredContract.contractSha256 !== childContract.contractSha256) {
+        throw new TypeError("Verification child policy does not reproduce the sealed parent contract");
+      }
+      started = this.#runStore.beginChildVerification({
+        principal: this.#principal,
+        request,
+        policy,
+        idempotencyKey,
+        ttlMs: this.#runTtlMs,
+        parentRunId: request.parentRunId,
+        verificationContractSha256: childContract.contractSha256
+      });
+    } else {
+      policy = this.#compilePolicy(request);
+      configuredContract = buildVerificationContract(policy);
+      started = this.#runStore.beginRun({
+        principal: this.#principal,
+        request,
+        policy,
+        idempotencyKey,
+        ttlMs: this.#runTtlMs
+      });
+    }
+    if (!started.replayed && !this.#sessions.has(started.runId)) {
+      const session = {
+        request,
+        policy,
+        budget: new BudgetLedger(policy),
+        evidence: /* @__PURE__ */ new Map(),
+        contradictions: [],
+        budgetHistory: [],
+        completedByKey: /* @__PURE__ */ new Map(),
+        incompleteKeys: /* @__PURE__ */ new Set(),
+        deferredOperations: /* @__PURE__ */ new Map(),
+        auditEventCount: 0,
+        checkpointRevision: 0,
+        ...childContract === void 0 ? configuredContract === void 0 ? {} : { verificationContract: configuredContract } : { verificationContract: childContract }
+      };
+      this.#sessions.set(started.runId, session);
+      if (started.handle !== void 0) {
+        session.activeHandle = started.handle;
+        session.activeRevision = started.revision;
+      }
+      if (started.handle === void 0) throw new Error("A new run did not return checkpoint authority");
+      this.#persistSession(started.runId, session, {
+        runHandle: started.handle,
+        runRevision: started.revision
+      });
+    }
+    if (this.#sessions.has(started.runId)) {
+      this.#idempotencyRuns.set(idempotencyKey, started.runId);
+    }
+    const selectedOperations = this.#selectedOperations(request);
+    this.#recordDiagnostic("BEGIN_RUN", started.replayed ? "REPLAYED" : "CREATED");
+    return {
+      runId: started.runId,
+      ...started.handle === void 0 ? {} : { runHandle: started.handle },
+      revision: started.revision,
+      replayed: started.replayed,
+      requestSha256: policy.requestSha256,
+      trustBundleSha256: policy.trustBundleSha256,
+      operationSnapshotSha256: operationSnapshotHash(selectedOperations),
+      origin: request.origin
+    };
+  }
+  resumeRun(runHandle, expectedRevision, retainRecoveryAlias = false) {
+    this.#requireOpen();
+    const resumeInput = {
+      principal: this.#principal,
+      handle: runHandle,
+      ...expectedRevision === void 0 ? {} : { expectedRevision },
+      expectedProfileAlias: this.profileAlias,
+      expectedTrustBundleSha256: this.#bundle.integrity.contentSha256
+    };
+    const before = this.#runStore.getRunWithHandle(resumeInput);
+    const session = this.#sessionFor(before.record.runId, this.#access(runHandle, before.revision));
+    const resumed = this.#runStore.resumeRunWithHandle(resumeInput);
+    if (resumed.handle === void 0) throw new Error("Resume did not rotate the run handle");
+    const revision = retainRecoveryAlias ? resumed.revision : this.#runStore.acknowledgeResume(this.#access(resumed.handle, resumed.revision)).revision;
+    delete session.leaseHandle;
+    delete session.leaseExpiresAt;
+    session.activeHandle = resumed.handle;
+    session.activeRevision = revision;
+    this.#recordDiagnostic("RESUME_RUN", "RESUMED");
+    return {
+      runId: resumed.runId,
+      ...resumed.handle === void 0 ? {} : { runHandle: resumed.handle },
+      revision,
+      replayed: false,
+      requestSha256: session.policy.requestSha256,
+      trustBundleSha256: session.policy.trustBundleSha256,
+      operationSnapshotSha256: operationSnapshotHash(this.#selectedOperations(session.request)),
+      origin: session.request.origin
+    };
+  }
+  acknowledgeResume(runHandle, expectedRevision) {
+    this.#requireOpen();
+    const acknowledged = this.#runStore.acknowledgeResume(this.#access(runHandle, expectedRevision));
+    const session = this.#sessionFor(acknowledged.record.runId, this.#access(runHandle, acknowledged.revision));
+    session.activeHandle = runHandle;
+    session.activeRevision = acknowledged.revision;
+    return acknowledged.revision;
+  }
+  async collect(runHandle, expectedRevision, operationIds, windowKind = "CURRENT", signal) {
+    this.#requireOpen();
+    const selected = uniqueOperationIds(operationIds);
+    if (selected.length === 0) throw new TypeError("At least one operation ID is required");
+    let state = this.#ensureLease(runHandle, expectedRevision);
+    const window = windowKind === "BASELINE" ? state.session.request.baselineWindow : state.session.request.window;
+    if (window === void 0) throw new TypeError("This run has no sealed baseline window");
+    for (const operationId of selected) this.#requireAuthorizedOperation(state.session, operationId);
+    const output = new Array(selected.length);
+    const failures = new Array(selected.length);
+    const pending = [];
+    selected.forEach((operationId, index) => {
+      const key = collectionKey(operationId, window);
+      const existingId = state.session.completedByKey.get(key);
+      const existing = existingId === void 0 ? void 0 : state.session.evidence.get(existingId);
+      if (existing !== void 0) output[index] = existing;
+      else pending.push({
+        index,
+        operationId,
+        key,
+        sourceAlias: state.session.policy.operations[operationId].sourceAlias
+      });
+    });
+    const lanes = [...pending.reduce((groups, item) => {
+      const lane = groups.get(item.sourceAlias) ?? [];
+      lane.push(item);
+      groups.set(item.sourceAlias, lane);
+      return groups;
+    }, /* @__PURE__ */ new Map()).values()];
+    let laneCursor = 0;
+    let serialWorker;
+    let auditedAttempts = 0;
+    let revision = state.revision;
+    const renewLease = (operationTimeoutMs = 0) => {
+      const renewalTtlMs = Math.max(
+        this.#leaseTtlMs,
+        operationTimeoutMs === 0 ? 0 : operationTimeoutMs + 3e4
+      );
+      const renewed = this.#runStore.renewLease(
+        this.#access(runHandle, revision),
+        state.session.leaseHandle,
+        renewalTtlMs
+      );
+      revision = renewed.revision;
+      state.session.leaseExpiresAt = renewed.expiresAt;
+      state.session.activeRevision = renewed.revision;
+    };
+    const persistSession = () => {
+      this.#persistSession(state.runId, state.session, {
+        runHandle,
+        runRevision: revision,
+        leaseHandle: state.session.leaseHandle
+      });
+    };
+    const auditCycleBefore = auditEventCountForRun(this.#audit, state.runId);
+    if (pending.length > 0) {
+      const view = this.#runStore.getRun(this.#access(runHandle, revision));
+      if (view.record.audit.required && view.record.audit.state === "HEALTHY") {
+        const degraded = this.#runStore.updateAudit({
+          access: this.#access(runHandle, revision),
+          leaseHandle: state.session.leaseHandle,
+          state: "DEGRADED"
+        });
+        revision = degraded.revision;
+      }
+    }
+    const worker = async (workerId) => {
+      while (laneCursor < lanes.length) {
+        if (serialWorker !== void 0 && serialWorker !== workerId) return;
+        const lane = lanes[laneCursor++];
+        for (let laneIndex = 0; laneIndex < lane.length; laneIndex += 1) {
+          const item = lane[laneIndex];
+          if (signal?.aborted) {
+            failures[item.index] = { operationId: item.operationId, code: "INTERRUPTED" };
+            state.session.deferredOperations.set(item.operationId, "INTERRUPTED");
+            persistSession();
+            continue;
+          }
+          let reservationId;
+          try {
+            state.session.deferredOperations.delete(item.operationId);
+            const effectiveLimits = state.session.policy.operations[item.operationId].limits;
+            renewLease(effectiveLimits.timeoutMs);
+            const reservation = state.session.budget.reserve(item.operationId);
+            reservationId = reservation.reservationId;
+            state.session.budgetHistory.push({
+              reservationId,
+              operationId: item.operationId,
+              outcome: "RESERVED"
+            });
+            state.session.incompleteKeys.add(item.key);
+            persistSession();
+            const allocated = this.#runStore.allocateEvidence(
+              this.#access(runHandle, revision),
+              state.session.leaseHandle
+            );
+            revision = allocated.revision;
+            auditedAttempts += 1;
+            const envelope = await this.#collectAllocated({
+              runId: state.runId,
+              session: state.session,
+              operationId: item.operationId,
+              window,
+              evidenceId: allocated.evidenceId,
+              tenantSha256: allocated.record.principal.tenantSha256,
+              reservationId: reservation.reservationId,
+              key: item.key,
+              fenceLease: () => renewLease(),
+              persistSession,
+              signal
+            });
+            output[item.index] = envelope;
+            if (envelope.collectionState === "ERROR" && envelope.error?.category === "RATE_LIMIT") {
+              serialWorker ??= workerId;
+              for (const deferred of lane.slice(laneIndex + 1)) {
+                failures[deferred.index] = {
+                  operationId: deferred.operationId,
+                  code: "PROVIDER_RATE_LIMIT_DEFERRED"
+                };
+                state.session.deferredOperations.set(
+                  deferred.operationId,
+                  "PROVIDER_RATE_LIMIT_DEFERRED"
+                );
+              }
+              persistSession();
+              break;
+            }
+          } catch (error2) {
+            if (isLeaseAuthorityFailure(error2)) throw error2;
+            if (reservationId !== void 0) cancelBudgetHistory(state.session, reservationId);
+            const code = safeFailureCode(error2);
+            failures[item.index] = { operationId: item.operationId, code };
+            state.session.deferredOperations.set(item.operationId, code);
+            persistSession();
+          }
+        }
+      }
+    };
+    const concurrency = Math.min(state.session.policy.runLimits.maxConcurrent, Math.max(1, lanes.length));
+    await Promise.all(Array.from({ length: concurrency }, (_, workerId) => worker(workerId)));
+    const cycleEvents = auditEventsForRun(this.#audit, state.runId, auditCycleBefore);
+    state.session.auditEventCount = auditCycleBefore + cycleEvents.length;
+    const starts = cycleEvents.filter((event) => event.event === "COLLECTION_STARTED").length;
+    const terminals = cycleEvents.filter(
+      (event) => event.event === "COLLECTION_COMPLETED" || event.event === "COLLECTION_FAILED"
+    ).length;
+    if (this.#audit.durable && auditedAttempts > 0 && cycleEvents.length === auditedAttempts * 2 && starts === auditedAttempts && terminals === auditedAttempts) {
+      const audited = this.#runStore.updateAudit({
+        access: this.#access(runHandle, revision),
+        leaseHandle: state.session.leaseHandle,
+        state: "HEALTHY"
+      });
+      revision = audited.revision;
+    }
+    persistSession();
+    state = { ...state, revision };
+    state.session.activeRevision = revision;
+    const collected = output.filter((value) => value !== void 0);
+    const collectionFailures = failures.filter(
+      (value) => value !== void 0
+    );
+    return {
+      runId: state.runId,
+      revision: state.revision,
+      evidence: collected,
+      budget: state.session.budget.snapshot(),
+      ...collectionFailures.length === 0 ? {} : { failures: collectionFailures }
+    };
+  }
+  async compare(runHandle, expectedRevision, operationId, signal) {
+    this.#requireOpen();
+    const current = await this.collect(runHandle, expectedRevision, [operationId], "CURRENT", signal);
+    const baseline = await this.collect(runHandle, current.revision, [operationId], "BASELINE", signal);
+    if (current.evidence[0] === void 0 || baseline.evidence[0] === void 0) {
+      throw new TypeError("Comparison requires current and baseline evidence");
+    }
+    return {
+      ...baseline,
+      evidence: [...current.evidence, ...baseline.evidence],
+      comparison: {
+        currentEvidenceId: current.evidence[0].evidenceId,
+        baselineEvidenceId: baseline.evidence[0].evidenceId
+      }
+    };
+  }
+  getEvidence(runHandle, expectedRevision, evidenceId) {
+    this.#requireOpen();
+    const resolved = this.#resolve(runHandle, expectedRevision);
+    this.#runStore.assertEvidenceOwnership(resolved.access, evidenceId);
+    const evidence = resolved.session.evidence.get(evidenceId);
+    if (evidence === void 0) throw new TypeError("Owned evidence is not available");
+    this.#recordDiagnostic("GET_EVIDENCE", "COMPLETE");
+    return { runId: resolved.runId, revision: expectedRevision, evidence: structuredClone(evidence) };
+  }
+  auditStatus(runHandle, expectedRevision) {
+    this.#requireOpen();
+    const resolved = this.#resolve(runHandle, expectedRevision);
+    const view = this.#runStore.getRun(resolved.access);
+    this.#recordDiagnostic("AUDIT_STATUS", "COMPLETE");
+    return {
+      runId: resolved.runId,
+      revision: view.revision,
+      required: view.record.audit.required,
+      state: view.record.audit.state,
+      collectionEventCount: auditEventCountForRun(this.#audit, resolved.runId)
+    };
+  }
+  finalizeRun(runHandle, expectedRevision, rawAnalysisDraft) {
+    this.#requireOpen();
+    let state = this.#ensureLease(runHandle, expectedRevision);
+    const submittedAnalysis = rawAnalysisDraft === void 0 ? void 0 : validateAnalysisDraft(rawAnalysisDraft, new Set(state.session.evidence.keys()));
+    if (submittedAnalysis?.approvalRequired === true && this.#bundle.profile.capabilityProfile !== "prepare_patch") {
+      throw new TypeError("Approval-required analysis is only valid for a prepare_patch profile");
+    }
+    if (submittedAnalysis?.approvalRequired === true && state.session.verificationContract === void 0) {
+      throw new TypeError("Approval-required analysis requires a begin-time verification contract");
+    }
+    if (state.session.sealedArtifact === void 0 && state.session.contradictions.length === 0) {
+      const detected = detectContradictions([...state.session.evidence.values()], state.runId, this.#clock);
+      for (const record4 of detected) {
+        const allocated = this.#runStore.allocateContradiction(
+          this.#access(runHandle, state.revision),
+          state.session.leaseHandle
+        );
+        state = { ...state, revision: allocated.revision };
+        const draft = { ...record4, contradictionId: allocated.contradictionId };
+        const withoutIntegrity = { ...draft };
+        delete withoutIntegrity.integrity;
+        state.session.contradictions.push({
+          ...withoutIntegrity,
+          integrity: computeIntegrity(withoutIntegrity)
+        });
+        this.#persistSession(state.runId, state.session, {
+          runHandle,
+          runRevision: state.revision,
+          leaseHandle: state.session.leaseHandle
+        });
+      }
+    }
+    const view = this.#runStore.getRun(this.#access(runHandle, state.revision));
+    if (view.record.state === "OPEN") {
+      const finalizing = this.#runStore.beginFinalize(
+        this.#access(runHandle, state.revision),
+        state.session.leaseHandle
+      );
+      state = { ...state, revision: finalizing.revision };
+    }
+    const evidence = [...state.session.evidence.values()].sort(
+      (left, right) => left.operationId.localeCompare(right.operationId) || left.evidenceId.localeCompare(right.evidenceId)
+    );
+    const fallbackObservations = evidence.map((envelope, index) => ({
+      observationId: "observation.".concat(index + 1),
+      statement: safeObservationStatement(envelope),
+      evidenceIds: [envelope.evidenceId]
+    }));
+    const incomplete = evidence.filter((envelope) => envelope.collectionState !== "COMPLETE" || envelope.freshnessState !== "FRESH").map((envelope) => "".concat(envelope.operationId, " did not produce fresh complete evidence")).concat([...state.session.incompleteKeys].map((key) => "".concat(key.split("|")[0], " was interrupted before evidence completion"))).concat([...state.session.deferredOperations.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([operationId, code]) => "".concat(operationId, " was deferred by scheduler policy (").concat(code, ")")));
+    const analysis = submittedAnalysis ?? {
+      schemaVersion: "1.0.0",
+      observations: fallbackObservations,
+      inferences: [],
+      hypotheses: [],
+      checksPerformed: [...new Set(evidence.map((envelope) => envelope.operationId))],
+      missingEvidence: [
+        "No analysis draft was submitted; this artifact is evidence-only and cannot claim a complete investigation."
+      ],
+      smallestSafeNextStep: incomplete.length === 0 ? "Submit a bounded evidence-linked analysis before drawing a production conclusion." : "Resolve the named evidence gaps and submit a bounded evidence-linked analysis.",
+      approvalRequired: false,
+      remainingUncertainty: [],
+      owners: []
+    };
+    const verification = state.session.request.workflow !== "verify" ? void 0 : state.session.verificationContract === void 0 ? (() => {
+      throw new TypeError("Verification run has no sealed parent contract");
+    })() : evaluateVerification(
+      state.session.verificationContract,
+      evidence,
+      state.session.contradictions,
+      state.session.request.window,
+      this.#clock.now().getTime()
+    );
+    const recoveryState = state.session.request.workflow === "verify" ? verification.status === "PASSED" ? "RECOVERED" : verification.status === "FAILED" ? "NOT_RECOVERED" : "INCOMPLETE" : analysis.approvalRequired ? "APPROVAL_REQUIRED" : "NONE";
+    const investigation = {
+      analysisState: submittedAnalysis === void 0 ? "EVIDENCE_ONLY" : "SUBMITTED",
+      recoveryState,
+      scope: structuredClone(state.session.policy.scope),
+      requestedWindow: structuredClone(state.session.request.window),
+      evaluatedWindow: structuredClone(state.session.request.window),
+      observations: analysis.observations,
+      inferences: analysis.inferences,
+      hypotheses: analysis.hypotheses,
+      checksPerformed: analysis.checksPerformed,
+      missingEvidence: [.../* @__PURE__ */ new Set([...analysis.missingEvidence, ...incomplete])],
+      smallestSafeNextStep: analysis.smallestSafeNextStep,
+      approvalRequired: analysis.approvalRequired,
+      ...state.session.verificationContract === void 0 ? {} : { verificationContract: structuredClone(state.session.verificationContract) },
+      ...verification === void 0 ? {} : { verificationResult: { status: verification.status, evidenceIds: verification.evidenceIds } },
+      remainingUncertainty: [
+        ...analysis.remainingUncertainty,
+        ...state.session.contradictions.length === 0 ? [] : ["Unresolved source contradictions require operator review."]
+      ],
+      owners: analysis.owners
+    };
+    const bundleId = bundleIdForRunId(state.runId);
+    const selectedOperations = this.#selectedOperations(state.session.request);
+    const artifactRequest = (state.session.request.requiredCapabilityPacks?.length ?? 0) === 0 ? state.session.request : {
+      ...state.session.request,
+      requiredOperations: selectedOperations.map((operation2) => operation2.operationId)
+    };
+    let sealed;
+    if (state.session.sealedArtifact === void 0) {
+      try {
+        sealed = this.#artifactStore.seal({
+          bundleId,
+          runId: state.runId,
+          createdAt: this.#clock.now().toISOString(),
+          request: artifactRequest,
+          profile: this.#bundle.profile,
+          operations: selectedOperations,
+          evidence,
+          contradictions: state.session.contradictions,
+          investigation
+        });
+      } catch (error2) {
+        try {
+          const existing = this.#artifactStore.validateBundle(bundleId);
+          if (existing.runId !== state.runId) throw error2;
+          sealed = { ...existing, created: true };
+        } catch {
+          throw error2;
+        }
+      }
+      state.session.sealedArtifact = {
+        bundleId,
+        manifestSha256: sealed.manifestSha256,
+        artifactRelativePath: "bundles/".concat(bundleId),
+        status: sealed.investigation.status
+      };
+      this.#persistSession(state.runId, state.session, {
+        runHandle,
+        runRevision: state.revision,
+        leaseHandle: state.session.leaseHandle
+      });
+    } else {
+      const existing = this.#artifactStore.validateBundle(bundleId);
+      if (existing.runId !== state.runId || existing.manifestSha256 !== state.session.sealedArtifact.manifestSha256) {
+        throw new Error("Checkpointed artifact identity does not match immutable storage");
+      }
+      sealed = { ...existing, created: true };
+    }
+    const finalized = this.#runStore.finalizeRun({
+      access: this.#access(runHandle, state.revision),
+      leaseHandle: state.session.leaseHandle,
+      ...state.session.verificationContract === void 0 ? {} : { verificationContractSha256: state.session.verificationContract.contractSha256 }
+    });
+    delete state.session.leaseHandle;
+    delete state.session.leaseExpiresAt;
+    delete state.session.activeHandle;
+    delete state.session.activeRevision;
+    this.#recordDiagnostic("FINALIZE_RUN", "SEALED");
+    const output = {
+      runId: state.runId,
+      revision: finalized.revision,
+      state: "SEALED",
+      status: sealed.investigation.status,
+      bundleId,
+      manifestSha256: sealed.manifestSha256,
+      artifactRelativePath: "bundles/".concat(bundleId),
+      recoveryState: sealed.investigation.recoveryState,
+      evidenceSummary: finalizedEvidenceSummary(sealed.evidence, sealed.contradictions),
+      presentation: incidentPresentation(
+        {
+          runId: sealed.runId,
+          request: sealed.request,
+          profile: sealed.profile,
+          evidence: sealed.evidence,
+          contradictions: sealed.contradictions
+        },
+        sealed.investigation,
+        sealed.coverage
+      )
+    };
+    this.#evictReconstructableSession(state.runId, state.session);
+    return output;
+  }
+  cancelRun(runHandle, expectedRevision, reason) {
+    this.#requireOpen();
+    const state = this.#ensureLease(runHandle, expectedRevision);
+    const aborted2 = this.#runStore.abortRun(
+      this.#access(runHandle, state.revision),
+      state.s

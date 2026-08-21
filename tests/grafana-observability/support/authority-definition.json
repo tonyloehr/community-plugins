@@ -1,0 +1,519 @@
+{
+  "schemaVersion": "1.0.0",
+  "adapter": {
+    "schemaVersion": "1.0.0",
+    "packageId": "adapter.grafana.v1",
+    "name": "Grafana read-only evidence adapter",
+    "version": "1.1.0",
+    "protocolVersion": "1.0",
+    "publisher": {
+      "name": "Codex Production Monitoring"
+    },
+    "entrypoint": {
+      "kind": "BUILTIN",
+      "registryKey": "grafana-v1"
+    },
+    "domains": [
+      "METRICS",
+      "LOGS",
+      "TRACES",
+      "ALERTS",
+      "RUNTIME",
+      "CHANGES",
+      "RUNBOOKS"
+    ],
+    "capabilities": [
+      "grafana.health.read",
+      "grafana.search.read",
+      "grafana.datasource.read",
+      "grafana.datasource.health.read",
+      "grafana.datasource.query.read",
+      "grafana.annotations.read",
+      "grafana.unified-alerts.read"
+    ],
+    "providerCompatibility": [
+      {
+        "provider": "grafana",
+        "versions": ">=10 <14"
+      }
+    ],
+    "supportedContractVersions": [
+      "1.0.0"
+    ],
+    "conformance": [
+      "CORE_READ",
+      "METRICS",
+      "LOGS",
+      "TRACES",
+      "ALERTS",
+      "RUNTIME",
+      "CHANGES",
+      "RUNBOOKS"
+    ]
+  },
+  "capabilityPacks": [
+    {
+      "schemaVersion": "1.0.0",
+      "packId": "grafana.infrastructure",
+      "revision": 1,
+      "useCase": "INFRASTRUCTURE",
+      "requiredOperationIds": [
+        "grafana.infrastructure.cpu.usage",
+        "grafana.infrastructure.memory.load",
+        "grafana.infrastructure.disk.free",
+        "grafana.infrastructure.system.load"
+      ],
+      "optionalOperationIds": [],
+      "supportedSubjectKinds": [
+        "HOST",
+        "FLEET"
+      ],
+      "scopeMappings": [
+        {
+          "scopeField": "environment",
+          "providerField": "environment",
+          "required": true
+        },
+        {
+          "scopeField": "service",
+          "providerField": "service",
+          "required": false
+        },
+        {
+          "scopeField": "subject.ref",
+          "providerField": "instance",
+          "required": true
+        }
+      ],
+      "signals": [
+        {
+          "signalId": "cpu_usage",
+          "operationId": "grafana.infrastructure.cpu.usage",
+          "resultName": "cpu_usage",
+          "order": 1,
+          "unit": "percent",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "warning": 80,
+            "critical": 95
+          }
+        },
+        {
+          "signalId": "memory_load",
+          "operationId": "grafana.infrastructure.memory.load",
+          "resultName": "memory_load",
+          "order": 2,
+          "unit": "percent",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "warning": 80,
+            "critical": 95
+          }
+        },
+        {
+          "signalId": "disk_free",
+          "operationId": "grafana.infrastructure.disk.free",
+          "resultName": "disk_free",
+          "order": 3,
+          "unit": "percent",
+          "polarity": "LOW_IS_BAD",
+          "thresholds": {
+            "comparator": "LTE",
+            "warning": 20,
+            "critical": 10
+          }
+        },
+        {
+          "signalId": "system_load",
+          "operationId": "grafana.infrastructure.system.load",
+          "resultName": "system_load",
+          "order": 4,
+          "unit": "ratio",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "warning": 1,
+            "critical": 2
+          }
+        }
+      ],
+      "issueRules": [
+        {
+          "ruleId": "cpu_critical",
+          "comparison": "THRESHOLD",
+          "operationId": "grafana.infrastructure.cpu.usage",
+          "resultName": "cpu_usage",
+          "comparator": "GTE",
+          "threshold": 95,
+          "issueKind": "ALERT",
+          "severity": "CRITICAL",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "memory_critical",
+          "comparison": "THRESHOLD",
+          "operationId": "grafana.infrastructure.memory.load",
+          "resultName": "memory_load",
+          "comparator": "GTE",
+          "threshold": 95,
+          "issueKind": "ALERT",
+          "severity": "CRITICAL",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "disk_critical",
+          "comparison": "THRESHOLD",
+          "operationId": "grafana.infrastructure.disk.free",
+          "resultName": "disk_free",
+          "comparator": "LTE",
+          "threshold": 10,
+          "issueKind": "ALERT",
+          "severity": "CRITICAL",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "infrastructure_gap",
+          "comparison": "ERROR",
+          "operationId": "grafana.infrastructure.system.load",
+          "issueKind": "EVIDENCE_GAP",
+          "severity": "WARNING",
+          "signedThreshold": false
+        }
+      ],
+      "definitionSha256": "a5a66c4a3e1b5c89b3047049f2d5a6d731c1c7e9b0240a9e86e4c1cb04d94345"
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "packId": "grafana.apm",
+      "revision": 1,
+      "useCase": "APPLICATION_PERFORMANCE",
+      "requiredOperationIds": [
+        "grafana.apm.request.rate",
+        "grafana.apm.error.codes",
+        "grafana.apm.error.rate",
+        "grafana.apm.latency.p95",
+        "grafana.apm.traces.slow"
+      ],
+      "optionalOperationIds": [],
+      "supportedSubjectKinds": [],
+      "scopeMappings": [
+        {
+          "scopeField": "environment",
+          "providerField": "environment",
+          "required": true
+        },
+        {
+          "scopeField": "service",
+          "providerField": "service",
+          "required": false
+        }
+      ],
+      "signals": [
+        {
+          "signalId": "request_rate",
+          "operationId": "grafana.apm.request.rate",
+          "resultName": "request_rate",
+          "order": 1,
+          "unit": "requests_per_second",
+          "polarity": "NEUTRAL"
+        },
+        {
+          "signalId": "error_rate",
+          "operationId": "grafana.apm.error.rate",
+          "resultName": "error_rate",
+          "order": 2,
+          "unit": "percent",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "warning": 1,
+            "critical": 5
+          }
+        },
+        {
+          "signalId": "latency_p95",
+          "operationId": "grafana.apm.latency.p95",
+          "resultName": "latency_p95",
+          "order": 3,
+          "unit": "milliseconds",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "warning": 500,
+            "critical": 1000
+          }
+        }
+      ],
+      "issueRules": [
+        {
+          "ruleId": "error_rate_regression",
+          "comparison": "BASELINE_DELTA",
+          "operationId": "grafana.apm.error.rate",
+          "resultName": "error_rate",
+          "comparator": "GTE",
+          "delta": 2,
+          "issueKind": "REGRESSION",
+          "severity": "CRITICAL",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "latency_regression",
+          "comparison": "BASELINE_DELTA",
+          "operationId": "grafana.apm.latency.p95",
+          "resultName": "latency_p95",
+          "comparator": "GTE",
+          "delta": 250,
+          "issueKind": "REGRESSION",
+          "severity": "WARNING",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "apm_empty",
+          "comparison": "EMPTY",
+          "operationId": "grafana.apm.request.rate",
+          "issueKind": "EVIDENCE_GAP",
+          "severity": "WARNING",
+          "signedThreshold": false
+        }
+      ],
+      "definitionSha256": "adcea132cfefa177f054a642c413b4edc0f5b3b35d00e5922eb5bcb40e6a4ff1"
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "packId": "grafana.logs",
+      "revision": 1,
+      "useCase": "LOG_ANALYTICS",
+      "requiredOperationIds": [
+        "grafana.logs.events",
+        "grafana.logs.error.rate",
+        "grafana.logs.security.markers"
+      ],
+      "optionalOperationIds": [],
+      "supportedSubjectKinds": [
+        "HOST",
+        "DEVICE"
+      ],
+      "scopeMappings": [
+        {
+          "scopeField": "environment",
+          "providerField": "environment",
+          "required": true
+        },
+        {
+          "scopeField": "service",
+          "providerField": "service",
+          "required": false
+        },
+        {
+          "scopeField": "subject.ref",
+          "providerField": "subject",
+          "required": true
+        }
+      ],
+      "signals": [
+        {
+          "signalId": "log_events",
+          "operationId": "grafana.logs.events",
+          "resultName": "log_events",
+          "order": 1,
+          "unit": "events",
+          "polarity": "NEUTRAL"
+        },
+        {
+          "signalId": "log_error_rate",
+          "operationId": "grafana.logs.error.rate",
+          "resultName": "log_error_rate",
+          "order": 2,
+          "unit": "events_per_second",
+          "polarity": "HIGH_IS_BAD"
+        },
+        {
+          "signalId": "security_markers",
+          "operationId": "grafana.logs.security.markers",
+          "resultName": "security_markers",
+          "order": 3,
+          "unit": "events",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "critical": 1
+          }
+        }
+      ],
+      "issueRules": [
+        {
+          "ruleId": "error_log_deviation",
+          "comparison": "BASELINE_DELTA",
+          "operationId": "grafana.logs.error.rate",
+          "resultName": "log_error_rate",
+          "comparator": "GTE",
+          "delta": 1,
+          "issueKind": "REGRESSION",
+          "severity": "WARNING",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "security_marker",
+          "comparison": "THRESHOLD",
+          "operationId": "grafana.logs.security.markers",
+          "resultName": "security_markers",
+          "comparator": "GTE",
+          "threshold": 1,
+          "issueKind": "ANOMALY",
+          "severity": "CRITICAL",
+          "signedThreshold": true
+        }
+      ],
+      "definitionSha256": "77dd4cc7de00d81e823144f0f7d3730b602e1e624b47ff25bdd16157ff349156"
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "packId": "grafana.iot-edge",
+      "revision": 1,
+      "useCase": "IOT_EDGE",
+      "requiredOperationIds": [
+        "grafana.iot.telemetry",
+        "grafana.iot.device.freshness"
+      ],
+      "optionalOperationIds": [],
+      "supportedSubjectKinds": [
+        "DEVICE",
+        "FLEET"
+      ],
+      "scopeMappings": [
+        {
+          "scopeField": "environment",
+          "providerField": "environment",
+          "required": true
+        },
+        {
+          "scopeField": "subject.ref",
+          "providerField": "device",
+          "required": true
+        }
+      ],
+      "signals": [
+        {
+          "signalId": "telemetry",
+          "operationId": "grafana.iot.telemetry",
+          "resultName": "telemetry",
+          "order": 1,
+          "polarity": "NEUTRAL"
+        },
+        {
+          "signalId": "device_freshness",
+          "operationId": "grafana.iot.device.freshness",
+          "resultName": "device_age",
+          "order": 2,
+          "unit": "seconds",
+          "polarity": "HIGH_IS_BAD",
+          "thresholds": {
+            "comparator": "GTE",
+            "warning": 300,
+            "critical": 900
+          }
+        }
+      ],
+      "issueRules": [
+        {
+          "ruleId": "device_stale",
+          "comparison": "THRESHOLD",
+          "operationId": "grafana.iot.device.freshness",
+          "resultName": "device_age",
+          "reducer": "MAX",
+          "comparator": "GTE",
+          "threshold": 300,
+          "issueKind": "ALERT",
+          "severity": "WARNING",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "telemetry_empty",
+          "comparison": "EMPTY",
+          "operationId": "grafana.iot.telemetry",
+          "issueKind": "EVIDENCE_GAP",
+          "severity": "WARNING",
+          "signedThreshold": false
+        }
+      ],
+      "definitionSha256": "c24b6e9b998e241fdbc9d07cf9cd2868f9bee5d8584a56a535fd6286b469260e"
+    },
+    {
+      "schemaVersion": "1.0.0",
+      "packId": "grafana.business-kpis",
+      "revision": 1,
+      "useCase": "BUSINESS_INTELLIGENCE",
+      "requiredOperationIds": [
+        "grafana.business.revenue",
+        "grafana.business.conversion",
+        "grafana.business.operational.kpi"
+      ],
+      "optionalOperationIds": [],
+      "supportedSubjectKinds": [
+        "BUSINESS_UNIT",
+        "KPI_SET"
+      ],
+      "scopeMappings": [
+        {
+          "scopeField": "environment",
+          "providerField": "environment",
+          "required": true
+        },
+        {
+          "scopeField": "subject.ref",
+          "providerField": "business_scope",
+          "required": true
+        }
+      ],
+      "signals": [
+        {
+          "signalId": "revenue",
+          "operationId": "grafana.business.revenue",
+          "resultName": "revenue",
+          "order": 1,
+          "unit": "currency",
+          "polarity": "NEUTRAL"
+        },
+        {
+          "signalId": "conversion",
+          "operationId": "grafana.business.conversion",
+          "resultName": "conversion",
+          "order": 2,
+          "unit": "percent",
+          "polarity": "LOW_IS_BAD"
+        },
+        {
+          "signalId": "operational_kpi",
+          "operationId": "grafana.business.operational.kpi",
+          "resultName": "operational_kpi",
+          "order": 3,
+          "polarity": "NEUTRAL"
+        }
+      ],
+      "issueRules": [
+        {
+          "ruleId": "revenue_deviation",
+          "comparison": "BASELINE_DELTA",
+          "operationId": "grafana.business.revenue",
+          "resultName": "revenue",
+          "comparator": "LTE",
+          "delta": -10,
+          "issueKind": "REGRESSION",
+          "severity": "WARNING",
+          "signedThreshold": true
+        },
+        {
+          "ruleId": "business_data_gap",
+          "comparison": "ERROR",
+          "operationId": "grafana.business.operational.kpi",
+          "issueKind": "EVIDENCE_GAP",
+          "severity": "WARNING",
+          "signedThreshold": false
+        }
+      ],
+      "definitionSha256": "f11f3b48a6eb198725c937b2cefc1c2a04cd9c551fa039b6478366a0acb2c1fc"
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:workflow-event:1",
+  "title": "Production Monitoring workflow event",
+  "oneOf": [
+    { "$ref": "#/$defs/workflowStarted" },
+    { "$ref": "#/$defs/runStarted" },
+    { "$ref": "#/$defs/runResumed" },
+    { "$ref": "#/$defs/evidenceCollected" },
+    { "$ref": "#/$defs/runSealed" },
+    { "$ref": "#/$defs/workflowStopped" },
+    { "$ref": "#/$defs/runCancelled" },
+    { "$ref": "#/$defs/workflowResult" }
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["schemaVersion", "sequence", "at", "event"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "type": "string" }
+      }
+    },
+    "workflowStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "workflow", "requestSha256"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "workflow_started" },
+        "workflow": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Workflow" },
+        "requestSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+      }
+    },
+    "runStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "runId", "revision", "origin", "operationSnapshotSha256"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "run_started" },
+        "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+        "operationSnapshotSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+      }
+    },
+    "runResumed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "runId", "revision", "operationSnapshotSha256"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "run_resumed" },
+        "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "operationSnapshotSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+      }
+    },
+    "evidenceCollected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "runId", "revision", "evidence"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "evidence_collected" },
+        "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "evidence": {
+          "type": "array",
+          "maxItems": 128,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["evidenceId", "operationId", "state"],
+            "properties": {
+              "evidenceId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" },
+              "operationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+              "state": { "enum": ["COMPLETE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR"] }
+            }
+          }
+        }
+      }
+    },
+    "runSealed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "runId", "revision", "bundleId", "manifestSha256", "artifactRelativePath"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "run_sealed" },
+        "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "bundleId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/BundleId" },
+        "manifestSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+        "artifactRelativePath": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/PortableRelativePath" }
+      }
+    },
+    "workflowStopped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "runId", "state", "code"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "workflow_stopped" },
+        "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+        "state": { "enum": ["BLOCKED", "CANCELLED", "PAUSED"] },
+        "code": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/ErrorCode" }
+      }
+    },
+    "runCancelled": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "runId", "revision", "retainedEvidenceIds"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "run_cancelled" },
+        "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "retainedEvidenceIds": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" }
+        }
+      }
+    },
+    "workflowResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sequence", "at", "event", "result", "requestSha256", "operationSnapshotSha256"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "at": { "type": "string", "format": "date-time" },
+        "event": { "const": "workflow_result" },
+        "result": { "$ref": "urn:production-monitoring:schema:workflow-summary:1" },
+        "requestSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+        "operationSnapshotSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+      }
+    }
+  }
+}

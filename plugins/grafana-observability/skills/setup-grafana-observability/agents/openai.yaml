@@ -1,0 +1,5 @@
+interface:
+  display_name: "Set Up Grafana Observability"
+  short_description: "Check a bounded read-only Grafana profile"
+  brand_color: "#7058E8"
+  default_prompt: "Use $setup-grafana-observability to check my reviewed Grafana profile and activated packs without handling credentials."

@@ -1,0 +1,2052 @@
+on$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "value", value: unwrap(x[0]) }) },
+              { "name": "simplestatements_set_timezone_val", "symbols": ["kw_local"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "local" }) },
+              { "name": "simplestatements_set_timezone_val", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default], "postprocess": (x) => (0, lexer_2.track)(x, { type: "default" }) },
+              { "name": "simplestatements_set_timezone_val", "symbols": ["kw_interval", "string", "kw_hour", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "kw_minute"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "interval", value: (0, lexer_2.unbox)(x[1]) }) },
+              { "name": "simplestatements_set_names", "symbols": ["kw_names", "simplestatements_set_names_val"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "set names", to: x[1] }) },
+              { "name": "simplestatements_set_names_val$subexpression$1", "symbols": ["string"] },
+              { "name": "simplestatements_set_names_val", "symbols": ["simplestatements_set_names_val$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "value", value: unwrap(x[0]) }) },
+              { "name": "simplestatements_set_simple$ebnf$1$subexpression$1", "symbols": ["kw_local"] },
+              { "name": "simplestatements_set_simple$ebnf$1$subexpression$1", "symbols": ["kw_session"] },
+              { "name": "simplestatements_set_simple$ebnf$1", "symbols": ["simplestatements_set_simple$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "simplestatements_set_simple$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "simplestatements_set_simple$subexpression$1", "symbols": [lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq] },
+              { "name": "simplestatements_set_simple$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to] },
+              { "name": "simplestatements_set_simple", "symbols": ["simplestatements_set_simple$ebnf$1", "ident", "simplestatements_set_simple$subexpression$1", "simplestatements_set_val"], "postprocess": (x) => {
+                var _a;
+                return (0, lexer_2.track)(x, {
+                  type: "set",
+                  variable: asName(x[1]),
+                  scope: (_a = unwrap(x[0])) === null || _a === void 0 ? void 0 : _a.toLowerCase(),
+                  set: (0, lexer_2.unbox)(x[3])
+                });
+              } },
+              { "name": "simplestatements_set_val", "symbols": ["simplestatements_set_val_raw"], "postprocess": unwrap },
+              { "name": "simplestatements_set_val", "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default], "postprocess": (x) => (0, lexer_2.track)(x, { type: "default" }) },
+              { "name": "simplestatements_set_val$ebnf$1$subexpression$1", "symbols": ["comma", "simplestatements_set_val_raw"] },
+              { "name": "simplestatements_set_val$ebnf$1", "symbols": ["simplestatements_set_val$ebnf$1$subexpression$1"] },
+              { "name": "simplestatements_set_val$ebnf$1$subexpression$2", "symbols": ["comma", "simplestatements_set_val_raw"] },
+              { "name": "simplestatements_set_val$ebnf$1", "symbols": ["simplestatements_set_val$ebnf$1", "simplestatements_set_val$ebnf$1$subexpression$2"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "simplestatements_set_val", "symbols": ["simplestatements_set_val_raw", "simplestatements_set_val$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "list",
+                values: [x[0], ...x[1] || []]
+              }) },
+              { "name": "simplestatements_set_val_raw$subexpression$1", "symbols": ["string"] },
+              { "name": "simplestatements_set_val_raw$subexpression$1", "symbols": ["int"] },
+              { "name": "simplestatements_set_val_raw", "symbols": ["simplestatements_set_val_raw$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "value", value: unwrap(x) }) },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word] },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on] },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_true") ? { type: "kw_true" } : kw_true] },
+              { "name": "simplestatements_set_val_raw$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_false") ? { type: "kw_false" } : kw_false] },
+              { "name": "simplestatements_set_val_raw", "symbols": ["simplestatements_set_val_raw$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "identifier", name: unwrap(x).value }) },
+              { "name": "simplestatements_set_val_raw", "symbols": [lexer_1.lexerAny.has("quoted_word") ? { type: "quoted_word" } : quoted_word], "postprocess": (x) => (0, lexer_2.track)(x, { type: "identifier", doubleQuoted: true, name: unwrap(x).value }) },
+              { "name": "simplestatements_show", "symbols": ["kw_show", "ident"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "show", variable: asName(x[1]) }) },
+              { "name": "create_schema$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "kw_schema"] },
+              { "name": "create_schema$ebnf$1", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "create_schema$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_schema", "symbols": ["create_schema$subexpression$1", "create_schema$ebnf$1", "ident"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "create schema",
+                name: asName(x[2]),
+                ...!!x[1] ? { ifNotExists: true } : {}
+              }) },
+              { "name": "raise_statement$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("debug", "log", "info", "notice", "warning", "exception") },
+              { "name": "raise_statement$ebnf$1", "symbols": ["raise_statement$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "raise_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "raise_statement$ebnf$2$subexpression$1", "symbols": ["comma", "expr_list_raw"], "postprocess": last },
+              { "name": "raise_statement$ebnf$2", "symbols": ["raise_statement$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "raise_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "raise_statement$ebnf$3", "symbols": ["raise_using"], "postprocess": id },
+              { "name": "raise_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "raise_statement", "symbols": ["kw_raise", "raise_statement$ebnf$1", "string", "raise_statement$ebnf$2", "raise_statement$ebnf$3"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "raise",
+                format: toStr(x[2]),
+                ...x[1] && { level: toStr(x[1]) },
+                ...x[3] && x[3].length && { formatExprs: x[3] },
+                ...x[4] && x[4].length && { using: x[4] }
+              }) },
+              { "name": "raise_using$macrocall$2", "symbols": ["raise_using_one"] },
+              { "name": "raise_using$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "raise_using$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "raise_using$macrocall$2"], "postprocess": last },
+              { "name": "raise_using$macrocall$1$ebnf$1", "symbols": ["raise_using$macrocall$1$ebnf$1", "raise_using$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "raise_using$macrocall$1", "symbols": ["raise_using$macrocall$2", "raise_using$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "raise_using", "symbols": [lexer_1.lexerAny.has("kw_using") ? { type: "kw_using" } : kw_using, "raise_using$macrocall$1"], "postprocess": last },
+              { "name": "raise_using_one", "symbols": ["raise_using_what", lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "expr"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: toStr(x[0]),
+                value: x[2]
+              }) },
+              { "name": "raise_using_what", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table] },
+              { "name": "raise_using_what", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("message", "detail", "hint", "errcode", "column", "constraint", "datatype", "schema") },
+              { "name": "comment_statement", "symbols": ["kw_comment", lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "comment_what", lexer_1.lexerAny.has("kw_is") ? { type: "kw_is" } : kw_is, "string"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "comment",
+                comment: (0, lexer_2.unbox)(last(x)),
+                on: unwrap(x[2])
+              }) },
+              { "name": "comment_what", "symbols": ["comment_what_col"] },
+              { "name": "comment_what", "symbols": ["comment_what_nm"] },
+              { "name": "comment_what_nm$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table] },
+              { "name": "comment_what_nm$subexpression$1", "symbols": ["kw_materialized", "kw_view"] },
+              { "name": "comment_what_nm$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("database", "index", "trigger", "type", "view") },
+              { "name": "comment_what_nm", "symbols": ["comment_what_nm$subexpression$1", "qualified_name"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: toStr(x[0]),
+                name: x[1]
+              }) },
+              { "name": "comment_what_col", "symbols": ["kw_column", "qcolumn"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "column",
+                column: last(x)
+              }) },
+              { "name": "simplestatements_begin$ebnf$1$subexpression$1", "symbols": ["kw_transaction"] },
+              { "name": "simplestatements_begin$ebnf$1$subexpression$1", "symbols": ["kw_work"] },
+              { "name": "simplestatements_begin$ebnf$1", "symbols": ["simplestatements_begin$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "simplestatements_begin$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "simplestatements_begin$ebnf$2", "symbols": [] },
+              { "name": "simplestatements_begin$ebnf$2$subexpression$1", "symbols": ["simplestatements_begin_isol"] },
+              { "name": "simplestatements_begin$ebnf$2$subexpression$1", "symbols": ["simplestatements_begin_writ"] },
+              { "name": "simplestatements_begin$ebnf$2$subexpression$1", "symbols": ["simplestatements_begin_def"] },
+              { "name": "simplestatements_begin$ebnf$2", "symbols": ["simplestatements_begin$ebnf$2", "simplestatements_begin$ebnf$2$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              {
+                "name": "simplestatements_begin",
+                "symbols": ["kw_begin", "simplestatements_begin$ebnf$1", "simplestatements_begin$ebnf$2"],
+                "postprocess": (x) => (0, lexer_2.track)(x, {
+                  type: "begin",
+                  ...x[2].reduce((a, b) => ({ ...unwrap(a), ...unwrap(b) }), {})
+                })
+              },
+              { "name": "simplestatements_begin_isol$subexpression$1", "symbols": ["kw_isolation", "kw_level"] },
+              { "name": "simplestatements_begin_isol$subexpression$2", "symbols": ["kw_serializable"] },
+              { "name": "simplestatements_begin_isol$subexpression$2$subexpression$1", "symbols": ["word"], "postprocess": kw("repeatable") },
+              { "name": "simplestatements_begin_isol$subexpression$2", "symbols": ["simplestatements_begin_isol$subexpression$2$subexpression$1", "kw_read"] },
+              { "name": "simplestatements_begin_isol$subexpression$2$subexpression$2", "symbols": ["word"], "postprocess": kw("committed") },
+              { "name": "simplestatements_begin_isol$subexpression$2", "symbols": ["kw_read", "simplestatements_begin_isol$subexpression$2$subexpression$2"] },
+              { "name": "simplestatements_begin_isol$subexpression$2$subexpression$3", "symbols": ["word"], "postprocess": kw("uncommitted") },
+              { "name": "simplestatements_begin_isol$subexpression$2", "symbols": ["kw_read", "simplestatements_begin_isol$subexpression$2$subexpression$3"] },
+              { "name": "simplestatements_begin_isol", "symbols": ["simplestatements_begin_isol$subexpression$1", "simplestatements_begin_isol$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                isolationLevel: toStr(x[1], " ")
+              }) },
+              { "name": "simplestatements_begin_writ$subexpression$1", "symbols": ["kw_read", "kw_write"] },
+              { "name": "simplestatements_begin_writ$subexpression$1", "symbols": ["kw_read", lexer_1.lexerAny.has("kw_only") ? { type: "kw_only" } : kw_only] },
+              { "name": "simplestatements_begin_writ", "symbols": ["simplestatements_begin_writ$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                writeable: toStr(x, " ")
+              }) },
+              { "name": "simplestatements_begin_def$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not], "postprocess": id },
+              { "name": "simplestatements_begin_def$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "simplestatements_begin_def", "symbols": ["simplestatements_begin_def$ebnf$1", lexer_1.lexerAny.has("kw_deferrable") ? { type: "kw_deferrable" } : kw_deferrable], "postprocess": (x) => (0, lexer_2.track)(x, {
+                deferrable: !x[0]
+              }) },
+              { "name": "insert_statement$subexpression$1", "symbols": ["kw_insert", lexer_1.lexerAny.has("kw_into") ? { type: "kw_into" } : kw_into] },
+              { "name": "insert_statement$ebnf$1", "symbols": ["collist_paren"], "postprocess": id },
+              { "name": "insert_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "insert_statement$ebnf$2$subexpression$1$subexpression$1", "symbols": ["kw_system"] },
+              { "name": "insert_statement$ebnf$2$subexpression$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_user") ? { type: "kw_user" } : kw_user] },
+              { "name": "insert_statement$ebnf$2$subexpression$1", "symbols": ["kw_overriding", "insert_statement$ebnf$2$subexpression$1$subexpression$1", "kw_value"], "postprocess": get(1) },
+              { "name": "insert_statement$ebnf$2", "symbols": ["insert_statement$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "insert_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "insert_statement$ebnf$3$subexpression$1", "symbols": ["selection"] },
+              { "name": "insert_statement$ebnf$3$subexpression$1", "symbols": ["selection_paren"] },
+              { "name": "insert_statement$ebnf$3", "symbols": ["insert_statement$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "insert_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "insert_statement$ebnf$4$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, "kw_conflict", "insert_on_conflict"], "postprocess": last },
+              { "name": "insert_statement$ebnf$4", "symbols": ["insert_statement$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "insert_statement$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "insert_statement$ebnf$5$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_returning") ? { type: "kw_returning" } : kw_returning, "select_expr_list_aliased"], "postprocess": last },
+              { "name": "insert_statement$ebnf$5", "symbols": ["insert_statement$ebnf$5$subexpression$1"], "postprocess": id },
+              { "name": "insert_statement$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "insert_statement", "symbols": ["insert_statement$subexpression$1", "table_ref_aliased", "insert_statement$ebnf$1", "insert_statement$ebnf$2", "insert_statement$ebnf$3", "insert_statement$ebnf$4", "insert_statement$ebnf$5"], "postprocess": (x) => {
+                const columns = x[2] && x[2].map(asName);
+                const overriding = toStr(x[3]);
+                const insert = unwrap(x[4]);
+                const onConflict = x[5];
+                const returning = x[6];
+                return (0, lexer_2.track)(x, {
+                  type: "insert",
+                  into: unwrap(x[1]),
+                  insert,
+                  ...overriding && { overriding },
+                  ...columns && { columns },
+                  ...returning && { returning },
+                  ...onConflict && { onConflict }
+                });
+              } },
+              { "name": "insert_values$ebnf$1", "symbols": [] },
+              { "name": "insert_values$ebnf$1$subexpression$1", "symbols": ["comma", "insert_value"], "postprocess": last },
+              { "name": "insert_values$ebnf$1", "symbols": ["insert_values$ebnf$1", "insert_values$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "insert_values", "symbols": ["insert_value", "insert_values$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "insert_value", "symbols": ["lparen", "insert_expr_list_raw", "rparen"], "postprocess": get(1) },
+              { "name": "insert_expr_list_raw$ebnf$1", "symbols": [] },
+              { "name": "insert_expr_list_raw$ebnf$1$subexpression$1", "symbols": ["comma", "expr_or_select"], "postprocess": last },
+              { "name": "insert_expr_list_raw$ebnf$1", "symbols": ["insert_expr_list_raw$ebnf$1", "insert_expr_list_raw$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "insert_expr_list_raw", "symbols": ["expr_or_select", "insert_expr_list_raw$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "insert_on_conflict$ebnf$1", "symbols": ["insert_on_conflict_what"], "postprocess": id },
+              { "name": "insert_on_conflict$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "insert_on_conflict", "symbols": ["insert_on_conflict$ebnf$1", "insert_on_conflict_do"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                ...x[0] ? { on: unwrap(x[0]) } : {},
+                ...x[1]
+              }) },
+              { "name": "insert_on_conflict_what", "symbols": ["lparen", "expr_list_raw", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "on expr",
+                exprs: x[1]
+              }) },
+              { "name": "insert_on_conflict_what", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, lexer_1.lexerAny.has("kw_constraint") ? { type: "kw_constraint" } : kw_constraint, "qname"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "on constraint",
+                constraint: last(x)
+              }) },
+              { "name": "insert_on_conflict_do", "symbols": [lexer_1.lexerAny.has("kw_do") ? { type: "kw_do" } : kw_do, "kw_nothing"], "postprocess": (x) => ({ do: "do nothing" }) },
+              { "name": "insert_on_conflict_do$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_do") ? { type: "kw_do" } : kw_do, "kw_update", "kw_set"] },
+              { "name": "insert_on_conflict_do$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_where") ? { type: "kw_where" } : kw_where, "expr"], "postprocess": last },
+              { "name": "insert_on_conflict_do$ebnf$1", "symbols": ["insert_on_conflict_do$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "insert_on_conflict_do$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "insert_on_conflict_do", "symbols": ["insert_on_conflict_do$subexpression$1", "update_set_list", "insert_on_conflict_do$ebnf$1"], "postprocess": (x) => ({
+                do: { sets: x[1] },
+                ...x[2] && { where: x[2] }
+              }) },
+              { "name": "update_statement$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from, "select_from_subject"], "postprocess": last },
+              { "name": "update_statement$ebnf$1", "symbols": ["update_statement$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "update_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "update_statement$ebnf$2", "symbols": ["select_where"], "postprocess": id },
+              { "name": "update_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "update_statement$ebnf$3$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_returning") ? { type: "kw_returning" } : kw_returning, "select_expr_list_aliased"], "postprocess": last },
+              { "name": "update_statement$ebnf$3", "symbols": ["update_statement$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "update_statement$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "update_statement", "symbols": ["kw_update", "table_ref_aliased", "kw_set", "update_set_list", "update_statement$ebnf$1", "update_statement$ebnf$2", "update_statement$ebnf$3"], "postprocess": (x) => {
+                const from = unwrap(x[4]);
+                const where = unwrap(x[5]);
+                const returning = x[6];
+                return (0, lexer_2.track)(x, {
+                  type: "update",
+                  table: unwrap(x[1]),
+                  sets: x[3],
+                  ...where ? { where } : {},
+                  ...from ? { from } : {},
+                  ...returning ? { returning } : {}
+                });
+              } },
+              { "name": "update_set_list$ebnf$1", "symbols": [] },
+              { "name": "update_set_list$ebnf$1$subexpression$1", "symbols": ["comma", "update_set"], "postprocess": last },
+              { "name": "update_set_list$ebnf$1", "symbols": ["update_set_list$ebnf$1", "update_set_list$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "update_set_list", "symbols": ["update_set", "update_set_list$ebnf$1"], "postprocess": ([head, tail]) => {
+                const ret = [];
+                for (const _t of [head, ...tail || []]) {
+                  const t = unwrap(_t);
+                  if (Array.isArray(t)) {
+                    ret.push(...t);
+                  } else {
+                    ret.push(t);
+                  }
+                }
+                return ret;
+              } },
+              { "name": "update_set", "symbols": ["update_set_one"] },
+              { "name": "update_set", "symbols": ["update_set_multiple"] },
+              { "name": "update_set_one", "symbols": ["ident", lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "expr"], "postprocess": (x) => (0, lexer_2.box)(x, {
+                column: asName(x[0]),
+                value: unwrap(x[2])
+              }) },
+              { "name": "update_set_multiple$subexpression$1", "symbols": ["lparen", "expr_list_raw", "rparen"], "postprocess": get(1) },
+              { "name": "update_set_multiple", "symbols": ["collist_paren", lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "update_set_multiple$subexpression$1"], "postprocess": (x) => {
+                const cols = x[0];
+                const exprs = x[2];
+                if (cols.length !== exprs.length) {
+                  throw new Error("number of columns does not match number of values");
+                }
+                return (0, lexer_2.box)(x, cols.map((x2, i) => ({
+                  column: asName(x2),
+                  value: unwrap(exprs[i])
+                })));
+              } },
+              { "name": "altertable_statement$ebnf$1", "symbols": ["kw_ifexists"], "postprocess": id },
+              { "name": "altertable_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_statement$ebnf$2", "symbols": [lexer_1.lexerAny.has("kw_only") ? { type: "kw_only" } : kw_only], "postprocess": id },
+              { "name": "altertable_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_statement", "symbols": ["kw_alter", lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table, "altertable_statement$ebnf$1", "altertable_statement$ebnf$2", "table_ref", "altertable_actions"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "alter table",
+                ...x[2] ? { ifExists: true } : {},
+                ...x[3] ? { only: true } : {},
+                table: unwrap(x[4]),
+                changes: (0, lexer_2.unbox)(x[5]).map(unwrap)
+              }) },
+              { "name": "altertable_actions$ebnf$1", "symbols": [] },
+              { "name": "altertable_actions$ebnf$1$subexpression$1", "symbols": ["comma", "altertable_action"], "postprocess": last },
+              { "name": "altertable_actions$ebnf$1", "symbols": ["altertable_actions$ebnf$1", "altertable_actions$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "altertable_actions", "symbols": ["altertable_action", "altertable_actions$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "altertable_action", "symbols": ["altertable_rename_table"] },
+              { "name": "altertable_action", "symbols": ["altertable_rename_column"] },
+              { "name": "altertable_action", "symbols": ["altertable_rename_constraint"] },
+              { "name": "altertable_action", "symbols": ["altertable_add_column"] },
+              { "name": "altertable_action", "symbols": ["altertable_drop_column"] },
+              { "name": "altertable_action", "symbols": ["altertable_alter_column"] },
+              { "name": "altertable_action", "symbols": ["altertable_add_constraint"] },
+              { "name": "altertable_action", "symbols": ["altertable_drop_constraint"] },
+              { "name": "altertable_action", "symbols": ["altertable_owner"] },
+              { "name": "altertable_rename_table", "symbols": ["kw_rename", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "word"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "rename",
+                to: asName(last(x))
+              }) },
+              { "name": "altertable_rename_column$ebnf$1", "symbols": ["kw_column"], "postprocess": id },
+              { "name": "altertable_rename_column$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_rename_column", "symbols": ["kw_rename", "altertable_rename_column$ebnf$1", "ident", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "ident"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "rename column",
+                column: asName(x[2]),
+                to: asName(last(x))
+              }) },
+              { "name": "altertable_rename_constraint", "symbols": ["kw_rename", lexer_1.lexerAny.has("kw_constraint") ? { type: "kw_constraint" } : kw_constraint, "ident", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "ident"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "rename constraint",
+                constraint: asName(x[2]),
+                to: asName(last(x))
+              }) },
+              { "name": "altertable_add_column$ebnf$1", "symbols": ["kw_column"], "postprocess": id },
+              { "name": "altertable_add_column$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_add_column$ebnf$2", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "altertable_add_column$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_add_column", "symbols": ["kw_add", "altertable_add_column$ebnf$1", "altertable_add_column$ebnf$2", "createtable_column"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "add column",
+                ...x[2] ? { ifNotExists: true } : {},
+                column: unwrap(x[3])
+              }) },
+              { "name": "altertable_drop_column$ebnf$1", "symbols": ["kw_column"], "postprocess": id },
+              { "name": "altertable_drop_column$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_drop_column$ebnf$2", "symbols": ["kw_ifexists"], "postprocess": id },
+              { "name": "altertable_drop_column$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_drop_column$ebnf$3$subexpression$1", "symbols": ["kw_restrict"] },
+              { "name": "altertable_drop_column$ebnf$3$subexpression$1", "symbols": ["kw_cascade"] },
+              { "name": "altertable_drop_column$ebnf$3", "symbols": ["altertable_drop_column$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "altertable_drop_column$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_drop_column", "symbols": ["kw_drop", "altertable_drop_column$ebnf$1", "altertable_drop_column$ebnf$2", "ident", "altertable_drop_column$ebnf$3"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "drop column",
+                ...x[2] ? { ifExists: true } : {},
+                column: asName(x[3]),
+                ...x[4] ? { behaviour: toStr(x[4], " ") } : {}
+              }) },
+              { "name": "altertable_alter_column$ebnf$1", "symbols": ["kw_column"], "postprocess": id },
+              { "name": "altertable_alter_column$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_alter_column", "symbols": ["kw_alter", "altertable_alter_column$ebnf$1", "ident", "altercol"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "alter column",
+                column: asName(x[2]),
+                alter: unwrap(x[3])
+              }) },
+              { "name": "altercol$ebnf$1$subexpression$1", "symbols": ["kw_set", "kw_data"] },
+              { "name": "altercol$ebnf$1", "symbols": ["altercol$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "altercol$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altercol", "symbols": ["altercol$ebnf$1", "kw_type", "data_type"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "set type", dataType: unwrap(last(x)) }) },
+              { "name": "altercol", "symbols": ["kw_set", lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default, "expr"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "set default", default: unwrap(last(x)) }) },
+              { "name": "altercol", "symbols": ["kw_drop", lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default], "postprocess": (x) => (0, lexer_2.track)(x, { type: "drop default" }) },
+              { "name": "altercol$subexpression$1", "symbols": ["kw_set"] },
+              { "name": "altercol$subexpression$1", "symbols": ["kw_drop"] },
+              { "name": "altercol", "symbols": ["altercol$subexpression$1", "kw_not_null"], "postprocess": (x) => (0, lexer_2.track)(x, { type: toStr(x, " ") }) },
+              { "name": "altercol", "symbols": ["altercol_generated_add"], "postprocess": unwrap },
+              { "name": "altertable_add_constraint", "symbols": ["kw_add", "createtable_constraint"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "add constraint",
+                constraint: unwrap(last(x))
+              }) },
+              { "name": "altertable_drop_constraint$ebnf$1", "symbols": ["kw_ifexists"], "postprocess": id },
+              { "name": "altertable_drop_constraint$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_drop_constraint$ebnf$2$subexpression$1", "symbols": ["kw_restrict"] },
+              { "name": "altertable_drop_constraint$ebnf$2$subexpression$1", "symbols": ["kw_cascade"] },
+              { "name": "altertable_drop_constraint$ebnf$2", "symbols": ["altertable_drop_constraint$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "altertable_drop_constraint$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "altertable_drop_constraint", "symbols": ["kw_drop", lexer_1.lexerAny.has("kw_constraint") ? { type: "kw_constraint" } : kw_constraint, "altertable_drop_constraint$ebnf$1", "ident", "altertable_drop_constraint$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "drop constraint",
+                ...x[2] ? { ifExists: true } : {},
+                constraint: asName(x[3]),
+                ...x[4] ? { behaviour: toStr(x[4], " ") } : {}
+              }) },
+              { "name": "altertable_owner", "symbols": ["kw_owner", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "ident"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "owner",
+                to: asName(last(x))
+              }) },
+              { "name": "altercol_generated_add", "symbols": ["kw_add", "altercol_generated"], "postprocess": last },
+              { "name": "altercol_generated$ebnf$1$subexpression$1", "symbols": ["kw_always"] },
+              { "name": "altercol_generated$ebnf$1$subexpression$1", "symbols": ["kw_by", lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default] },
+              { "name": "altercol_generated$ebnf$1", "symbols": ["altercol_generated$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "altercol_generated$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altercol_generated$ebnf$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "kw_identity"] },
+              { "name": "altercol_generated$ebnf$2", "symbols": ["altercol_generated$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "altercol_generated$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "altercol_generated$ebnf$3$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "lparen", "expr", "rparen"], "postprocess": get(2) },
+              { "name": "altercol_generated$ebnf$3", "symbols": ["altercol_generated$ebnf$3$subexpression$1"], "postprocess": id },
+              { "name": "altercol_generated$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "altercol_generated$ebnf$4$subexpression$1", "symbols": ["lparen", "altercol_generated_seq", "rparen"], "postprocess": get(1) },
+              { "name": "altercol_generated$ebnf$4", "symbols": ["altercol_generated$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "altercol_generated$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "altercol_generated$ebnf$5$subexpression$1", "symbols": ["kw_stored"] },
+              { "name": "altercol_generated$ebnf$5", "symbols": ["altercol_generated$ebnf$5$subexpression$1"], "postprocess": id },
+              { "name": "altercol_generated$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "altercol_generated", "symbols": ["kw_generated", "altercol_generated$ebnf$1", "altercol_generated$ebnf$2", "altercol_generated$ebnf$3", "altercol_generated$ebnf$4", "altercol_generated$ebnf$5"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "add generated",
+                ...x[1] && { always: toStr(x[1], " ") },
+                ...x[3] && { expression: unwrap(x[3]) },
+                ...x[4] && { sequence: unwrap(x[4]) },
+                ...x[5] && { stored: true }
+              }) },
+              { "name": "altercol_generated_seq$ebnf$1$subexpression$1", "symbols": ["kw_sequence", "kw_name", "qualified_name"] },
+              { "name": "altercol_generated_seq$ebnf$1", "symbols": ["altercol_generated_seq$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "altercol_generated_seq$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "altercol_generated_seq$ebnf$2", "symbols": [] },
+              { "name": "altercol_generated_seq$ebnf$2", "symbols": ["altercol_generated_seq$ebnf$2", "create_sequence_option"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "altercol_generated_seq", "symbols": ["altercol_generated_seq$ebnf$1", "altercol_generated_seq$ebnf$2"], "postprocess": (x) => {
+                const ret = {
+                  ...x[0] && { name: unwrap(last(x[0])) }
+                };
+                setSeqOpts(ret, x[1]);
+                return (0, lexer_2.track)(x, ret);
+              } },
+              { "name": "alterindex_statement$ebnf$1", "symbols": ["kw_ifexists"], "postprocess": id },
+              { "name": "alterindex_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "alterindex_statement", "symbols": ["kw_alter", "kw_index", "alterindex_statement$ebnf$1", "table_ref", "alterindex_action"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "alter index",
+                ...x[2] ? { ifExists: true } : {},
+                index: unwrap(x[3]),
+                change: unwrap(x[4])
+              }) },
+              { "name": "alterindex_action", "symbols": ["alterindex_rename"] },
+              { "name": "alterindex_action", "symbols": ["alterindex_set_tablespace"] },
+              { "name": "alterindex_rename", "symbols": ["kw_rename", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "word"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "rename",
+                to: asName(last(x))
+              }) },
+              { "name": "alterindex_set_tablespace", "symbols": ["kw_set", "kw_tablespace", "word"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "set tablespace",
+                tablespace: asName(last(x))
+              }) },
+              { "name": "delete_statement", "symbols": ["delete_delete"] },
+              { "name": "delete_statement", "symbols": ["delete_truncate"] },
+              { "name": "delete_delete$subexpression$1", "symbols": ["kw_delete", lexer_1.lexerAny.has("kw_from") ? { type: "kw_from" } : kw_from] },
+              { "name": "delete_delete$ebnf$1", "symbols": ["select_where"], "postprocess": id },
+              { "name": "delete_delete$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "delete_delete$ebnf$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_returning") ? { type: "kw_returning" } : kw_returning, "select_expr_list_aliased"], "postprocess": last },
+              { "name": "delete_delete$ebnf$2", "symbols": ["delete_delete$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "delete_delete$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "delete_delete", "symbols": ["delete_delete$subexpression$1", "table_ref_aliased", "delete_delete$ebnf$1", "delete_delete$ebnf$2"], "postprocess": (x) => {
+                const where = x[2];
+                const returning = x[3];
+                return (0, lexer_2.track)(x, {
+                  type: "delete",
+                  from: unwrap(x[1]),
+                  ...where ? { where } : {},
+                  ...returning ? { returning } : {}
+                });
+              } },
+              { "name": "delete_truncate$subexpression$1$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table], "postprocess": id },
+              { "name": "delete_truncate$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "delete_truncate$subexpression$1", "symbols": ["kw_truncate", "delete_truncate$subexpression$1$ebnf$1"] },
+              { "name": "delete_truncate$macrocall$2", "symbols": ["table_ref"] },
+              { "name": "delete_truncate$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "delete_truncate$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "delete_truncate$macrocall$2"], "postprocess": last },
+              { "name": "delete_truncate$macrocall$1$ebnf$1", "symbols": ["delete_truncate$macrocall$1$ebnf$1", "delete_truncate$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "delete_truncate$macrocall$1", "symbols": ["delete_truncate$macrocall$2", "delete_truncate$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "delete_truncate$ebnf$1$subexpression$1$subexpression$1", "symbols": ["kw_restart"] },
+              { "name": "delete_truncate$ebnf$1$subexpression$1$subexpression$1", "symbols": ["kw_continue"] },
+              { "name": "delete_truncate$ebnf$1$subexpression$1", "symbols": ["delete_truncate$ebnf$1$subexpression$1$subexpression$1", "kw_identity"] },
+              { "name": "delete_truncate$ebnf$1", "symbols": ["delete_truncate$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "delete_truncate$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "delete_truncate$ebnf$2$subexpression$1", "symbols": ["kw_restrict"] },
+              { "name": "delete_truncate$ebnf$2$subexpression$1", "symbols": ["kw_cascade"] },
+              { "name": "delete_truncate$ebnf$2", "symbols": ["delete_truncate$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "delete_truncate$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "delete_truncate", "symbols": ["delete_truncate$subexpression$1", "delete_truncate$macrocall$1", "delete_truncate$ebnf$1", "delete_truncate$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "truncate table",
+                tables: x[1],
+                ...x[2] && { identity: toStr(x[2][0]) },
+                ...x[3] && { cascade: toStr(x[3]) }
+              }) },
+              { "name": "create_sequence_statement$ebnf$1$subexpression$1", "symbols": ["kw_temp"] },
+              { "name": "create_sequence_statement$ebnf$1$subexpression$1", "symbols": ["kw_temporary"] },
+              { "name": "create_sequence_statement$ebnf$1", "symbols": ["create_sequence_statement$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "create_sequence_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_sequence_statement$ebnf$2", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "create_sequence_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "create_sequence_statement$ebnf$3", "symbols": [] },
+              { "name": "create_sequence_statement$ebnf$3", "symbols": ["create_sequence_statement$ebnf$3", "create_sequence_option"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "create_sequence_statement", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "create_sequence_statement$ebnf$1", "kw_sequence", "create_sequence_statement$ebnf$2", "qualified_name", "create_sequence_statement$ebnf$3"], "postprocess": (x) => {
+                const ret = {
+                  type: "create sequence",
+                  ...x[1] && { temp: true },
+                  ...x[3] && { ifNotExists: true },
+                  name: unwrap(x[4]),
+                  options: {}
+                };
+                setSeqOpts(ret.options, x[5]);
+                return (0, lexer_2.track)(x, ret);
+              } },
+              { "name": "create_sequence_option", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "data_type"], "postprocess": (x) => (0, lexer_2.box)(x, ["as", x[1]]) },
+              { "name": "create_sequence_option$ebnf$1", "symbols": ["kw_by"], "postprocess": id },
+              { "name": "create_sequence_option$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_sequence_option", "symbols": ["kw_increment", "create_sequence_option$ebnf$1", "int"], "postprocess": (x) => (0, lexer_2.box)(x, ["incrementBy", x[2]]) },
+              { "name": "create_sequence_option", "symbols": ["create_sequence_minvalue"], "postprocess": (x) => (0, lexer_2.box)(x, ["minValue", x[0]]) },
+              { "name": "create_sequence_option", "symbols": ["create_sequence_maxvalue"], "postprocess": (x) => (0, lexer_2.box)(x, ["maxValue", x[0]]) },
+              { "name": "create_sequence_option$ebnf$2", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with], "postprocess": id },
+              { "name": "create_sequence_option$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "create_sequence_option", "symbols": ["kw_start", "create_sequence_option$ebnf$2", "int"], "postprocess": (x) => (0, lexer_2.box)(x, ["startWith", x[2]]) },
+              { "name": "create_sequence_option", "symbols": ["kw_cache", "int"], "postprocess": (x) => (0, lexer_2.box)(x, ["cache", x[1]]) },
+              { "name": "create_sequence_option$ebnf$3", "symbols": ["kw_no"], "postprocess": id },
+              { "name": "create_sequence_option$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "create_sequence_option", "symbols": ["create_sequence_option$ebnf$3", "kw_cycle"], "postprocess": (x) => (0, lexer_2.box)(x, ["cycle", toStr(x, " ")]) },
+              { "name": "create_sequence_option", "symbols": ["create_sequence_owned_by"], "postprocess": (x) => (0, lexer_2.box)(x, ["ownedBy", unwrap(x)]) },
+              { "name": "create_sequence_minvalue", "symbols": ["kw_minvalue", "int"], "postprocess": last },
+              { "name": "create_sequence_minvalue", "symbols": ["kw_no", "kw_minvalue"], "postprocess": (x) => (0, lexer_2.box)(x, "no minvalue") },
+              { "name": "create_sequence_maxvalue", "symbols": ["kw_maxvalue", "int"], "postprocess": last },
+              { "name": "create_sequence_maxvalue", "symbols": ["kw_no", "kw_maxvalue"], "postprocess": (x) => (0, lexer_2.box)(x, "no maxvalue") },
+              { "name": "create_sequence_owned_by$subexpression$1", "symbols": ["kw_none"] },
+              { "name": "create_sequence_owned_by$subexpression$1", "symbols": ["qcolumn"] },
+              { "name": "create_sequence_owned_by", "symbols": ["kw_owned", "kw_by", "create_sequence_owned_by$subexpression$1"], "postprocess": (x) => (0, lexer_2.box)(x, unwrap(last(x))) },
+              { "name": "alter_sequence_statement$ebnf$1", "symbols": ["kw_ifexists"], "postprocess": id },
+              { "name": "alter_sequence_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "alter_sequence_statement", "symbols": ["kw_alter", "kw_sequence", "alter_sequence_statement$ebnf$1", "qualified_name", "alter_sequence_statement_body"], "postprocess": (x) => {
+                const ret = {
+                  type: "alter sequence",
+                  ...x[2] && { ifExists: true },
+                  name: unwrap(x[3]),
+                  change: x[4]
+                };
+                return (0, lexer_2.track)(x, ret);
+              } },
+              { "name": "alter_sequence_statement_body$ebnf$1", "symbols": ["alter_sequence_option"] },
+              { "name": "alter_sequence_statement_body$ebnf$1", "symbols": ["alter_sequence_statement_body$ebnf$1", "alter_sequence_option"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "alter_sequence_statement_body", "symbols": ["alter_sequence_statement_body$ebnf$1"], "postprocess": (x) => {
+                const ret = {
+                  type: "set options"
+                };
+                setSeqOpts(ret, x[0]);
+                return (0, lexer_2.track)(x, ret);
+              } },
+              { "name": "alter_sequence_statement_body$subexpression$1", "symbols": ["ident"] },
+              { "name": "alter_sequence_statement_body$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_session_user") ? { type: "kw_session_user" } : kw_session_user] },
+              { "name": "alter_sequence_statement_body$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_current_user") ? { type: "kw_current_user" } : kw_current_user] },
+              { "name": "alter_sequence_statement_body", "symbols": ["kw_owner", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "alter_sequence_statement_body$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "owner to", owner: asName(last(x)) }) },
+              { "name": "alter_sequence_statement_body", "symbols": ["kw_rename", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "ident"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "rename", newName: asName(last(x)) }) },
+              { "name": "alter_sequence_statement_body", "symbols": ["kw_set", "kw_schema", "ident"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "set schema", newSchema: asName(last(x)) }) },
+              { "name": "alter_sequence_option", "symbols": ["create_sequence_option"], "postprocess": unwrap },
+              { "name": "alter_sequence_option$ebnf$1$subexpression$1$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with], "postprocess": id },
+              { "name": "alter_sequence_option$ebnf$1$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "alter_sequence_option$ebnf$1$subexpression$1", "symbols": ["alter_sequence_option$ebnf$1$subexpression$1$ebnf$1", "int"], "postprocess": last },
+              { "name": "alter_sequence_option$ebnf$1", "symbols": ["alter_sequence_option$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "alter_sequence_option$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "alter_sequence_option", "symbols": ["kw_restart", "alter_sequence_option$ebnf$1"], "postprocess": (x) => (0, lexer_2.box)(x, ["restart", typeof (0, lexer_2.unbox)(x[1]) === "number" ? (0, lexer_2.unbox)(x[1]) : true]) },
+              { "name": "drop_statement$ebnf$1", "symbols": ["kw_ifexists"], "postprocess": id },
+              { "name": "drop_statement$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "drop_statement$macrocall$2", "symbols": ["qualified_name"] },
+              { "name": "drop_statement$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "drop_statement$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "drop_statement$macrocall$2"], "postprocess": last },
+              { "name": "drop_statement$macrocall$1$ebnf$1", "symbols": ["drop_statement$macrocall$1$ebnf$1", "drop_statement$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "drop_statement$macrocall$1", "symbols": ["drop_statement$macrocall$2", "drop_statement$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "drop_statement$ebnf$2$subexpression$1", "symbols": ["kw_cascade"] },
+              { "name": "drop_statement$ebnf$2$subexpression$1", "symbols": ["kw_restrict"] },
+              { "name": "drop_statement$ebnf$2", "symbols": ["drop_statement$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "drop_statement$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "drop_statement", "symbols": ["kw_drop", "drop_what", "drop_statement$ebnf$1", "drop_statement$macrocall$1", "drop_statement$ebnf$2"], "postprocess": (x, rej) => {
+                const v = unwrap(x[1]);
+                return (0, lexer_2.track)(x, {
+                  ...v,
+                  ...x[2] && { ifExists: true },
+                  names: x[3],
+                  ...x[4] && { cascade: toStr(x[4]) }
+                });
+              } },
+              { "name": "drop_what", "symbols": [lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table], "postprocess": (x) => (0, lexer_2.track)(x, { type: "drop table" }) },
+              { "name": "drop_what", "symbols": ["kw_sequence"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "drop sequence" }) },
+              { "name": "drop_what", "symbols": ["kw_type"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "drop type" }) },
+              { "name": "drop_what", "symbols": ["kw_trigger"], "postprocess": (x) => (0, lexer_2.track)(x, { type: "drop trigger" }) },
+              { "name": "drop_what$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_concurrently") ? { type: "kw_concurrently" } : kw_concurrently], "postprocess": id },
+              { "name": "drop_what$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "drop_what", "symbols": ["kw_index", "drop_what$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "drop index",
+                ...x[1] && { concurrently: true }
+              }) },
+              { "name": "with_statement", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "with_statement_bindings", "with_statement_statement"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "with",
+                bind: x[1],
+                in: unwrap(x[2])
+              }) },
+              { "name": "with_recursive_statement$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "kw_recursive"] },
+              { "name": "with_recursive_statement", "symbols": ["with_recursive_statement$subexpression$1", "ident", "collist_paren", lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "lparen", "union_statement", "rparen", "with_statement_statement"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "with recursive",
+                alias: asName(x[1]),
+                columnNames: x[2].map(asName),
+                bind: x[5],
+                in: unwrap(x[7])
+              }) },
+              { "name": "with_statement_bindings$ebnf$1", "symbols": [] },
+              { "name": "with_statement_bindings$ebnf$1$subexpression$1", "symbols": ["comma", "with_statement_binding"], "postprocess": last },
+              { "name": "with_statement_bindings$ebnf$1", "symbols": ["with_statement_bindings$ebnf$1", "with_statement_bindings$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "with_statement_bindings", "symbols": ["with_statement_binding", "with_statement_bindings$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "with_statement_binding", "symbols": ["word", lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "lparen", "with_statement_statement", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                alias: asName(x[0]),
+                statement: unwrap(x[3])
+              }) },
+              { "name": "with_statement_statement", "symbols": ["selection"] },
+              { "name": "with_statement_statement", "symbols": ["insert_statement"] },
+              { "name": "with_statement_statement", "symbols": ["update_statement"] },
+              { "name": "with_statement_statement", "symbols": ["delete_statement"] },
+              { "name": "createtype_statement$subexpression$1", "symbols": ["createtype_enum"] },
+              { "name": "createtype_statement$subexpression$1", "symbols": ["createtype_composite"] },
+              { "name": "createtype_statement", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "kw_type", "qualified_name", "createtype_statement$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                name: x[2],
+                ...unwrap(x[3])
+              }) },
+              { "name": "createtype_enum$macrocall$2", "symbols": ["enum_value"] },
+              { "name": "createtype_enum$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "createtype_enum$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "createtype_enum$macrocall$2"], "postprocess": last },
+              { "name": "createtype_enum$macrocall$1$ebnf$1", "symbols": ["createtype_enum$macrocall$1$ebnf$1", "createtype_enum$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtype_enum$macrocall$1", "symbols": ["createtype_enum$macrocall$2", "createtype_enum$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "createtype_enum", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "kw_enum", "lparen", "createtype_enum$macrocall$1", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "create enum",
+                values: x[3]
+              }) },
+              { "name": "enum_value", "symbols": ["string"], "postprocess": (x) => (0, lexer_2.track)(x, { value: toStr(x) }) },
+              { "name": "createtype_composite$macrocall$2", "symbols": ["createtype_composite_attr"] },
+              { "name": "createtype_composite$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "createtype_composite$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "createtype_composite$macrocall$2"], "postprocess": last },
+              { "name": "createtype_composite$macrocall$1$ebnf$1", "symbols": ["createtype_composite$macrocall$1$ebnf$1", "createtype_composite$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "createtype_composite$macrocall$1", "symbols": ["createtype_composite$macrocall$2", "createtype_composite$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "createtype_composite", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "lparen", "createtype_composite$macrocall$1", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "create composite type",
+                attributes: x[2]
+              }) },
+              { "name": "createtype_composite_attr$ebnf$1", "symbols": ["createtable_collate"], "postprocess": id },
+              { "name": "createtype_composite_attr$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "createtype_composite_attr", "symbols": ["word", "data_type", "createtype_composite_attr$ebnf$1"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  name: asName(x[0]),
+                  dataType: x[1],
+                  ...x[2] ? { collate: x[2][1] } : {}
+                });
+              } },
+              { "name": "altertype_statement$subexpression$1", "symbols": ["altertype_enum_add_value"] },
+              { "name": "altertype_statement$subexpression$1", "symbols": ["altertype_enum_rename"] },
+              { "name": "altertype_statement", "symbols": ["kw_alter", "kw_type", "qualified_name", "altertype_statement$subexpression$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                name: x[2],
+                ...unwrap(x[3])
+              }) },
+              { "name": "altertype_enum_add_value", "symbols": ["kw_add", "kw_value", "enum_additional_value"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "alter enum",
+                change: {
+                  type: "add value",
+                  add: x[2]
+                }
+              }) },
+              { "name": "enum_additional_value", "symbols": ["string"], "postprocess": (x) => (0, lexer_2.track)(x, { value: toStr(x) }) },
+              { "name": "altertype_enum_rename", "symbols": ["kw_rename", lexer_1.lexerAny.has("kw_to") ? { type: "kw_to" } : kw_to, "word"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "alter enum",
+                change: {
+                  type: "rename",
+                  to: asName(last(x))
+                }
+              }) },
+              { "name": "union_left", "symbols": ["select_statement"] },
+              { "name": "union_left", "symbols": ["select_values"] },
+              { "name": "union_left", "symbols": ["selection_paren"] },
+              { "name": "union_right", "symbols": ["selection"] },
+              { "name": "union_right", "symbols": ["selection_paren"] },
+              { "name": "union_statement$subexpression$1$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all], "postprocess": id },
+              { "name": "union_statement$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "union_statement$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_union") ? { type: "kw_union" } : kw_union, "union_statement$subexpression$1$ebnf$1"] },
+              { "name": "union_statement", "symbols": ["union_left", "union_statement$subexpression$1", "union_right"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  type: toStr(x[1], " "),
+                  left: unwrap(x[0]),
+                  right: unwrap(x[2])
+                });
+              } },
+              { "name": "prepare$ebnf$1$subexpression$1", "symbols": ["lparen", "data_type_list", "rparen"], "postprocess": get(1) },
+              { "name": "prepare$ebnf$1", "symbols": ["prepare$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "prepare$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "prepare", "symbols": ["kw_prepare", "ident", "prepare$ebnf$1", lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "statement_noprep"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "prepare",
+                name: asName(x[1]),
+                ...x[2] && { args: x[2] },
+                statement: unwrap(last(x))
+              }) },
+              { "name": "deallocate$ebnf$1", "symbols": ["kw_prepare"], "postprocess": id },
+              { "name": "deallocate$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "deallocate", "symbols": ["kw_deallocate", "deallocate$ebnf$1", "deallocate_target"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "deallocate",
+                target: x[2]
+              }) },
+              { "name": "deallocate_target", "symbols": ["deallocate_all"], "postprocess": unwrap },
+              { "name": "deallocate_target", "symbols": ["deallocate_name"], "postprocess": unwrap },
+              { "name": "deallocate_name", "symbols": ["ident"], "postprocess": (x) => (0, lexer_2.track)(x, asName(x[0])) },
+              { "name": "deallocate_all", "symbols": [lexer_1.lexerAny.has("kw_all") ? { type: "kw_all" } : kw_all], "postprocess": (x) => (0, lexer_2.track)(x, { option: "all" }) },
+              { "name": "create_view_statements", "symbols": ["create_view"] },
+              { "name": "create_view_statements", "symbols": ["create_materialized_view"] },
+              { "name": "create_view$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_or") ? { type: "kw_or" } : kw_or, "kw_replace"] },
+              { "name": "create_view$ebnf$1", "symbols": ["create_view$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "create_view$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_view$ebnf$2$subexpression$1", "symbols": ["kw_temp"] },
+              { "name": "create_view$ebnf$2$subexpression$1", "symbols": ["kw_temporary"] },
+              { "name": "create_view$ebnf$2", "symbols": ["create_view$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "create_view$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "create_view$ebnf$3", "symbols": ["kw_recursive"], "postprocess": id },
+              { "name": "create_view$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "create_view$ebnf$4$subexpression$1$macrocall$2", "symbols": ["ident"] },
+              { "name": "create_view$ebnf$4$subexpression$1$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "create_view$ebnf$4$subexpression$1$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "create_view$ebnf$4$subexpression$1$macrocall$2"], "postprocess": last },
+              { "name": "create_view$ebnf$4$subexpression$1$macrocall$1$ebnf$1", "symbols": ["create_view$ebnf$4$subexpression$1$macrocall$1$ebnf$1", "create_view$ebnf$4$subexpression$1$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "create_view$ebnf$4$subexpression$1$macrocall$1", "symbols": ["create_view$ebnf$4$subexpression$1$macrocall$2", "create_view$ebnf$4$subexpression$1$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "create_view$ebnf$4$subexpression$1", "symbols": ["lparen", "create_view$ebnf$4$subexpression$1$macrocall$1", "rparen"], "postprocess": get(1) },
+              { "name": "create_view$ebnf$4", "symbols": ["create_view$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "create_view$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "create_view$ebnf$5", "symbols": ["create_view_opts"], "postprocess": id },
+              { "name": "create_view$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "create_view$ebnf$6$subexpression$1$subexpression$1", "symbols": ["kw_local"] },
+              { "name": "create_view$ebnf$6$subexpression$1$subexpression$1", "symbols": ["kw_cascaded"] },
+              { "name": "create_view$ebnf$6$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "create_view$ebnf$6$subexpression$1$subexpression$1", lexer_1.lexerAny.has("kw_check") ? { type: "kw_check" } : kw_check, "kw_option"], "postprocess": get(1) },
+              { "name": "create_view$ebnf$6", "symbols": ["create_view$ebnf$6$subexpression$1"], "postprocess": id },
+              { "name": "create_view$ebnf$6", "symbols": [], "postprocess": () => null },
+              { "name": "create_view", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "create_view$ebnf$1", "create_view$ebnf$2", "create_view$ebnf$3", "kw_view", "qualified_name", "create_view$ebnf$4", "create_view$ebnf$5", lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "selection", "create_view$ebnf$6"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  type: "create view",
+                  ...x[1] && { orReplace: true },
+                  ...x[2] && { temp: true },
+                  ...x[3] && { recursive: true },
+                  name: x[5],
+                  ...x[6] && { columnNames: x[6].map(asName) },
+                  ...x[7] && { parameters: fromEntries(x[7]) },
+                  query: x[9],
+                  ...x[10] && { checkOption: toStr(x[10]) }
+                });
+              } },
+              { "name": "create_view_opt", "symbols": ["ident", lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "ident"], "postprocess": ([a, _, b]) => [toStr(a), toStr(b)] },
+              { "name": "create_view_opts$macrocall$2", "symbols": ["create_view_opt"] },
+              { "name": "create_view_opts$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "create_view_opts$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "create_view_opts$macrocall$2"], "postprocess": last },
+              { "name": "create_view_opts$macrocall$1$ebnf$1", "symbols": ["create_view_opts$macrocall$1$ebnf$1", "create_view_opts$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "create_view_opts$macrocall$1", "symbols": ["create_view_opts$macrocall$2", "create_view_opts$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "create_view_opts", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "create_view_opts$macrocall$1"], "postprocess": last },
+              { "name": "create_materialized_view$ebnf$1", "symbols": ["kw_ifnotexists"], "postprocess": id },
+              { "name": "create_materialized_view$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_materialized_view$ebnf$2$subexpression$1$macrocall$2", "symbols": ["ident"] },
+              { "name": "create_materialized_view$ebnf$2$subexpression$1$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "create_materialized_view$ebnf$2$subexpression$1$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "create_materialized_view$ebnf$2$subexpression$1$macrocall$2"], "postprocess": last },
+              { "name": "create_materialized_view$ebnf$2$subexpression$1$macrocall$1$ebnf$1", "symbols": ["create_materialized_view$ebnf$2$subexpression$1$macrocall$1$ebnf$1", "create_materialized_view$ebnf$2$subexpression$1$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "create_materialized_view$ebnf$2$subexpression$1$macrocall$1", "symbols": ["create_materialized_view$ebnf$2$subexpression$1$macrocall$2", "create_materialized_view$ebnf$2$subexpression$1$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "create_materialized_view$ebnf$2$subexpression$1", "symbols": ["lparen", "create_materialized_view$ebnf$2$subexpression$1$macrocall$1", "rparen"], "postprocess": get(1) },
+              { "name": "create_materialized_view$ebnf$2", "symbols": ["create_materialized_view$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "create_materialized_view$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "create_materialized_view$ebnf$3", "symbols": ["create_view_opts"], "postprocess": id },
+              { "name": "create_materialized_view$ebnf$3", "symbols": [], "postprocess": () => null },
+              { "name": "create_materialized_view$ebnf$4$subexpression$1", "symbols": ["kw_tablespace", "ident"], "postprocess": last },
+              { "name": "create_materialized_view$ebnf$4", "symbols": ["create_materialized_view$ebnf$4$subexpression$1"], "postprocess": id },
+              { "name": "create_materialized_view$ebnf$4", "symbols": [], "postprocess": () => null },
+              { "name": "create_materialized_view$ebnf$5$subexpression$1$ebnf$1", "symbols": ["kw_no"], "postprocess": id },
+              { "name": "create_materialized_view$ebnf$5$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_materialized_view$ebnf$5$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "create_materialized_view$ebnf$5$subexpression$1$ebnf$1", "kw_data"] },
+              { "name": "create_materialized_view$ebnf$5", "symbols": ["create_materialized_view$ebnf$5$subexpression$1"], "postprocess": id },
+              { "name": "create_materialized_view$ebnf$5", "symbols": [], "postprocess": () => null },
+              { "name": "create_materialized_view", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "kw_materialized", "kw_view", "create_materialized_view$ebnf$1", "qualified_name", "create_materialized_view$ebnf$2", "create_materialized_view$ebnf$3", "create_materialized_view$ebnf$4", lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "selection", "create_materialized_view$ebnf$5"], "postprocess": (x) => {
+                return (0, lexer_2.track)(x, {
+                  type: "create materialized view",
+                  ...x[3] && { ifNotExists: true },
+                  name: x[4],
+                  ...x[5] && { columnNames: x[6].map(asName) },
+                  ...x[6] && { parameters: fromEntries(x[6]) },
+                  ...x[7] && { tablespace: asName(x[7]) },
+                  query: x[9],
+                  ...x[10] && { withData: toStr(x[10][1]) !== "no" }
+                });
+              } },
+              { "name": "refresh_view_statements$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_concurrently") ? { type: "kw_concurrently" } : kw_concurrently], "postprocess": id },
+              { "name": "refresh_view_statements$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "refresh_view_statements$ebnf$2$subexpression$1$ebnf$1", "symbols": ["kw_no"], "postprocess": id },
+              { "name": "refresh_view_statements$ebnf$2$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "refresh_view_statements$ebnf$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "refresh_view_statements$ebnf$2$subexpression$1$ebnf$1", "kw_data"] },
+              { "name": "refresh_view_statements$ebnf$2", "symbols": ["refresh_view_statements$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "refresh_view_statements$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "refresh_view_statements", "symbols": ["kw_refresh", "kw_materialized", "kw_view", "refresh_view_statements$ebnf$1", "qname", "refresh_view_statements$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "refresh materialized view",
+                ...!!x[3] ? { concurrently: true } : {},
+                name: x[4],
+                ...!!x[5] ? { withData: toStr(x[5][1]) !== "no" } : {}
+              }) },
+              { "name": "functions_statements", "symbols": ["create_func"] },
+              { "name": "functions_statements", "symbols": ["do_stm"] },
+              { "name": "functions_statements", "symbols": ["drop_func"] },
+              { "name": "create_func$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_or") ? { type: "kw_or" } : kw_or, "kw_replace"] },
+              { "name": "create_func$ebnf$1", "symbols": ["create_func$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "create_func$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_func$subexpression$1$ebnf$1$macrocall$2", "symbols": ["func_argdef"] },
+              { "name": "create_func$subexpression$1$ebnf$1$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "create_func$subexpression$1$ebnf$1$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "create_func$subexpression$1$ebnf$1$macrocall$2"], "postprocess": last },
+              { "name": "create_func$subexpression$1$ebnf$1$macrocall$1$ebnf$1", "symbols": ["create_func$subexpression$1$ebnf$1$macrocall$1$ebnf$1", "create_func$subexpression$1$ebnf$1$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "create_func$subexpression$1$ebnf$1$macrocall$1", "symbols": ["create_func$subexpression$1$ebnf$1$macrocall$2", "create_func$subexpression$1$ebnf$1$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "create_func$subexpression$1$ebnf$1", "symbols": ["create_func$subexpression$1$ebnf$1$macrocall$1"], "postprocess": id },
+              { "name": "create_func$subexpression$1$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "create_func$subexpression$1", "symbols": ["lparen", "create_func$subexpression$1$ebnf$1", "rparen"], "postprocess": get(1) },
+              { "name": "create_func$ebnf$2", "symbols": ["func_spec"] },
+              { "name": "create_func$ebnf$2", "symbols": ["create_func$ebnf$2", "func_spec"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "create_func", "symbols": [lexer_1.lexerAny.has("kw_create") ? { type: "kw_create" } : kw_create, "create_func$ebnf$1", "kw_function", "qname", "create_func$subexpression$1", "create_func$ebnf$2"], "postprocess": (x, rej) => {
+                var _a;
+                const specs = {};
+                for (const s of x[5]) {
+                  for (const k in s) {
+                    if (k[0] !== "_" && k in specs) {
+                      throw new Error("conflicting or redundant options " + k);
+                    }
+                  }
+                  Object.assign(specs, s);
+                }
+                return (0, lexer_2.track)(x, {
+                  type: "create function",
+                  ...x[1] && { orReplace: true },
+                  name: x[3],
+                  arguments: (_a = x[4]) !== null && _a !== void 0 ? _a : [],
+                  ...specs
+                });
+              } },
+              { "name": "func_argdef$ebnf$1", "symbols": ["func_argopts"], "postprocess": id },
+              { "name": "func_argdef$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "func_argdef$ebnf$2", "symbols": ["func_argdefault"], "postprocess": id },
+              { "name": "func_argdef$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "func_argdef", "symbols": ["func_argdef$ebnf$1", "data_type", "func_argdef$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                default: x[2],
+                type: x[1],
+                ...x[0]
+              }) },
+              {
+                "name": "func_argdefault",
+                "symbols": [lexer_1.lexerAny.has("kw_default") ? { type: "kw_default" } : kw_default, "expr"],
+                "postprocess": (x) => x[1]
+              },
+              { "name": "func_argdefault", "symbols": [lexer_1.lexerAny.has("op_eq") ? { type: "op_eq" } : op_eq, "expr"], "postprocess": (x) => x[1] },
+              { "name": "func_argopts$ebnf$1", "symbols": ["word"], "postprocess": id },
+              { "name": "func_argopts$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "func_argopts", "symbols": ["func_argmod", "func_argopts$ebnf$1"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                mode: toStr(x[0]),
+                ...x[1] && { name: asName(x[1]) }
+              }) },
+              { "name": "func_argopts", "symbols": ["word"], "postprocess": (x, rej) => {
+                const name = asName(x);
+                if (name === "out" || name === "inout" || name === "variadic") {
+                  return rej;
+                }
+                return (0, lexer_2.track)(x, { name });
+              } },
+              { "name": "func_argmod", "symbols": [lexer_1.lexerAny.has("kw_in") ? { type: "kw_in" } : kw_in] },
+              { "name": "func_argmod", "symbols": ["kw_out"] },
+              { "name": "func_argmod", "symbols": ["kw_inout"] },
+              { "name": "func_argmod", "symbols": ["kw_variadic"] },
+              { "name": "func_spec", "symbols": ["kw_language", "word"], "postprocess": (x) => (0, lexer_2.track)(x, { language: asName(last(x)) }) },
+              { "name": "func_spec", "symbols": ["func_purity"], "postprocess": (x) => (0, lexer_2.track)(x, { purity: toStr(x) }) },
+              { "name": "func_spec$subexpression$1", "symbols": [lexer_1.lexerAny.has("codeblock") ? { type: "codeblock" } : codeblock] },
+              { "name": "func_spec$subexpression$1", "symbols": ["string"] },
+              { "name": "func_spec", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "func_spec$subexpression$1"], "postprocess": (x) => ({ code: toStr(last(x)) }) },
+              { "name": "func_spec$ebnf$1", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not], "postprocess": id },
+              { "name": "func_spec$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "func_spec$subexpression$2", "symbols": ["word"], "postprocess": kw("leakproof") },
+              { "name": "func_spec", "symbols": ["func_spec$ebnf$1", "func_spec$subexpression$2"], "postprocess": (x) => (0, lexer_2.track)(x, { leakproof: !x[0] }) },
+              { "name": "func_spec", "symbols": ["func_returns"], "postprocess": (x) => (0, lexer_2.track)(x, { returns: unwrap(x) }) },
+              { "name": "func_spec$subexpression$3", "symbols": ["word"], "postprocess": kw("called") },
+              { "name": "func_spec", "symbols": ["func_spec$subexpression$3", "oninp"], "postprocess": () => ({ onNullInput: "call" }) },
+              { "name": "func_spec$subexpression$4", "symbols": ["word"], "postprocess": kw("returns") },
+              { "name": "func_spec", "symbols": ["func_spec$subexpression$4", lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null, "oninp"], "postprocess": () => ({ onNullInput: "null" }) },
+              { "name": "func_spec$subexpression$5", "symbols": ["word"], "postprocess": kw("strict") },
+              { "name": "func_spec", "symbols": ["func_spec$subexpression$5"], "postprocess": () => ({ onNullInput: "strict" }) },
+              { "name": "func_purity", "symbols": ["word"], "postprocess": kw("immutable") },
+              { "name": "func_purity", "symbols": ["word"], "postprocess": kw("stable") },
+              { "name": "func_purity", "symbols": ["word"], "postprocess": kw("volatile") },
+              { "name": "oninp$subexpression$1", "symbols": ["word"], "postprocess": kw("input") },
+              { "name": "oninp", "symbols": [lexer_1.lexerAny.has("kw_on") ? { type: "kw_on" } : kw_on, lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null, "oninp$subexpression$1"] },
+              { "name": "func_returns", "symbols": ["kw_returns", "data_type"], "postprocess": last },
+              { "name": "func_returns$macrocall$2", "symbols": ["func_ret_table_col"] },
+              { "name": "func_returns$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "func_returns$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "func_returns$macrocall$2"], "postprocess": last },
+              { "name": "func_returns$macrocall$1$ebnf$1", "symbols": ["func_returns$macrocall$1$ebnf$1", "func_returns$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "func_returns$macrocall$1", "symbols": ["func_returns$macrocall$2", "func_returns$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "func_returns", "symbols": ["kw_returns", lexer_1.lexerAny.has("kw_table") ? { type: "kw_table" } : kw_table, "lparen", "func_returns$macrocall$1", "rparen"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                kind: "table",
+                columns: x[3]
+              }) },
+              { "name": "func_ret_table_col", "symbols": ["word", "data_type"], "postprocess": (x) => (0, lexer_2.track)(x, { name: asName(x[0]), type: x[1] }) },
+              { "name": "do_stm$ebnf$1$subexpression$1", "symbols": ["kw_language", "word"], "postprocess": last },
+              { "name": "do_stm$ebnf$1", "symbols": ["do_stm$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "do_stm$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "do_stm", "symbols": [lexer_1.lexerAny.has("kw_do") ? { type: "kw_do" } : kw_do, "do_stm$ebnf$1", lexer_1.lexerAny.has("codeblock") ? { type: "codeblock" } : codeblock], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "do",
+                ...x[1] && { language: asName(x[1]) },
+                code: x[2].value
+              }) },
+              { "name": "drop_func$ebnf$1$subexpression$1", "symbols": ["kw_if", "kw_exists"] },
+              { "name": "drop_func$ebnf$1", "symbols": ["drop_func$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "drop_func$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "drop_func$ebnf$2", "symbols": ["drop_func_overload"], "postprocess": id },
+              { "name": "drop_func$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "drop_func", "symbols": ["kw_drop", "kw_function", "drop_func$ebnf$1", "qname", "drop_func$ebnf$2"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: "drop function",
+                ...x[2] && { ifExists: true },
+                name: x[3],
+                ...x[4] && { arguments: x[4] }
+              }) },
+              { "name": "drop_func_overload$macrocall$2", "symbols": ["drop_func_overload_col"] },
+              { "name": "drop_func_overload$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "drop_func_overload$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "drop_func_overload$macrocall$2"], "postprocess": last },
+              { "name": "drop_func_overload$macrocall$1$ebnf$1", "symbols": ["drop_func_overload$macrocall$1$ebnf$1", "drop_func_overload$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "drop_func_overload$macrocall$1", "symbols": ["drop_func_overload$macrocall$2", "drop_func_overload$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "drop_func_overload", "symbols": ["lparen", "drop_func_overload$macrocall$1", "rparen"], "postprocess": get(1) },
+              { "name": "drop_func_overload_col$ebnf$1", "symbols": ["word"], "postprocess": id },
+              { "name": "drop_func_overload_col$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "drop_func_overload_col", "symbols": ["drop_func_overload_col$ebnf$1", "qname"], "postprocess": (x) => (0, lexer_2.track)(x, {
+                type: x[1],
+                ...x[0] && { name: asName(x[0]) }
+              }) },
+              { "name": "main$ebnf$1", "symbols": [] },
+              { "name": "main$ebnf$1", "symbols": ["main$ebnf$1", "statement_separator"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main$ebnf$2", "symbols": [] },
+              { "name": "main$ebnf$2$subexpression$1$ebnf$1", "symbols": ["statement_separator"] },
+              { "name": "main$ebnf$2$subexpression$1$ebnf$1", "symbols": ["main$ebnf$2$subexpression$1$ebnf$1", "statement_separator"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main$ebnf$2$subexpression$1", "symbols": ["main$ebnf$2$subexpression$1$ebnf$1", "statement"] },
+              { "name": "main$ebnf$2", "symbols": ["main$ebnf$2", "main$ebnf$2$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main$ebnf$3", "symbols": [] },
+              { "name": "main$ebnf$3", "symbols": ["main$ebnf$3", "statement_separator"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main", "symbols": ["main$ebnf$1", "statement", "main$ebnf$2", "main$ebnf$3"], "postprocess": ([_, head, _tail]) => {
+                const tail = _tail;
+                const ret = [unwrap(head), ...tail.map((x) => unwrap(x[1]))];
+                return ret.length === 1 ? ret[0] : ret;
+              } },
+              { "name": "statement_separator", "symbols": [lexer_1.lexerAny.has("semicolon") ? { type: "semicolon" } : semicolon] },
+              { "name": "statement", "symbols": ["statement_noprep"] },
+              { "name": "statement", "symbols": ["prepare"] },
+              { "name": "statement", "symbols": ["deallocate"] },
+              { "name": "statement_noprep", "symbols": ["selection"] },
+              { "name": "statement_noprep", "symbols": ["createtable_statement"] },
+              { "name": "statement_noprep", "symbols": ["createextension_statement"] },
+              { "name": "statement_noprep", "symbols": ["createindex_statement"] },
+              { "name": "statement_noprep", "symbols": ["simplestatements_all"] },
+              { "name": "statement_noprep", "symbols": ["insert_statement"] },
+              { "name": "statement_noprep", "symbols": ["update_statement"] },
+              { "name": "statement_noprep", "symbols": ["altertable_statement"] },
+              { "name": "statement_noprep", "symbols": ["alterindex_statement"] },
+              { "name": "statement_noprep", "symbols": ["delete_statement"] },
+              { "name": "statement_noprep", "symbols": ["create_sequence_statement"] },
+              { "name": "statement_noprep", "symbols": ["alter_sequence_statement"] },
+              { "name": "statement_noprep", "symbols": ["drop_statement"] },
+              { "name": "statement_noprep", "symbols": ["createtype_statement"] },
+              { "name": "statement_noprep", "symbols": ["altertype_statement"] },
+              { "name": "statement_noprep", "symbols": ["create_view_statements"] },
+              { "name": "statement_noprep", "symbols": ["refresh_view_statements"] },
+              { "name": "statement_noprep", "symbols": ["create_schema"] },
+              { "name": "statement_noprep", "symbols": ["raise_statement"] },
+              { "name": "statement_noprep", "symbols": ["comment_statement"] },
+              { "name": "statement_noprep", "symbols": ["functions_statements"] },
+              { "name": "selection", "symbols": ["select_statement"], "postprocess": unwrap },
+              { "name": "selection", "symbols": ["select_values"], "postprocess": unwrap },
+              { "name": "selection", "symbols": ["with_statement"], "postprocess": unwrap },
+              { "name": "selection", "symbols": ["with_recursive_statement"], "postprocess": unwrap },
+              { "name": "selection", "symbols": ["union_statement"], "postprocess": unwrap },
+              { "name": "selection_paren", "symbols": ["lparen", "selection", "rparen"], "postprocess": get(1) }
+            ],
+            ParserStart: "main"
+          };
+          exports3.default = grammar;
+        }),
+        /* 11 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          function id(d) {
+            return d[0];
+          }
+          const array_lexer_1 = __webpack_require__(12);
+          const get = (i) => (x) => x[i];
+          const last = (x) => x && x[x.length - 1];
+          ;
+          ;
+          ;
+          ;
+          const grammar = {
+            Lexer: array_lexer_1.lexerAny,
+            ParserRules: [
+              { "name": "main$ebnf$1", "symbols": ["elements"], "postprocess": id },
+              { "name": "main$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "main", "symbols": [array_lexer_1.lexerAny.has("start_list") ? { type: "start_list" } : start_list, "main$ebnf$1", array_lexer_1.lexerAny.has("end_list") ? { type: "end_list" } : end_list], "postprocess": (x) => x[1] || [] },
+              { "name": "elements$ebnf$1", "symbols": [] },
+              { "name": "elements$ebnf$1$subexpression$1", "symbols": [array_lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "elt"], "postprocess": last },
+              { "name": "elements$ebnf$1", "symbols": ["elements$ebnf$1", "elements$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "elements", "symbols": ["elt", "elements$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "elt", "symbols": [array_lexer_1.lexerAny.has("value") ? { type: "value" } : value], "postprocess": (x) => x[0].value },
+              { "name": "elt", "symbols": ["main"], "postprocess": (x) => x[0] }
+            ],
+            ParserStart: "main"
+          };
+          exports3.default = grammar;
+        }),
+        /* 12 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.lexerAny = exports3.lexer = void 0;
+          const moo_1 = __webpack_require__(0);
+          exports3.lexer = (0, moo_1.compile)({
+            valueString: {
+              match: /"(?:\\["\\]|[^\n"\\])*"/,
+              value: (x) => JSON.parse(x),
+              type: (x) => "value"
+            },
+            valueRaw: {
+              match: /[^\s,\{\}"](?:[^,\{\}"]*[^\s,\{\}"])?/,
+              type: () => "value"
+            },
+            comma: ",",
+            space: { match: /[\s\t\n\v\f\r]+/, lineBreaks: true },
+            start_list: "{",
+            end_list: "}"
+          });
+          exports3.lexer.next = /* @__PURE__ */ ((next) => () => {
+            let tok;
+            while ((tok = next.call(exports3.lexer)) && tok.type === "space") {
+            }
+            return tok;
+          })(exports3.lexer.next);
+          exports3.lexerAny = exports3.lexer;
+        }),
+        /* 13 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          function id(d) {
+            return d[0];
+          }
+          const geometric_lexer_1 = __webpack_require__(14);
+          const get = (i) => (x) => x[i];
+          const last = (x) => x && x[x.length - 1];
+          function unwrap(e) {
+            if (Array.isArray(e) && e.length === 1) {
+              e = unwrap(e[0]);
+            }
+            if (Array.isArray(e) && !e.length) {
+              return null;
+            }
+            return e;
+          }
+          ;
+          ;
+          ;
+          ;
+          const grammar = {
+            Lexer: geometric_lexer_1.lexerAny,
+            ParserRules: [
+              { "name": "number$subexpression$1", "symbols": ["float"] },
+              { "name": "number$subexpression$1", "symbols": ["int"] },
+              { "name": "number", "symbols": ["number$subexpression$1"], "postprocess": unwrap },
+              { "name": "float", "symbols": [geometric_lexer_1.lexerAny.has("float") ? { type: "float" } : float], "postprocess": (args) => parseFloat(unwrap(args)) },
+              { "name": "int", "symbols": [geometric_lexer_1.lexerAny.has("int") ? { type: "int" } : int], "postprocess": (arg) => parseInt(unwrap(arg), 10) },
+              { "name": "comma", "symbols": [geometric_lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma], "postprocess": id },
+              { "name": "point$macrocall$2", "symbols": ["point_content"] },
+              { "name": "point$macrocall$1$subexpression$1", "symbols": ["point$macrocall$2"] },
+              { "name": "point$macrocall$1$subexpression$1", "symbols": [geometric_lexer_1.lexerAny.has("lparen") ? { type: "lparen" } : lparen, "point$macrocall$2", geometric_lexer_1.lexerAny.has("rparen") ? { type: "rparen" } : rparen], "postprocess": get(1) },
+              { "name": "point$macrocall$1", "symbols": ["point$macrocall$1$subexpression$1"], "postprocess": unwrap },
+              { "name": "point", "symbols": ["point$macrocall$1"], "postprocess": unwrap },
+              { "name": "point_content", "symbols": ["number", "comma", "number"], "postprocess": (x) => ({ x: x[0], y: x[2] }) },
+              { "name": "line", "symbols": [geometric_lexer_1.lexerAny.has("lcurl") ? { type: "lcurl" } : lcurl, "number", "comma", "number", "comma", "number", geometric_lexer_1.lexerAny.has("rcurl") ? { type: "rcurl" } : rcurl], "postprocess": (x) => ({
+                a: x[1],
+                b: x[3],
+                c: x[5]
+              }) },
+              { "name": "box", "symbols": ["closed_path"], "postprocess": ([x], rej) => {
+                if (x.length !== 2) {
+                  return rej;
+                }
+                return x;
+              } },
+              { "name": "lseg", "symbols": ["path"], "postprocess": ([x], rej) => {
+                if (x.path.length !== 2) {
+                  return rej;
+                }
+                return x.path;
+              } },
+              { "name": "path", "symbols": ["open_path"], "postprocess": ([path]) => ({ closed: false, path }) },
+              { "name": "path", "symbols": ["closed_path"], "postprocess": ([path]) => ({ closed: true, path }) },
+              { "name": "open_path$macrocall$2", "symbols": [geometric_lexer_1.lexerAny.has("lbracket") ? { type: "lbracket" } : lbracket] },
+              { "name": "open_path$macrocall$3", "symbols": [geometric_lexer_1.lexerAny.has("rbracket") ? { type: "rbracket" } : rbracket] },
+              { "name": "open_path$macrocall$1$macrocall$2", "symbols": ["point"] },
+              { "name": "open_path$macrocall$1$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "open_path$macrocall$1$macrocall$1$ebnf$1$subexpression$1", "symbols": [geometric_lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "open_path$macrocall$1$macrocall$2"], "postprocess": last },
+              { "name": "open_path$macrocall$1$macrocall$1$ebnf$1", "symbols": ["open_path$macrocall$1$macrocall$1$ebnf$1", "open_path$macrocall$1$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "open_path$macrocall$1$macrocall$1", "symbols": ["open_path$macrocall$1$macrocall$2", "open_path$macrocall$1$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "open_path$macrocall$1", "symbols": ["open_path$macrocall$2", "open_path$macrocall$1$macrocall$1", "open_path$macrocall$3"], "postprocess": get(1) },
+              { "name": "open_path", "symbols": ["open_path$macrocall$1"], "postprocess": last },
+              { "name": "closed_path$subexpression$1$macrocall$2", "symbols": [geometric_lexer_1.lexerAny.has("lparen") ? { type: "lparen" } : lparen] },
+              { "name": "closed_path$subexpression$1$macrocall$3", "symbols": [geometric_lexer_1.lexerAny.has("rparen") ? { type: "rparen" } : rparen] },
+              { "name": "closed_path$subexpression$1$macrocall$1$macrocall$2", "symbols": ["point"] },
+              { "name": "closed_path$subexpression$1$macrocall$1$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "closed_path$subexpression$1$macrocall$1$macrocall$1$ebnf$1$subexpression$1", "symbols": [geometric_lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "closed_path$subexpression$1$macrocall$1$macrocall$2"], "postprocess": last },
+              { "name": "closed_path$subexpression$1$macrocall$1$macrocall$1$ebnf$1", "symbols": ["closed_path$subexpression$1$macrocall$1$macrocall$1$ebnf$1", "closed_path$subexpression$1$macrocall$1$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "closed_path$subexpression$1$macrocall$1$macrocall$1", "symbols": ["closed_path$subexpression$1$macrocall$1$macrocall$2", "closed_path$subexpression$1$macrocall$1$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "closed_path$subexpression$1$macrocall$1", "symbols": ["closed_path$subexpression$1$macrocall$2", "closed_path$subexpression$1$macrocall$1$macrocall$1", "closed_path$subexpression$1$macrocall$3"], "postprocess": get(1) },
+              { "name": "closed_path$subexpression$1", "symbols": ["closed_path$subexpression$1$macrocall$1"], "postprocess": last },
+              { "name": "closed_path$subexpression$1$macrocall$5", "symbols": ["point"] },
+              { "name": "closed_path$subexpression$1$macrocall$4$ebnf$1", "symbols": [] },
+              { "name": "closed_path$subexpression$1$macrocall$4$ebnf$1$subexpression$1", "symbols": [geometric_lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "closed_path$subexpression$1$macrocall$5"], "postprocess": last },
+              { "name": "closed_path$subexpression$1$macrocall$4$ebnf$1", "symbols": ["closed_path$subexpression$1$macrocall$4$ebnf$1", "closed_path$subexpression$1$macrocall$4$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "closed_path$subexpression$1$macrocall$4", "symbols": ["closed_path$subexpression$1$macrocall$5", "closed_path$subexpression$1$macrocall$4$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [unwrap(head), ...tail.map(unwrap) || []];
+              } },
+              { "name": "closed_path$subexpression$1", "symbols": ["closed_path$subexpression$1$macrocall$4"], "postprocess": last },
+              { "name": "closed_path", "symbols": ["closed_path$subexpression$1"], "postprocess": get(0) },
+              { "name": "polygon", "symbols": ["closed_path"], "postprocess": get(0) },
+              { "name": "circle_body", "symbols": ["point", "comma", "number"], "postprocess": (x) => ({ c: x[0], r: x[2] }) },
+              { "name": "circle$subexpression$1$macrocall$2", "symbols": [geometric_lexer_1.lexerAny.has("lcomp") ? { type: "lcomp" } : lcomp] },
+              { "name": "circle$subexpression$1$macrocall$3", "symbols": [geometric_lexer_1.lexerAny.has("rcomp") ? { type: "rcomp" } : rcomp] },
+              { "name": "circle$subexpression$1$macrocall$1", "symbols": ["circle$subexpression$1$macrocall$2", "circle_body", "circle$subexpression$1$macrocall$3"], "postprocess": get(1) },
+              { "name": "circle$subexpression$1", "symbols": ["circle$subexpression$1$macrocall$1"] },
+              { "name": "circle$subexpression$1$macrocall$5", "symbols": [geometric_lexer_1.lexerAny.has("lparen") ? { type: "lparen" } : lparen] },
+              { "name": "circle$subexpression$1$macrocall$6", "symbols": [geometric_lexer_1.lexerAny.has("rparen") ? { type: "rparen" } : rparen] },
+              { "name": "circle$subexpression$1$macrocall$4", "symbols": ["circle$subexpression$1$macrocall$5", "circle_body", "circle$subexpression$1$macrocall$6"], "postprocess": get(1) },
+              { "name": "circle$subexpression$1", "symbols": ["circle$subexpression$1$macrocall$4"] },
+              { "name": "circle$subexpression$1", "symbols": ["circle_body"] },
+              { "name": "circle", "symbols": ["circle$subexpression$1"], "postprocess": unwrap }
+            ],
+            ParserStart: "number"
+          };
+          exports3.default = grammar;
+        }),
+        /* 14 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.lexerAny = exports3.lexer = void 0;
+          const moo_1 = __webpack_require__(0);
+          exports3.lexer = (0, moo_1.compile)({
+            comma: ",",
+            space: { match: /[\s\t\n\v\f\r]+/, lineBreaks: true },
+            int: /\-?\d+(?![\.\d])/,
+            float: /\-?(?:(?:\d*\.\d+)|(?:\d+\.\d*))/,
+            lcurl: "{",
+            rcurl: "}",
+            lparen: "(",
+            rparen: ")",
+            lbracket: "[",
+            rbracket: "]",
+            lcomp: "<",
+            rcomp: ">"
+          });
+          exports3.lexer.next = /* @__PURE__ */ ((next) => () => {
+            let tok;
+            while ((tok = next.call(exports3.lexer)) && tok.type === "space") {
+            }
+            return tok;
+          })(exports3.lexer.next);
+          exports3.lexerAny = exports3.lexer;
+        }),
+        /* 15 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          function id(d) {
+            return d[0];
+          }
+          const interval_lexer_1 = __webpack_require__(16);
+          ;
+          ;
+          ;
+          ;
+          const grammar = {
+            Lexer: interval_lexer_1.lexerAny,
+            ParserRules: [
+              { "name": "main$ebnf$1", "symbols": ["elt"] },
+              { "name": "main$ebnf$1", "symbols": ["main$ebnf$1", "elt"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main", "symbols": ["main$ebnf$1"], "postprocess": ([elts]) => {
+                const s = /* @__PURE__ */ new Set();
+                for (const e of elts) {
+                  const k = typeof e[1] === "number" ? e[0] : "time";
+                  if (s.has(k)) {
+                    return "invalid";
+                  }
+                  s.add(k);
+                }
+                return elts;
+              } },
+              { "name": "elt", "symbols": ["time"] },
+              { "name": "elt", "symbols": ["num", "unit"], "postprocess": ([[n], u]) => {
+                u = u[0].type;
+                return [u, n];
+              } },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("years") ? { type: "years" } : years] },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("months") ? { type: "months" } : months] },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("days") ? { type: "days" } : days] },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("hours") ? { type: "hours" } : hours] },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("minutes") ? { type: "minutes" } : minutes] },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("seconds") ? { type: "seconds" } : seconds] },
+              { "name": "unit", "symbols": [interval_lexer_1.lexerAny.has("milliseconds") ? { type: "milliseconds" } : milliseconds] },
+              { "name": "num", "symbols": ["int"] },
+              { "name": "num", "symbols": ["float"] },
+              { "name": "uint", "symbols": [interval_lexer_1.lexerAny.has("int") ? { type: "int" } : int], "postprocess": ([x]) => parseInt(x, 10) },
+              { "name": "int$ebnf$1$subexpression$1", "symbols": [interval_lexer_1.lexerAny.has("neg") ? { type: "neg" } : neg] },
+              { "name": "int$ebnf$1", "symbols": ["int$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "int$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "int", "symbols": ["int$ebnf$1", interval_lexer_1.lexerAny.has("int") ? { type: "int" } : int], "postprocess": ([neg2, x]) => parseInt(x, 10) * (neg2 ? -1 : 1) },
+              { "name": "float$ebnf$1$subexpression$1", "symbols": [interval_lexer_1.lexerAny.has("neg") ? { type: "neg" } : neg] },
+              { "name": "float$ebnf$1", "symbols": ["float$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "float$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "float$ebnf$2", "symbols": [interval_lexer_1.lexerAny.has("int") ? { type: "int" } : int], "postprocess": id },
+              { "name": "float$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "float", "symbols": ["float$ebnf$1", "float$ebnf$2", interval_lexer_1.lexerAny.has("dot") ? { type: "dot" } : dot, interval_lexer_1.lexerAny.has("int") ? { type: "int" } : int], "postprocess": ([neg2, ...v]) => parseFloat(v.map((v2) => v2 ? v2.text : "0").join("")) * (neg2 ? -1 : 1) },
+              { "name": "time$ebnf$1$subexpression$1", "symbols": [interval_lexer_1.lexerAny.has("colon") ? { type: "colon" } : colon, "uint"] },
+              { "name": "time$ebnf$1", "symbols": ["time$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "time$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "time$ebnf$2$subexpression$1", "symbols": [interval_lexer_1.lexerAny.has("dot") ? { type: "dot" } : dot, interval_lexer_1.lexerAny.has("int") ? { type: "int" } : int] },
+              { "name": "time$ebnf$2", "symbols": ["time$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "time$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "time", "symbols": ["uint", interval_lexer_1.lexerAny.has("colon") ? { type: "colon" } : colon, "uint", "time$ebnf$1", "time$ebnf$2"], "postprocess": ([a, _, b, c, d]) => {
+                c = c && c[1];
+                d = d && d[1];
+                const ret = typeof c === "number" ? [
+                  ["hours", a],
+                  ["minutes", b],
+                  ["seconds", c]
+                ] : [
+                  ["minutes", a],
+                  ["seconds", b]
+                ];
+                if (d) {
+                  ret.push(["milliseconds", parseFloat("0." + d) * 1e3]);
+                }
+                return ret;
+              } }
+            ],
+            ParserStart: "main"
+          };
+          exports3.default = grammar;
+        }),
+        /* 16 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.lexerAny = exports3.lexer = void 0;
+          const moo_1 = __webpack_require__(0);
+          exports3.lexer = (0, moo_1.compile)({
+            int: /\d+/,
+            neg: "-",
+            dot: ".",
+            years: /(?:y|yrs?|years?)\b/,
+            months: /(?:mon(?:th)?s?)\b/,
+            days: /(?:d|days?)\b/,
+            hours: /(?:h|hrs?|hours?)\b/,
+            minutes: /(?:m|mins?|minutes?)\b/,
+            seconds: /(?:s|secs?|seconds?)\b/,
+            milliseconds: /(?:ms|milliseconds?)\b/,
+            space: { match: /[\s\t\n\v\f\r]+/, lineBreaks: true },
+            colon: ":"
+          });
+          exports3.lexer.next = /* @__PURE__ */ ((next) => () => {
+            let tok;
+            while ((tok = next.call(exports3.lexer)) && tok.type === "space") {
+            }
+            return tok;
+          })(exports3.lexer.next);
+          exports3.lexerAny = exports3.lexer;
+        }),
+        /* 17 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          function id(d) {
+            return d[0];
+          }
+          const interval_iso_lexer_1 = __webpack_require__(18);
+          ;
+          ;
+          ;
+          ;
+          const grammar = {
+            Lexer: interval_iso_lexer_1.lexerAny,
+            ParserRules: [
+              { "name": "num", "symbols": [interval_iso_lexer_1.lexerAny.has("int") ? { type: "int" } : int] },
+              { "name": "num", "symbols": [interval_iso_lexer_1.lexerAny.has("float") ? { type: "float" } : float] },
+              { "name": "main$ebnf$1", "symbols": [] },
+              { "name": "main$ebnf$1", "symbols": ["main$ebnf$1", "long"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main$ebnf$2$subexpression$1$ebnf$1", "symbols": ["short"] },
+              { "name": "main$ebnf$2$subexpression$1$ebnf$1", "symbols": ["main$ebnf$2$subexpression$1$ebnf$1", "short"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "main$ebnf$2$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("T") ? { type: "T" } : T, "main$ebnf$2$subexpression$1$ebnf$1"] },
+              { "name": "main$ebnf$2", "symbols": ["main$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "main$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "main", "symbols": [interval_iso_lexer_1.lexerAny.has("P") ? { type: "P" } : P, "main$ebnf$1", "main$ebnf$2"], "postprocess": ([_, a, b], rej) => {
+                b = !b ? [] : b[1];
+                {
+                }
+                if (!a.length && !b.length) {
+                  return rej;
+                }
+                return !a.length ? b : !b.length ? a : [...a, ...b];
+              } },
+              { "name": "long$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("Y") ? { type: "Y" } : Y] },
+              { "name": "long$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("M") ? { type: "M" } : M] },
+              { "name": "long$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("W") ? { type: "W" } : W] },
+              { "name": "long$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("D") ? { type: "D" } : D] },
+              { "name": "long", "symbols": ["num", "long$subexpression$1"], "postprocess": ([n, u]) => {
+                n = parseFloat(n[0].value);
+                u = u[0].type;
+                switch (u) {
+                  case "Y":
+                    return ["years", n];
+                  case "M":
+                    return ["months", n];
+                  case "W":
+                    return ["days", n * 7];
+                  case "D":
+                    return ["days", n];
+                  default:
+                    throw new Error("Unexpected unit " + u);
+                }
+              } },
+              { "name": "short$ebnf$1", "symbols": [interval_iso_lexer_1.lexerAny.has("T") ? { type: "T" } : T], "postprocess": id },
+              { "name": "short$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "short$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("H") ? { type: "H" } : H] },
+              { "name": "short$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("M") ? { type: "M" } : M] },
+              { "name": "short$subexpression$1", "symbols": [interval_iso_lexer_1.lexerAny.has("S") ? { type: "S" } : S] },
+              { "name": "short", "symbols": ["short$ebnf$1", "num", "short$subexpression$1"], "postprocess": ([_, n, u]) => {
+                n = parseFloat(n[0].value);
+                u = u[0].type;
+                switch (u) {
+                  case "H":
+                    return ["hours", n];
+                  case "M":
+                    return ["minutes", n];
+                  case "S":
+                    return ["seconds", n];
+                  default:
+                    throw new Error("Unexpected unit " + u);
+                }
+              } }
+            ],
+            ParserStart: "num"
+          };
+          exports3.default = grammar;
+        }),
+        /* 18 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.lexerAny = exports3.lexer = void 0;
+          const moo_1 = __webpack_require__(0);
+          exports3.lexer = (0, moo_1.compile)({
+            int: /\-?\d+(?![\.\d])/,
+            float: /\-?(?:(?:\d*\.\d+)|(?:\d+\.\d*))/,
+            P: "P",
+            Y: "Y",
+            M: "M",
+            W: "W",
+            D: "D",
+            H: "H",
+            S: "S",
+            T: "T"
+          });
+          exports3.lexerAny = exports3.lexer;
+        }),
+        /* 19 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.toSql = void 0;
+          const ast_mapper_1 = __webpack_require__(2);
+          const ast_visitor_1 = __webpack_require__(5);
+          const utils_1 = __webpack_require__(6);
+          const pg_escape_1 = __webpack_require__(20);
+          const keywords_1 = __webpack_require__(3);
+          const kwSet = new Set(keywords_1.sqlKeywords.map((x) => x.toLowerCase()));
+          let ret = [];
+          function name(nm) {
+            return ident(nm.name);
+          }
+          function ident(nm, forceDoubleQuote) {
+            if (!forceDoubleQuote) {
+              const low = nm.toLowerCase();
+              if (low === nm && !kwSet.has(low) && /^[a-z][a-z0-9_]*$/.test(low)) {
+                return nm;
+              }
+            }
+            return '"' + nm + '"';
+          }
+          function list(elems, act, addParen) {
+            if (addParen) {
+              ret.push("(");
+            }
+            let first = true;
+            for (const e of elems) {
+              if (!first) {
+                ret.push(", ");
+              }
+              first = false;
+              act(e);
+            }
+            if (addParen) {
+              ret.push(")");
+            }
+          }
+          function addConstraint(c, m) {
+            switch (c.type) {
+              case "foreign key":
+                ret.push(" foreign key (", ...c.localColumns.map(name).join(", "), ")");
+              // 👈 There is no "break" here... that's not an error, we want to fall throught the 'reference' case
+              case "reference":
+                ret.push(" REFERENCES ");
+                m.tableRef(c.foreignTable);
+                ret.push("(", ...c.foreignColumns.map(name).join(", "), ") ");
+                if (c.match) {
+                  ret.push(" MATCH ", c.match.toUpperCase());
+                }
+                if (c.onDelete) {
+                  ret.push(" ON DELETE ", c.onDelete);
+                }
+                if (c.onUpdate) {
+                  ret.push(" ON UPDATE ", c.onUpdate);
+                }
+                break;
+              case "primary key":
+              case "unique":
+                ret.push(" ", c.type, " ");
+                if ("columns" in c) {
+                  ret.push("(", ...c.columns.map(name).join(", "), ") ");
+                }
+                break;
+              case "check":
+                ret.push(" check ");
+                m.expr(c.expr);
+                break;
+              case "not null":
+              case "null":
+                ret.push(" ", c.type, " ");
+                break;
+              case "default":
+                ret.push(" default ");
+                m.expr(c.default);
+                break;
+              case "add generated":
+                ret.push(" GENERATED ");
+                visitGenerated(m, c);
+                break;
+              default:
+                throw utils_1.NotSupported.never(c);
+            }
+            ret.push(" ");
+          }
+          function visitQualifiedName(cs, forceDoubleQuote) {
+            if (cs.schema) {
+              ret.push(ident(cs.schema), ".");
+            }
+            ret.push(ident(cs.name, forceDoubleQuote), " ");
+          }
+          function visitQualifiedNameAliased(cs) {
+            visitQualifiedName(cs);
+            if (cs.alias) {
+              ret.push(" AS ", ident(cs.alias), " ");
+            }
+          }
+          function visitOrderBy(m, orderBy) {
+            ret.push(" ORDER BY ");
+            list(orderBy, (e) => {
+              m.expr(e.by);
+              if (e.order) {
+                ret.push(" ", e.order, " ");
+              }
+              if (e.nulls) {
+                ret.push(" NULLS ", e.nulls, " ");
+              }
+            }, false);
+          }
+          function visitSetVal(set) {
+            switch (set.type) {
+              case "default":
+                ret.push("DEFAULT ");
+                break;
+              case "identifier":
+                ret.push(set.name);
+                break;
+              case "list":
+                let first = true;
+                for (const v of set.values) {
+                  if (!first) {
+                    ret.push(", ");
+                  }
+                  first = false;
+                  visitSetVal(v);
+                }
+                break;
+              case "value":
+                ret.push(typeof set.value === "number" ? set.value.toString() : (0, pg_escape_1.literal)(set.value));
+                break;
+              default:
+                throw utils_1.NotSupported.never(set);
+            }
+          }
+          function visitGenerated(m, alter) {
+            if (alter.always) {
+              ret.push(alter.always.toUpperCase(), " ");
+            }
+            ret.push("AS ");
+            if (alter.expression) {
+              ret.push("(");
+              m.expr(alter.expression);
+              ret.push(") ");
+            } else {
+              ret.push("IDENTITY ");
+            }
+            if (alter.sequence) {
+              ret.push("(");
+              if (alter.sequence.name) {
+                ret.push("SEQUENCE NAME ");
+                visitQualifiedName(alter.sequence.name);
+                ret.push(" ");
+              }
+              visitSeqOpts(m, alter.sequence);
+              ret.push(") ");
+            }
+            if (alter.stored) {
+              ret.push("STORED ");
+            }
+          }
+          function visitSeqOpts(m, cs) {
+            if (cs.as) {
+              ret.push("AS ");
+              m.dataType(cs.as);
+              ret.push(" ");
+            }
+            if (typeof cs.incrementBy === "number") {
+              ret.push("INCREMENT BY ", cs.incrementBy.toString(), " ");
+            }
+            if (cs.minValue === "no minvalue") {
+              ret.push("NO MINVALUE ");
+            }
+            if (typeof cs.minValue === "number") {
+              ret.push("MINVALUE ", cs.minValue.toString(), " ");
+            }
+            if (cs.maxValue === "no maxvalue") {
+              ret.push("NO MAXVALUE ");
+            }
+            if (typeof cs.maxValue === "number") {
+              ret.push("MAXVALUE ", cs.maxValue.toString(), " ");
+            }
+            if (typeof cs.startWith === "number") {
+              ret.push("START WITH ", cs.startWith.toString(), " ");
+            }
+            if (typeof cs.cache === "number") {
+              ret.push("CACHE ", cs.cache.toString(), " ");
+            }
+            if (cs.cycle) {
+              ret.push(cs.cycle, " ");
+            }
+            if (cs.ownedBy === "none") {
+              ret.push("OWNED BY NONE ");
+            } else if (cs.ownedBy) {
+              ret.push("OWNED BY ");
+              visitQColumn(cs.ownedBy);
+            }
+            if ("restart" in cs) {
+              if (cs.restart === true) {
+                ret.push("RESTART ");
+              } else if (cs.restart) {
+                ret.push("RESTART WITH ", cs.restart.toString(), " ");
+              }
+            }
+          }
+          function visitQColumn(col) {
+            if (col.schema) {
+              ret.push(ident(col.schema), ".");
+            }
+            ret.push(ident(col.table), ".", ident(col.column), " ");
+          }
+          function join(m, j, tbl) {
+            if (!j) {
+              tbl();
+              return;
+            }
+            ret.push(j.type, " ");
+            tbl();
+            if (j.on) {
+              ret.push("ON ");
+              m.expr(j.on);
+            }
+            if (j.using) {
+              ret.push("USING (");
+              list(j.using, (x) => ret.push(name(x)), false);
+              ret.push(") ");
+            }
+            ret.push(" ");
+          }
+          function visitOp(v) {
+            if (v.opSchema) {
+              ret.push(" operator(", ident(v.opSchema), ".", v.op, ") ");
+            } else {
+              ret.push(" ", v.op, " ");
+            }
+          }
+          const visitor = (0, ast_visitor_1.astVisitor)((m) => ({
+            addColumn: (...args) => {
+              ret.push(" ADD COLUMN ");
+              if (args[0].ifNotExists) {
+                ret.push("IF NOT EXISTS ");
+              }
+              m.super().addColumn(...args);
+            },
+            createExtension: (e) => {
+              ret.push("CREATE EXTENSION ");
+              if (e.ifNotExists) {
+                ret.push(" IF NOT EXISTS ");
+              }
+              ret.push(name(e.extension));
+              if (!e.from && !e.version && !e.schema) {
+                return;
+              }
+              ret.push(" WITH");
+              if (e.schema) {
+                ret.push(" SCHEMA ", name(e.schema));
+              }
+              if (e.version) {
+                ret.push(" VERSION ", (0, pg_escape_1.literal)(e.version.value));
+              }
+              if (e.from) {
+                ret.push(" FROM ", (0, pg_escape_1.literal)(e.from.value));
+              }
+            },
+            tablespace: (t) => {
+              ret.push("TABLESPACE ", name(t.tablespace));
+            },
+            addConstraint: (c) => {
+              ret.push(" ADD ");
+              const cname = c.constraint.constraintName;
+              if (cname) {
+                ret.push(" CONSTRAINT ", name(cname), " ");
+              }
+              addConstraint(c.constraint, m);
+            },
+            alterColumn: (c, t) => {
+              ret.push(" ALTER COLUMN ", name(c.column), " ");
+              m.super().alterColumn(c, t);
+            },
+            setColumnDefault: (a, t, c) => {
+              ret.push(" SET DEFAULT ");
+              m.expr(a.default);
+              if (a.updateExisting) {
+                throw new Error("Not implemented: updateExisting on set column default");
+              }
+            },
+            createEnum: (t) => {
+              ret.push("CREATE TYPE ");
+              visitQualifiedName(t.name);
+              ret.push(" AS ENUM ");
+              list(t.values, (x) => ret.push((0, pg_escape_1.literal)(x.value)), true);
+              ret.push(" ");
+            },
+            alterEnum: (t) => {
+              ret.push("ALTER TYPE ");
+              visitQualifiedName(t.name);
+              if (t.change.type === "rename") {
+                ret.push(" RENAME TO ");
+                visitQualifiedName(t.change.to);
+              } else {
+                ret.push(" ADD VALUE ", (0, pg_escape_1.literal)(t.change.add.value));
+              }
+            },
+            createCompositeType: (c) => {
+              ret.push("CREATE TYPE ");
+              visitQualifiedName(c.name);
+              ret.push(" AS ");
+              list(c.attributes, (x) => {
+                ret.push(name(x.name), " ");
+                m.dataType(x.dataType);
+                if (x.collate) {
+                  ret.push("COLLATE ");
+                  visitQualifiedName(x.collate);
+                }
+              }, true);
+              ret.push(" ");
+            },
+            setTableOwner: (o) => {
+              ret.push(" OWNER TO ", name(o.to));
+            },
+            alterColumnSimple: (c) => ret.push(c.type),
+            alterColumnAddGenerated: (alter) => {
+              ret.push(" ADD GENERATED ");
+              visitGenerated(m, alter);
+            },
+            setColumnType: (t) => {
+              ret.push(" SET DATA TYPE ");
+              m.dataType(t.dataType);
+              ret.push(" ");
+            },
+            alterTable: (t) => {
+              ret.push("ALTER TABLE ");
+              if (t.ifExists) {
+                ret.push(" IF EXISTS ");
+              }
+              if (t.only) {
+                ret.push(" ONLY ");
+              }
+              visitQualifiedNameAliased(t.table);
+              list(t.changes, (change) => m.tableAlteration(change, t.table), false);
+            },
+            alterIndex: (t) => {
+              ret.push("ALTER INDEX ");
+              if (t.ifExists) {
+                ret.push(" IF EXISTS ");
+              }
+              visitQualifiedNameAliased(t.index);
+              switch (t.change.type) {
+                case "rename":
+                  ret.push(" RENAME TO ");
+                  visitQualifiedName(t.change.to);
+                  ret.push(" ");
+                  break;
+                case "set tablespace":
+                  ret.push(" SET TABLESPACE ");
+                  visitQualifiedName(t.change.tablespace);
+                  ret.push(" ");
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(t.change, "Alter index type not supported: ");
+              }
+            },
+            tableAlteration: (change, table3) => {
+              switch (change.type) {
+                case "add column":
+                  return m.addColumn(change, table3);
+                case "add constraint":
+                  return m.addConstraint(change, table3);
+                case "alter column":
+                  return m.alterColumn(change, table3);
+                case "rename":
+                  return m.renameTable(change, table3);
+                case "rename column":
+                  return m.renameColumn(change, table3);
+                case "rename constraint":
+                  return m.renameConstraint(change, table3);
+                case "drop column":
+                  return m.dropColumn(change, table3);
+                case "drop constraint":
+                  return m.dropConstraint(change, table3);
+                case "owner":
+                  return m.setTableOwner(change, table3);
+                default:
+                  throw utils_1.NotSupported.never(change);
+              }
+            },
+            array: (v) => {
+              ret.push(v.type === "array" ? "ARRAY[" : "(");
+              list(v.expressions, (e) => m.expr(e), false);
+              ret.push(v.type === "array" ? "]" : ")");
+            },
+            arrayIndex: (v) => {
+              m.expr(v.array);
+              ret.push("[");
+              m.expr(v.index);
+              ret.push("] ");
+            },
+            expr: (e) => {
+              if (e.type === "ref") {
+                m.ref(e);
+                return;
+              }
+              if (e.type === "list") {
+                m.super().expr(e);
+                return;
+              }
+              ret.push("(");
+              m.super().expr(e);
+              ret.push(")");
+            },
+            callOverlay: (o) => {
+              ret.push("OVERLAY(");
+              m.expr(o.value);
+              ret.push(" PLACING ");
+              m.expr(o.placing);
+              ret.push(" FROM ");
+              m.expr(o.from);
+              if (o.for) {
+                ret.push(" FOR ");
+                m.expr(o.for);
+              }
+              ret.push(")");
+            },
+            callSubstring: (s) => {
+              ret.push("SUBSTRING(");
+              m.expr(s.value);
+              if (s.from) {
+                ret.push(" FROM ");
+                m.expr(s.from);
+              }
+              if (s.for) {
+                ret.push(" FOR ");
+                m.expr(s.for);
+              }
+              ret.push(")");
+            },
+            binary: (v) => {
+              m.expr(v.left);
+              visitOp(v);
+              m.expr(v.right);
+            },
+            call: (v) => {
+              visitQualifiedName(v.function);
+              ret.push("(");
+              if (v.distinct) {
+                ret.push(v.distinct, " ");
+              }
+              list(v.args, (e) => m.expr(e), false);
+              if (v.orderBy) {
+                visitOrderBy(m, v.orderBy);
+              }
+              ret.push(") ");
+              if (v.filter) {
+                ret.push("filter (where ");
+                m.expr(v.filter);
+                ret.push(") ");
+              }
+              if (v.withinGroup) {
+                ret.push("WITHIN GROUP (");
+                visitOrderBy(m, [v.withinGroup]);
+                ret.push(") ");
+              }
+              if (v.over) {
+                ret.push("over (");
+                if (v.over.partitionBy) {
+                  ret.push("PARTITION BY ");
+                  list(v.over.partitionBy, (x) => m.expr(x), false);
+                  ret.push(" ");
+                }
+                if (v.over.orderBy) {
+                  visitOrderBy(m, v.over.orderBy);
+                  ret.push(" ");
+                }
+                ret.push(") ");
+              }
+            },
+            case: (c) => {
+              ret.push("CASE ");
+              if (c.value) {
+                m.expr(c.value);
+              }
+              for (const e of c.whens) {
+                ret.push(" WHEN ");
+                m.expr(e.when);
+                ret.push(" THEN ");
+                m.expr(e.value);
+              }
+              if (c.else) {
+                ret.push(" ELSE ");
+                m.expr(c.else);
+              }
+              ret.push(" END ");
+            },
+            cast: (c) => {
+              m.expr(c.operand);
+              ret.push("::");
+              m.dataType(c.to);
+            },
+            constant: (c) => {
+              switch (c.type) {
+                case "boolean":
+                  ret.push(c.value ? "true" : "false");
+                  break;
+                case "integer":
+                  ret.push(c.value.toString(10));
+                  break;
+                case "numeric":
+                  ret.push(c.value.toString());
+                  if (Number.isInteger(c.value)) {
+                    ret.push(".");
+                  }
+                  break;
+                case "null":
+                  ret.push("null");
+                  break;
+                case "constant":
+                  break;
+                case "string":
+                  ret.push((0, pg_escape_1.literal)(c.value));
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(c);
+              }
+            },
+            valueKeyword: (v) => {
+              ret.push(v.keyword, " ");
+            },
+            comment: (c) => {
+              ret.push("COMMENT ON ", c.on.type.toUpperCase(), " ");
+              switch (c.on.type) {
+                case "column":
+                  visitQColumn(c.on.column);
+                  break;
+                default:
+                  visitQualifiedName(c.on.name);
+                  break;
+              }
+              ret.push(" IS ", (0, pg_escape_1.literal)(c.comment), " ");
+            },
+            extract: (v) => {
+              ret.push("EXTRACT (", v.field.name.toUpperCase(), " FROM ");
+              m.expr(v.from);
+              ret.push(") ");
+            },
+            createColumn: (c) => {
+              var _a;
+              ret.push(name(c.name), " ");
+              m.dataType(c.dataType);
+              ret.push(" ");
+              if (c.collate) {
+                ret.push("COLLATE ");
+                visitQualifiedName(c.collate);
+              }
+              for (const cst of (_a = c.constraints) !== null && _a !== void 0 ? _a : []) {
+                m.constraint(cst);
+              }
+            },
+            begin: (beg) => {
+              ret.push("BEGIN ");
+              if (beg.isolationLevel) {
+                ret.push("ISOLATION LEVEL ", beg.isolationLevel.toUpperCase(), " ");
+              }
+              if (beg.writeable) {
+                ret.push(beg.writeable.toUpperCase(), " ");
+              }
+              if (typeof beg.deferrable === "boolean") {
+                if (!beg.deferrable) {
+                  ret.push("NOT ");
+                }
+                ret.push("DEFERRABLE ");
+              }
+            },
+            alterSequence: (cs) => {
+              ret.push("ALTER SEQUENCE ");
+              if (cs.ifExists) {
+                ret.push("IF EXISTS ");
+              }
+              visitQualifiedName(cs.name);
+              switch (cs.change.type) {
+                case "set options":
+                  visitSeqOpts(m, cs.change);
+                  break;
+                case "rename":
+                  ret.push("RENAME TO ", name(cs.change.newName), " ");
+                  break;
+                case "set schema":
+                  ret.push("SET SCHEMA ", name(cs.change.newSchema), " ");
+                  break;
+                case "owner to":
+                  const own = cs.change.owner;
+                  ret.push("OWNER TO ", name(cs.change.owner), " ");
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(cs.change);
+              }
+            },
+            createSequence: (cs) => {
+              ret.push("CREATE ");
+              if (cs.temp) {
+                ret.push("TEMPORARY ");
+              }
+              ret.push("SEQUENCE ");
+              if (cs.ifNotExists) {
+                ret.push("IF NOT EXISTS ");
+              }
+              visitQualifiedName(cs.name);
+              visitSeqOpts(m, cs.options);
+            },
+            drop: (val) => {
+              ret.push(val.type.toUpperCase(), " ");
+              if (val.concurrently) {
+                ret.push("CONCURRENTLY ");
+              }
+              if (val.ifExists) {
+                ret.push("IF EXISTS ");
+              }
+              list(val.names, (x) => m.tableRef(x), false);
+              if (val.cascade) {
+                ret.push(val.cascade.toUpperCase(), " ");
+              }
+            },
+            constraint: (cst) => {
+              if (cst.constraintName) {
+                ret.push(" CONSTRAINT ", name(cst.constraintName), " ");
+              }
+              addConstraint(cst, m);
+            },
+            do: (d) => {
+              ret.push("DO");
+              if (d.language) {
+                ret.push(" LANGUAGE ", d.language.name);
+              }
+              ret.push(" $$", d.code, "$$");
+            },
+            createFunction: (c) => {
+              var _a;
+              ret.push(c.orReplace ? "CREATE OR REPLACE FUNCTION " : "CREATE FUNCTION ");
+              visitQualifiedName(c.name);
+              list(c.arguments, (a) => {
+                if (a.mode) {
+                  ret.push(a.mode, " ");
+                }
+                if (a.name) {
+                  ret.push(name(a.name), " ");
+                }
+                m.dataType(a.type);
+                if (a.default) {
+                  ret.push(" = ");
+                  m.expr(a.default);
+                }
+              }, true);
+              if (c.returns) {
+                switch (c.returns.kind) {
+                  case "table":
+                    ret.push(" RETURNS TABLE ");
+                    list(c.returns.columns, (t) => {
+                      ret.push(name(t.name), " ");
+                      m.dataType(t.type);
+                    }, true);
+                    break;
+                  case void 0:
+                  case null:
+                  case "array":
+                    ret.push(" RETURNS ");
+                    m.dataType(c.returns);
+                    break;
+                  default:
+                    throw utils_1.NotSupported.never(c.returns);
+                }
+              }
+              ret.push(" AS $$", (_a = c.code) !== null && _a !== void 0 ? _a : "", "$$");
+              if (c.language) {
+                ret.push("LANGUAGE ", c.language.name, " ");
+              }
+              if (c.purity) {
+                ret.push(c.purity.toUpperCase(), " ");

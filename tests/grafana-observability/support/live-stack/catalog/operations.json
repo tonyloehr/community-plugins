@@ -1,0 +1,206 @@
+{
+  "schemaVersion": "1.0.0",
+  "operations": [
+    {
+      "operationId": "grafana.infrastructure.cpu.usage",
+      "packId": "grafana.infrastructure",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_cpu_usage_percent{environment=\"simulation\",service=\"checkout\",instance=\"host-alpha\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.infrastructure.memory.load",
+      "packId": "grafana.infrastructure",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_memory_load_percent{environment=\"simulation\",service=\"checkout\",instance=\"host-alpha\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.infrastructure.disk.free",
+      "packId": "grafana.infrastructure",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_disk_free_percent{environment=\"simulation\",service=\"checkout\",instance=\"host-alpha\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.infrastructure.system.load",
+      "packId": "grafana.infrastructure",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_system_load_ratio{environment=\"simulation\",service=\"checkout\",instance=\"host-alpha\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.apm.request.rate",
+      "packId": "grafana.apm",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_request_rate{environment=\"simulation\",service=\"checkout\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.apm.error.codes",
+      "packId": "grafana.apm",
+      "datasourceUid": "live-loki",
+      "target": {
+        "datasourceType": "loki",
+        "expression": "{environment=\"simulation\",service=\"checkout\"} | json | status_code = 503",
+        "queryType": "range",
+        "direction": "backward"
+      }
+    },
+    {
+      "operationId": "grafana.apm.error.rate",
+      "packId": "grafana.apm",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_error_rate_percent{environment=\"simulation\",service=\"checkout\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.apm.latency.p95",
+      "packId": "grafana.apm",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_latency_p95_milliseconds{environment=\"simulation\",service=\"checkout\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.apm.traces.slow",
+      "packId": "grafana.apm",
+      "datasourceUid": "live-tempo",
+      "target": {
+        "datasourceType": "tempo",
+        "expression": "{ resource.deployment.environment = \"simulation\" && resource.service.name = \"checkout\" && duration > 1s }",
+        "queryType": "traceql",
+        "limit": 20,
+        "spansPerSpanSet": 20,
+        "tableType": "traces"
+      }
+    },
+    {
+      "operationId": "grafana.logs.events",
+      "packId": "grafana.logs",
+      "datasourceUid": "live-loki",
+      "target": {
+        "datasourceType": "loki",
+        "expression": "sum by (environment,service,subject) (count_over_time({environment=\"simulation\",service=\"checkout\",subject=\"host-alpha\"}[5m]))",
+        "queryType": "range",
+        "direction": "backward"
+      }
+    },
+    {
+      "operationId": "grafana.logs.error.rate",
+      "packId": "grafana.logs",
+      "datasourceUid": "live-loki",
+      "target": {
+        "datasourceType": "loki",
+        "expression": "sum by (environment,service,subject) (rate({environment=\"simulation\",service=\"checkout\",subject=\"host-alpha\"} | json | level = \"error\" [5m]))",
+        "queryType": "range",
+        "direction": "backward"
+      }
+    },
+    {
+      "operationId": "grafana.logs.security.markers",
+      "packId": "grafana.logs",
+      "datasourceUid": "live-loki",
+      "target": {
+        "datasourceType": "loki",
+        "expression": "sum by (environment,service,subject) (count_over_time({environment=\"simulation\",service=\"checkout\",subject=\"host-alpha\"} | json | security_marker = \"true\" [5m]))",
+        "queryType": "range",
+        "direction": "backward"
+      }
+    },
+    {
+      "operationId": "grafana.iot.telemetry",
+      "packId": "grafana.iot-edge",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_iot_telemetry{environment=\"simulation\",device=\"edge-005\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.iot.device.freshness",
+      "packId": "grafana.iot-edge",
+      "datasourceUid": "live-prometheus",
+      "target": {
+        "datasourceType": "prometheus",
+        "expression": "pm_live_device_age_seconds{environment=\"simulation\",device=\"edge-005\"}",
+        "mode": "instant",
+        "format": "time_series"
+      }
+    },
+    {
+      "operationId": "grafana.business.revenue",
+      "packId": "grafana.business-kpis",
+      "datasourceUid": "live-postgres",
+      "target": {
+        "datasourceType": "grafana-postgresql-datasource",
+        "rawSql": "SELECT revenue AS value, environment, business_scope FROM public.observability_kpis WHERE environment = 'simulation' AND business_scope = 'checkout-unit' LIMIT 1",
+        "format": "table",
+        "maxRows": 1
+      },
+      "postgresReadOnlyIdentity": {
+        "roleIdentitySha256": "ca4edc5db6492b18192ed87adf05aafc8dc4097a4978276d8236694a794f658e",
+        "privilegeModel": "SELECT_ONLY"
+      }
+    },
+    {
+      "operationId": "grafana.business.conversion",
+      "packId": "grafana.business-kpis",
+      "datasourceUid": "live-postgres",
+      "target": {
+        "datasourceType": "grafana-postgresql-datasource",
+        "rawSql": "SELECT conversion AS value, environment, business_scope FROM public.observability_kpis WHERE environment = 'simulation' AND business_scope = 'checkout-unit' LIMIT 1",
+        "format": "table",
+        "maxRows": 1
+      },
+      "postgresReadOnlyIdentity": {
+        "roleIdentitySha256": "ca4edc5db6492b18192ed87adf05aafc8dc4097a4978276d8236694a794f658e",
+        "privilegeModel": "SELECT_ONLY"
+      }
+    },
+    {
+      "operationId": "grafana.business.operational.kpi",
+      "packId": "grafana.business-kpis",
+      "datasourceUid": "live-postgres",
+      "target": {
+        "datasourceType": "grafana-postgresql-datasource",
+        "rawSql": "SELECT operational_kpi AS value, environment, business_scope FROM public.observability_kpis WHERE environment = 'simulation' AND business_scope = 'checkout-unit' LIMIT 1",
+        "format": "table",
+        "maxRows": 1
+      },
+      "postgresReadOnlyIdentity": {
+        "roleIdentitySha256": "ca4edc5db6492b18192ed87adf05aafc8dc4097a4978276d8236694a794f658e",
+        "privilegeModel": "SELECT_ONLY"
+      }
+    }
+  ]
+}

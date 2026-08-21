@@ -1,0 +1,3277 @@
+"use strict";
+var __create = Object.create;
+var __freeze = Object.freeze;
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __getProtoOf = Object.getPrototypeOf;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __commonJS = (cb, mod) => function __require() {
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
+  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+  mod
+));
+var __template = (cooked, raw) => __freeze(__defProp(cooked, "raw", { value: __freeze(raw || cooked.slice()) }));
+
+// node_modules/moo/moo.js
+var require_moo = __commonJS({
+  "node_modules/moo/moo.js"(exports2, module2) {
+    (function(root, factory) {
+      if (typeof define === "function" && define.amd) {
+        define([], factory);
+      } else if (typeof module2 === "object" && module2.exports) {
+        module2.exports = factory();
+      } else {
+        root.moo = factory();
+      }
+    })(exports2, function() {
+      "use strict";
+      var hasOwnProperty = Object.prototype.hasOwnProperty;
+      var toString = Object.prototype.toString;
+      var hasSticky = typeof new RegExp().sticky === "boolean";
+      function isRegExp(o) {
+        return o && toString.call(o) === "[object RegExp]";
+      }
+      function isObject4(o) {
+        return o && typeof o === "object" && !isRegExp(o) && !Array.isArray(o);
+      }
+      function reEscape(s) {
+        return s.replace(/[-\/\\^$*+?.()|[\]{}]/g, function(x) {
+          if (x === "-") return "\\x2d";
+          return "\\" + x;
+        });
+      }
+      function reGroups(s) {
+        var re = new RegExp("|" + s);
+        return re.exec("").length - 1;
+      }
+      function reCapture(s) {
+        return "(" + s + ")";
+      }
+      function reUnion(regexps) {
+        if (!regexps.length) return "(?!)";
+        var source = regexps.map(function(s) {
+          return "(?:" + s + ")";
+        }).join("|");
+        return "(?:" + source + ")";
+      }
+      function regexpOrLiteral(obj) {
+        if (typeof obj === "string") {
+          return "(?:" + reEscape(obj) + ")";
+        } else if (isRegExp(obj)) {
+          if (obj.ignoreCase) throw new Error("RegExp /i flag not allowed");
+          if (obj.global) throw new Error("RegExp /g flag is implied");
+          if (obj.sticky) throw new Error("RegExp /y flag is implied");
+          if (obj.multiline) throw new Error("RegExp /m flag is implied");
+          return obj.source;
+        } else {
+          throw new Error("Not a pattern: " + obj);
+        }
+      }
+      function pad(s, length) {
+        if (s.length > length) {
+          return s;
+        }
+        return Array(length - s.length + 1).join(" ") + s;
+      }
+      function lastNLines(string2, numLines) {
+        var position = string2.length;
+        var lineBreaks = 0;
+        while (true) {
+          var idx = string2.lastIndexOf("\n", position - 1);
+          if (idx === -1) {
+            break;
+          } else {
+            lineBreaks++;
+          }
+          position = idx;
+          if (lineBreaks === numLines) {
+            break;
+          }
+          if (position === 0) {
+            break;
+          }
+        }
+        var startPosition = lineBreaks < numLines ? 0 : position + 1;
+        return string2.substring(startPosition).split("\n");
+      }
+      function objectToRules(object) {
+        var keys = Object.getOwnPropertyNames(object);
+        var result = [];
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          var thing = object[key];
+          var rules = [].concat(thing);
+          if (key === "include") {
+            for (var j = 0; j < rules.length; j++) {
+              result.push({ include: rules[j] });
+            }
+            continue;
+          }
+          var match = [];
+          rules.forEach(function(rule) {
+            if (isObject4(rule)) {
+              if (match.length) result.push(ruleOptions(key, match));
+              result.push(ruleOptions(key, rule));
+              match = [];
+            } else {
+              match.push(rule);
+            }
+          });
+          if (match.length) result.push(ruleOptions(key, match));
+        }
+        return result;
+      }
+      function arrayToRules(array) {
+        var result = [];
+        for (var i = 0; i < array.length; i++) {
+          var obj = array[i];
+          if (obj.include) {
+            var include = [].concat(obj.include);
+            for (var j = 0; j < include.length; j++) {
+              result.push({ include: include[j] });
+            }
+            continue;
+          }
+          if (!obj.type) {
+            throw new Error("Rule has no type: " + JSON.stringify(obj));
+          }
+          result.push(ruleOptions(obj.type, obj));
+        }
+        return result;
+      }
+      function ruleOptions(type, obj) {
+        if (!isObject4(obj)) {
+          obj = { match: obj };
+        }
+        if (obj.include) {
+          throw new Error("Matching rules cannot also include states");
+        }
+        var options = {
+          defaultType: type,
+          lineBreaks: !!obj.error || !!obj.fallback,
+          pop: false,
+          next: null,
+          push: null,
+          error: false,
+          fallback: false,
+          value: null,
+          type: null,
+          shouldThrow: false
+        };
+        for (var key in obj) {
+          if (hasOwnProperty.call(obj, key)) {
+            options[key] = obj[key];
+          }
+        }
+        if (typeof options.type === "string" && type !== options.type) {
+          throw new Error("Type transform cannot be a string (type '" + options.type + "' for token '" + type + "')");
+        }
+        var match = options.match;
+        options.match = Array.isArray(match) ? match : match ? [match] : [];
+        options.match.sort(function(a, b) {
+          return isRegExp(a) && isRegExp(b) ? 0 : isRegExp(b) ? -1 : isRegExp(a) ? 1 : b.length - a.length;
+        });
+        return options;
+      }
+      function toRules(spec) {
+        return Array.isArray(spec) ? arrayToRules(spec) : objectToRules(spec);
+      }
+      var defaultErrorRule = ruleOptions("error", { lineBreaks: true, shouldThrow: true });
+      function compileRules(rules, hasStates) {
+        var errorRule = null;
+        var fast = /* @__PURE__ */ Object.create(null);
+        var fastAllowed = true;
+        var unicodeFlag = null;
+        var groups = [];
+        var parts = [];
+        for (var i = 0; i < rules.length; i++) {
+          if (rules[i].fallback) {
+            fastAllowed = false;
+          }
+        }
+        for (var i = 0; i < rules.length; i++) {
+          var options = rules[i];
+          if (options.include) {
+            throw new Error("Inheritance is not allowed in stateless lexers");
+          }
+          if (options.error || options.fallback) {
+            if (errorRule) {
+              if (!options.fallback === !errorRule.fallback) {
+                throw new Error("Multiple " + (options.fallback ? "fallback" : "error") + " rules not allowed (for token '" + options.defaultType + "')");
+              } else {
+                throw new Error("fallback and error are mutually exclusive (for token '" + options.defaultType + "')");
+              }
+            }
+            errorRule = options;
+          }
+          var match = options.match.slice();
+          if (fastAllowed) {
+            while (match.length && typeof match[0] === "string" && match[0].length === 1) {
+              var word2 = match.shift();
+              fast[word2.charCodeAt(0)] = options;
+            }
+          }
+          if (options.pop || options.push || options.next) {
+            if (!hasStates) {
+              throw new Error("State-switching options are not allowed in stateless lexers (for token '" + options.defaultType + "')");
+            }
+            if (options.fallback) {
+              throw new Error("State-switching options are not allowed on fallback tokens (for token '" + options.defaultType + "')");
+            }
+          }
+          if (match.length === 0) {
+            continue;
+          }
+          fastAllowed = false;
+          groups.push(options);
+          for (var j = 0; j < match.length; j++) {
+            var obj = match[j];
+            if (!isRegExp(obj)) {
+              continue;
+            }
+            if (unicodeFlag === null) {
+              unicodeFlag = obj.unicode;
+            } else if (unicodeFlag !== obj.unicode && options.fallback === false) {
+              throw new Error("If one rule is /u then all must be");
+            }
+          }
+          var pat = reUnion(match.map(regexpOrLiteral));
+          var regexp = new RegExp(pat);
+          if (regexp.test("")) {
+            throw new Error("RegExp matches empty string: " + regexp);
+          }
+          var groupCount = reGroups(pat);
+          if (groupCount > 0) {
+            throw new Error("RegExp has capture groups: " + regexp + "\nUse (?: … ) instead");
+          }
+          if (!options.lineBreaks && regexp.test("\n")) {
+            throw new Error("Rule should declare lineBreaks: " + regexp);
+          }
+          parts.push(reCapture(pat));
+        }
+        var fallbackRule = errorRule && errorRule.fallback;
+        var flags = hasSticky && !fallbackRule ? "ym" : "gm";
+        var suffix = hasSticky || fallbackRule ? "" : "|";
+        if (unicodeFlag === true) flags += "u";
+        var combined = new RegExp(reUnion(parts) + suffix, flags);
+        return { regexp: combined, groups, fast, error: errorRule || defaultErrorRule };
+      }
+      function compile(rules) {
+        var result = compileRules(toRules(rules));
+        return new Lexer({ start: result }, "start");
+      }
+      function checkStateGroup(g, name, map) {
+        var state = g && (g.push || g.next);
+        if (state && !map[state]) {
+          throw new Error("Missing state '" + state + "' (in token '" + g.defaultType + "' of state '" + name + "')");
+        }
+        if (g && g.pop && +g.pop !== 1) {
+          throw new Error("pop must be 1 (in token '" + g.defaultType + "' of state '" + name + "')");
+        }
+      }
+      function compileStates(states, start) {
+        var all = states.$all ? toRules(states.$all) : [];
+        delete states.$all;
+        var keys = Object.getOwnPropertyNames(states);
+        if (!start) start = keys[0];
+        var ruleMap = /* @__PURE__ */ Object.create(null);
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          ruleMap[key] = toRules(states[key]).concat(all);
+        }
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          var rules = ruleMap[key];
+          var included = /* @__PURE__ */ Object.create(null);
+          for (var j = 0; j < rules.length; j++) {
+            var rule = rules[j];
+            if (!rule.include) continue;
+            var splice = [j, 1];
+            if (rule.include !== key && !included[rule.include]) {
+              included[rule.include] = true;
+              var newRules = ruleMap[rule.include];
+              if (!newRules) {
+                throw new Error("Cannot include nonexistent state '" + rule.include + "' (in state '" + key + "')");
+              }
+              for (var k = 0; k < newRules.length; k++) {
+                var newRule = newRules[k];
+                if (rules.indexOf(newRule) !== -1) continue;
+                splice.push(newRule);
+              }
+            }
+            rules.splice.apply(rules, splice);
+            j--;
+          }
+        }
+        var map = /* @__PURE__ */ Object.create(null);
+        for (var i = 0; i < keys.length; i++) {
+          var key = keys[i];
+          map[key] = compileRules(ruleMap[key], true);
+        }
+        for (var i = 0; i < keys.length; i++) {
+          var name = keys[i];
+          var state = map[name];
+          var groups = state.groups;
+          for (var j = 0; j < groups.length; j++) {
+            checkStateGroup(groups[j], name, map);
+          }
+          var fastKeys = Object.getOwnPropertyNames(state.fast);
+          for (var j = 0; j < fastKeys.length; j++) {
+            checkStateGroup(state.fast[fastKeys[j]], name, map);
+          }
+        }
+        return new Lexer(map, start);
+      }
+      function keywordTransform(map) {
+        var isMap = typeof Map !== "undefined";
+        var reverseMap = isMap ? /* @__PURE__ */ new Map() : /* @__PURE__ */ Object.create(null);
+        var types = Object.getOwnPropertyNames(map);
+        for (var i = 0; i < types.length; i++) {
+          var tokenType = types[i];
+          var item = map[tokenType];
+          var keywordList = Array.isArray(item) ? item : [item];
+          keywordList.forEach(function(keyword) {
+            if (typeof keyword !== "string") {
+              throw new Error("keyword must be string (in keyword '" + tokenType + "')");
+            }
+            if (isMap) {
+              reverseMap.set(keyword, tokenType);
+            } else {
+              reverseMap[keyword] = tokenType;
+            }
+          });
+        }
+        return function(k) {
+          return isMap ? reverseMap.get(k) : reverseMap[k];
+        };
+      }
+      var Lexer = function(states, state) {
+        this.startState = state;
+        this.states = states;
+        this.buffer = "";
+        this.stack = [];
+        this.reset();
+      };
+      Lexer.prototype.reset = function(data, info) {
+        this.buffer = data || "";
+        this.index = 0;
+        this.line = info ? info.line : 1;
+        this.col = info ? info.col : 1;
+        this.queuedToken = info ? info.queuedToken : null;
+        this.queuedText = info ? info.queuedText : "";
+        this.queuedThrow = info ? info.queuedThrow : null;
+        this.setState(info ? info.state : this.startState);
+        this.stack = info && info.stack ? info.stack.slice() : [];
+        return this;
+      };
+      Lexer.prototype.save = function() {
+        return {
+          line: this.line,
+          col: this.col,
+          state: this.state,
+          stack: this.stack.slice(),
+          queuedToken: this.queuedToken,
+          queuedText: this.queuedText,
+          queuedThrow: this.queuedThrow
+        };
+      };
+      Lexer.prototype.setState = function(state) {
+        if (!state || this.state === state) return;
+        this.state = state;
+        var info = this.states[state];
+        this.groups = info.groups;
+        this.error = info.error;
+        this.re = info.regexp;
+        this.fast = info.fast;
+      };
+      Lexer.prototype.popState = function() {
+        this.setState(this.stack.pop());
+      };
+      Lexer.prototype.pushState = function(state) {
+        this.stack.push(this.state);
+        this.setState(state);
+      };
+      var eat = hasSticky ? function(re, buffer) {
+        return re.exec(buffer);
+      } : function(re, buffer) {
+        var match = re.exec(buffer);
+        if (match[0].length === 0) {
+          return null;
+        }
+        return match;
+      };
+      Lexer.prototype._getGroup = function(match) {
+        var groupCount = this.groups.length;
+        for (var i = 0; i < groupCount; i++) {
+          if (match[i + 1] !== void 0) {
+            return this.groups[i];
+          }
+        }
+        throw new Error("Cannot find token type for matched text");
+      };
+      function tokenToString() {
+        return this.value;
+      }
+      Lexer.prototype.next = function() {
+        var index = this.index;
+        if (this.queuedGroup) {
+          var token = this._token(this.queuedGroup, this.queuedText, index);
+          this.queuedGroup = null;
+          this.queuedText = "";
+          return token;
+        }
+        var buffer = this.buffer;
+        if (index === buffer.length) {
+          return;
+        }
+        var group = this.fast[buffer.charCodeAt(index)];
+        if (group) {
+          return this._token(group, buffer.charAt(index), index);
+        }
+        var re = this.re;
+        re.lastIndex = index;
+        var match = eat(re, buffer);
+        var error = this.error;
+        if (match == null) {
+          return this._token(error, buffer.slice(index, buffer.length), index);
+        }
+        var group = this._getGroup(match);
+        var text = match[0];
+        if (error.fallback && match.index !== index) {
+          this.queuedGroup = group;
+          this.queuedText = text;
+          return this._token(error, buffer.slice(index, match.index), index);
+        }
+        return this._token(group, text, index);
+      };
+      Lexer.prototype._token = function(group, text, offset) {
+        var lineBreaks = 0;
+        if (group.lineBreaks) {
+          var matchNL = /\n/g;
+          var nl = 1;
+          if (text === "\n") {
+            lineBreaks = 1;
+          } else {
+            while (matchNL.exec(text)) {
+              lineBreaks++;
+              nl = matchNL.lastIndex;
+            }
+          }
+        }
+        var token = {
+          type: typeof group.type === "function" && group.type(text) || group.defaultType,
+          value: typeof group.value === "function" ? group.value(text) : text,
+          text,
+          toString: tokenToString,
+          offset,
+          lineBreaks,
+          line: this.line,
+          col: this.col
+        };
+        var size = text.length;
+        this.index += size;
+        this.line += lineBreaks;
+        if (lineBreaks !== 0) {
+          this.col = size - nl + 1;
+        } else {
+          this.col += size;
+        }
+        if (group.shouldThrow) {
+          var err = new Error(this.formatError(token, "invalid syntax"));
+          throw err;
+        }
+        if (group.pop) this.popState();
+        else if (group.push) this.pushState(group.push);
+        else if (group.next) this.setState(group.next);
+        return token;
+      };
+      if (typeof Symbol !== "undefined" && Symbol.iterator) {
+        var LexerIterator = function(lexer) {
+          this.lexer = lexer;
+        };
+        LexerIterator.prototype.next = function() {
+          var token = this.lexer.next();
+          return { value: token, done: !token };
+        };
+        LexerIterator.prototype[Symbol.iterator] = function() {
+          return this;
+        };
+        Lexer.prototype[Symbol.iterator] = function() {
+          return new LexerIterator(this);
+        };
+      }
+      Lexer.prototype.formatError = function(token, message) {
+        if (token == null) {
+          var text = this.buffer.slice(this.index);
+          var token = {
+            text,
+            offset: this.index,
+            lineBreaks: text.indexOf("\n") === -1 ? 0 : 1,
+            line: this.line,
+            col: this.col
+          };
+        }
+        var numLinesAround = 2;
+        var firstDisplayedLine = Math.max(token.line - numLinesAround, 1);
+        var lastDisplayedLine = token.line + numLinesAround;
+        var lastLineDigits = String(lastDisplayedLine).length;
+        var displayedLines = lastNLines(
+          this.buffer,
+          this.line - token.line + numLinesAround + 1
+        ).slice(0, 5);
+        var errorLines = [];
+        errorLines.push(message + " at line " + token.line + " col " + token.col + ":");
+        errorLines.push("");
+        for (var i = 0; i < displayedLines.length; i++) {
+          var line2 = displayedLines[i];
+          var lineNo = firstDisplayedLine + i;
+          errorLines.push(pad(String(lineNo), lastLineDigits) + "  " + line2);
+          if (lineNo === token.line) {
+            errorLines.push(pad("", lastLineDigits + token.col + 1) + "^");
+          }
+        }
+        return errorLines.join("\n");
+      };
+      Lexer.prototype.clone = function() {
+        return new Lexer(this.states, this.state);
+      };
+      Lexer.prototype.has = function(tokenType) {
+        return true;
+      };
+      return {
+        compile,
+        states: compileStates,
+        error: Object.freeze({ error: true }),
+        fallback: Object.freeze({ fallback: true }),
+        keywords: keywordTransform
+      };
+    });
+  }
+});
+
+// node_modules/nearley/lib/nearley.js
+var require_nearley = __commonJS({
+  "node_modules/nearley/lib/nearley.js"(exports2, module2) {
+    (function(root, factory) {
+      if (typeof module2 === "object" && module2.exports) {
+        module2.exports = factory();
+      } else {
+        root.nearley = factory();
+      }
+    })(exports2, function() {
+      function Rule(name, symbols, postprocess) {
+        this.id = ++Rule.highestId;
+        this.name = name;
+        this.symbols = symbols;
+        this.postprocess = postprocess;
+        return this;
+      }
+      Rule.highestId = 0;
+      Rule.prototype.toString = function(withCursorAt) {
+        var symbolSequence = typeof withCursorAt === "undefined" ? this.symbols.map(getSymbolShortDisplay).join(" ") : this.symbols.slice(0, withCursorAt).map(getSymbolShortDisplay).join(" ") + " ● " + this.symbols.slice(withCursorAt).map(getSymbolShortDisplay).join(" ");
+        return this.name + " → " + symbolSequence;
+      };
+      function State(rule, dot2, reference, wantedBy) {
+        this.rule = rule;
+        this.dot = dot2;
+        this.reference = reference;
+        this.data = [];
+        this.wantedBy = wantedBy;
+        this.isComplete = this.dot === rule.symbols.length;
+      }
+      State.prototype.toString = function() {
+        return "{" + this.rule.toString(this.dot) + "}, from: " + (this.reference || 0);
+      };
+      State.prototype.nextState = function(child) {
+        var state = new State(this.rule, this.dot + 1, this.reference, this.wantedBy);
+        state.left = this;
+        state.right = child;
+        if (state.isComplete) {
+          state.data = state.build();
+          state.right = void 0;
+        }
+        return state;
+      };
+      State.prototype.build = function() {
+        var children = [];
+        var node = this;
+        do {
+          children.push(node.right.data);
+          node = node.left;
+        } while (node.left);
+        children.reverse();
+        return children;
+      };
+      State.prototype.finish = function() {
+        if (this.rule.postprocess) {
+          this.data = this.rule.postprocess(this.data, this.reference, Parser.fail);
+        }
+      };
+      function Column(grammar, index) {
+        this.grammar = grammar;
+        this.index = index;
+        this.states = [];
+        this.wants = {};
+        this.scannable = [];
+        this.completed = {};
+      }
+      Column.prototype.process = function(nextColumn) {
+        var states = this.states;
+        var wants = this.wants;
+        var completed = this.completed;
+        for (var w = 0; w < states.length; w++) {
+          var state = states[w];
+          if (state.isComplete) {
+            state.finish();
+            if (state.data !== Parser.fail) {
+              var wantedBy = state.wantedBy;
+              for (var i = wantedBy.length; i--; ) {
+                var left = wantedBy[i];
+                this.complete(left, state);
+              }
+              if (state.reference === this.index) {
+                var exp = state.rule.name;
+                (this.completed[exp] = this.completed[exp] || []).push(state);
+              }
+            }
+          } else {
+            var exp = state.rule.symbols[state.dot];
+            if (typeof exp !== "string") {
+              this.scannable.push(state);
+              continue;
+            }
+            if (wants[exp]) {
+              wants[exp].push(state);
+              if (completed.hasOwnProperty(exp)) {
+                var nulls = completed[exp];
+                for (var i = 0; i < nulls.length; i++) {
+                  var right = nulls[i];
+                  this.complete(state, right);
+                }
+              }
+            } else {
+              wants[exp] = [state];
+              this.predict(exp);
+            }
+          }
+        }
+      };
+      Column.prototype.predict = function(exp) {
+        var rules = this.grammar.byName[exp] || [];
+        for (var i = 0; i < rules.length; i++) {
+          var r = rules[i];
+          var wantedBy = this.wants[exp];
+          var s = new State(r, 0, this.index, wantedBy);
+          this.states.push(s);
+        }
+      };
+      Column.prototype.complete = function(left, right) {
+        var copy = left.nextState(right);
+        this.states.push(copy);
+      };
+      function Grammar(rules, start) {
+        this.rules = rules;
+        this.start = start || this.rules[0].name;
+        var byName = this.byName = {};
+        this.rules.forEach(function(rule) {
+          if (!byName.hasOwnProperty(rule.name)) {
+            byName[rule.name] = [];
+          }
+          byName[rule.name].push(rule);
+        });
+      }
+      Grammar.fromCompiled = function(rules, start) {
+        var lexer = rules.Lexer;
+        if (rules.ParserStart) {
+          start = rules.ParserStart;
+          rules = rules.ParserRules;
+        }
+        var rules = rules.map(function(r) {
+          return new Rule(r.name, r.symbols, r.postprocess);
+        });
+        var g = new Grammar(rules, start);
+        g.lexer = lexer;
+        return g;
+      };
+      function StreamLexer() {
+        this.reset("");
+      }
+      StreamLexer.prototype.reset = function(data, state) {
+        this.buffer = data;
+        this.index = 0;
+        this.line = state ? state.line : 1;
+        this.lastLineBreak = state ? -state.col : 0;
+      };
+      StreamLexer.prototype.next = function() {
+        if (this.index < this.buffer.length) {
+          var ch = this.buffer[this.index++];
+          if (ch === "\n") {
+            this.line += 1;
+            this.lastLineBreak = this.index;
+          }
+          return { value: ch };
+        }
+      };
+      StreamLexer.prototype.save = function() {
+        return {
+          line: this.line,
+          col: this.index - this.lastLineBreak
+        };
+      };
+      StreamLexer.prototype.formatError = function(token, message) {
+        var buffer = this.buffer;
+        if (typeof buffer === "string") {
+          var lines = buffer.split("\n").slice(
+            Math.max(0, this.line - 5),
+            this.line
+          );
+          var nextLineBreak = buffer.indexOf("\n", this.index);
+          if (nextLineBreak === -1) nextLineBreak = buffer.length;
+          var col = this.index - this.lastLineBreak;
+          var lastLineDigits = String(this.line).length;
+          message += " at line " + this.line + " col " + col + ":\n\n";
+          message += lines.map(function(line2, i) {
+            return pad(this.line - lines.length + i + 1, lastLineDigits) + " " + line2;
+          }, this).join("\n");
+          message += "\n" + pad("", lastLineDigits + col) + "^\n";
+          return message;
+        } else {
+          return message + " at index " + (this.index - 1);
+        }
+        function pad(n, length) {
+          var s = String(n);
+          return Array(length - s.length + 1).join(" ") + s;
+        }
+      };
+      function Parser(rules, start, options) {
+        if (rules instanceof Grammar) {
+          var grammar = rules;
+          var options = start;
+        } else {
+          var grammar = Grammar.fromCompiled(rules, start);
+        }
+        this.grammar = grammar;
+        this.options = {
+          keepHistory: false,
+          lexer: grammar.lexer || new StreamLexer()
+        };
+        for (var key in options || {}) {
+          this.options[key] = options[key];
+        }
+        this.lexer = this.options.lexer;
+        this.lexerState = void 0;
+        var column = new Column(grammar, 0);
+        var table = this.table = [column];
+        column.wants[grammar.start] = [];
+        column.predict(grammar.start);
+        column.process();
+        this.current = 0;
+      }
+      Parser.fail = {};
+      Parser.prototype.feed = function(chunk) {
+        var lexer = this.lexer;
+        lexer.reset(chunk, this.lexerState);
+        var token;
+        while (true) {
+          try {
+            token = lexer.next();
+            if (!token) {
+              break;
+            }
+          } catch (e) {
+            var nextColumn = new Column(this.grammar, this.current + 1);
+            this.table.push(nextColumn);
+            var err = new Error(this.reportLexerError(e));
+            err.offset = this.current;
+            err.token = e.token;
+            throw err;
+          }
+          var column = this.table[this.current];
+          if (!this.options.keepHistory) {
+            delete this.table[this.current - 1];
+          }
+          var n = this.current + 1;
+          var nextColumn = new Column(this.grammar, n);
+          this.table.push(nextColumn);
+          var literal = token.text !== void 0 ? token.text : token.value;
+          var value2 = lexer.constructor === StreamLexer ? token.value : token;
+          var scannable = column.scannable;
+          for (var w = scannable.length; w--; ) {
+            var state = scannable[w];
+            var expect = state.rule.symbols[state.dot];
+            if (expect.test ? expect.test(value2) : expect.type ? expect.type === token.type : expect.literal === literal) {
+              var next = state.nextState({ data: value2, token, isToken: true, reference: n - 1 });
+              nextColumn.states.push(next);
+            }
+          }
+          nextColumn.process();
+          if (nextColumn.states.length === 0) {
+            var err = new Error(this.reportError(token));
+            err.offset = this.current;
+            err.token = token;
+            throw err;
+          }
+          if (this.options.keepHistory) {
+            column.lexerState = lexer.save();
+          }
+          this.current++;
+        }
+        if (column) {
+          this.lexerState = lexer.save();
+        }
+        this.results = this.finish();
+        return this;
+      };
+      Parser.prototype.reportLexerError = function(lexerError) {
+        var tokenDisplay, lexerMessage;
+        var token = lexerError.token;
+        if (token) {
+          tokenDisplay = "input " + JSON.stringify(token.text[0]) + " (lexer error)";
+          lexerMessage = this.lexer.formatError(token, "Syntax error");
+        } else {
+          tokenDisplay = "input (lexer error)";
+          lexerMessage = lexerError.message;
+        }
+        return this.reportErrorCommon(lexerMessage, tokenDisplay);
+      };
+      Parser.prototype.reportError = function(token) {
+        var tokenDisplay = (token.type ? token.type + " token: " : "") + JSON.stringify(token.value !== void 0 ? token.value : token);
+        var lexerMessage = this.lexer.formatError(token, "Syntax error");
+        return this.reportErrorCommon(lexerMessage, tokenDisplay);
+      };
+      Parser.prototype.reportErrorCommon = function(lexerMessage, tokenDisplay) {
+        var lines = [];
+        lines.push(lexerMessage);
+        var lastColumnIndex = this.table.length - 2;
+        var lastColumn = this.table[lastColumnIndex];
+        var expectantStates = lastColumn.states.filter(function(state) {
+          var nextSymbol = state.rule.symbols[state.dot];
+          return nextSymbol && typeof nextSymbol !== "string";
+        });
+        if (expectantStates.length === 0) {
+          lines.push("Unexpected " + tokenDisplay + ". I did not expect any more input. Here is the state of my parse table:\n");
+          this.displayStateStack(lastColumn.states, lines);
+        } else {
+          lines.push("Unexpected " + tokenDisplay + ". Instead, I was expecting to see one of the following:\n");
+          var stateStacks = expectantStates.map(function(state) {
+            return this.buildFirstStateStack(state, []) || [state];
+          }, this);
+          stateStacks.forEach(function(stateStack) {
+            var state = stateStack[0];
+            var nextSymbol = state.rule.symbols[state.dot];
+            var symbolDisplay = this.getSymbolDisplay(nextSymbol);
+            lines.push("A " + symbolDisplay + " based on:");
+            this.displayStateStack(stateStack, lines);
+          }, this);
+        }
+        lines.push("");
+        return lines.join("\n");
+      };
+      Parser.prototype.displayStateStack = function(stateStack, lines) {
+        var lastDisplay;
+        var sameDisplayCount = 0;
+        for (var j = 0; j < stateStack.length; j++) {
+          var state = stateStack[j];
+          var display = state.rule.toString(state.dot);
+          if (display === lastDisplay) {
+            sameDisplayCount++;
+          } else {
+            if (sameDisplayCount > 0) {
+              lines.push("    ^ " + sameDisplayCount + " more lines identical to this");
+            }
+            sameDisplayCount = 0;
+            lines.push("    " + display);
+          }
+          lastDisplay = display;
+        }
+      };
+      Parser.prototype.getSymbolDisplay = function(symbol) {
+        return getSymbolLongDisplay(symbol);
+      };
+      Parser.prototype.buildFirstStateStack = function(state, visited) {
+        if (visited.indexOf(state) !== -1) {
+          return null;
+        }
+        if (state.wantedBy.length === 0) {
+          return [state];
+        }
+        var prevState = state.wantedBy[0];
+        var childVisited = [state].concat(visited);
+        var childResult = this.buildFirstStateStack(prevState, childVisited);
+        if (childResult === null) {
+          return null;
+        }
+        return [state].concat(childResult);
+      };
+      Parser.prototype.save = function() {
+        var column = this.table[this.current];
+        column.lexerState = this.lexerState;
+        return column;
+      };
+      Parser.prototype.restore = function(column) {
+        var index = column.index;
+        this.current = index;
+        this.table[index] = column;
+        this.table.splice(index + 1);
+        this.lexerState = column.lexerState;
+        this.results = this.finish();
+      };
+      Parser.prototype.rewind = function(index) {
+        if (!this.options.keepHistory) {
+          throw new Error("set option `keepHistory` to enable rewinding");
+        }
+        this.restore(this.table[index]);
+      };
+      Parser.prototype.finish = function() {
+        var considerations = [];
+        var start = this.grammar.start;
+        var column = this.table[this.table.length - 1];
+        column.states.forEach(function(t) {
+          if (t.rule.name === start && t.dot === t.rule.symbols.length && t.reference === 0 && t.data !== Parser.fail) {
+            considerations.push(t);
+          }
+        });
+        return considerations.map(function(c) {
+          return c.data;
+        });
+      };
+      function getSymbolLongDisplay(symbol) {
+        var type = typeof symbol;
+        if (type === "string") {
+          return symbol;
+        } else if (type === "object") {
+          if (symbol.literal) {
+            return JSON.stringify(symbol.literal);
+          } else if (symbol instanceof RegExp) {
+            return "character matching " + symbol;
+          } else if (symbol.type) {
+            return symbol.type + " token";
+          } else if (symbol.test) {
+            return "token matching " + String(symbol.test);
+          } else {
+            throw new Error("Unknown symbol type: " + symbol);
+          }
+        }
+      }
+      function getSymbolShortDisplay(symbol) {
+        var type = typeof symbol;
+        if (type === "string") {
+          return symbol;
+        } else if (type === "object") {
+          if (symbol.literal) {
+            return JSON.stringify(symbol.literal);
+          } else if (symbol instanceof RegExp) {
+            return symbol.toString();
+          } else if (symbol.type) {
+            return "%" + symbol.type;
+          } else if (symbol.test) {
+            return "<" + String(symbol.test) + ">";
+          } else {
+            throw new Error("Unknown symbol type: " + symbol);
+          }
+        }
+      }
+      return {
+        Parser,
+        Grammar,
+        Rule
+      };
+    });
+  }
+});
+
+// node_modules/pgsql-ast-parser/index.js
+var require_pgsql_ast_parser = __commonJS({
+  "node_modules/pgsql-ast-parser/index.js"(exports2) {
+    (function(e, a) {
+      for (var i in a) e[i] = a[i];
+    })(
+      exports2,
+      /******/
+      (function(modules) {
+        var installedModules = {};
+        function __webpack_require__(moduleId) {
+          if (installedModules[moduleId]) {
+            return installedModules[moduleId].exports;
+          }
+          var module3 = installedModules[moduleId] = {
+            /******/
+            i: moduleId,
+            /******/
+            l: false,
+            /******/
+            exports: {}
+            /******/
+          };
+          modules[moduleId].call(module3.exports, module3, module3.exports, __webpack_require__);
+          module3.l = true;
+          return module3.exports;
+        }
+        __webpack_require__.m = modules;
+        __webpack_require__.c = installedModules;
+        __webpack_require__.d = function(exports3, name, getter) {
+          if (!__webpack_require__.o(exports3, name)) {
+            Object.defineProperty(exports3, name, { enumerable: true, get: getter });
+          }
+        };
+        __webpack_require__.r = function(exports3) {
+          if (typeof Symbol !== "undefined" && Symbol.toStringTag) {
+            Object.defineProperty(exports3, Symbol.toStringTag, { value: "Module" });
+          }
+          Object.defineProperty(exports3, "__esModule", { value: true });
+        };
+        __webpack_require__.t = function(value2, mode) {
+          if (mode & 1) value2 = __webpack_require__(value2);
+          if (mode & 8) return value2;
+          if (mode & 4 && typeof value2 === "object" && value2 && value2.__esModule) return value2;
+          var ns = /* @__PURE__ */ Object.create(null);
+          __webpack_require__.r(ns);
+          Object.defineProperty(ns, "default", { enumerable: true, value: value2 });
+          if (mode & 2 && typeof value2 != "string") for (var key in value2) __webpack_require__.d(ns, key, function(key2) {
+            return value2[key2];
+          }.bind(null, key));
+          return ns;
+        };
+        __webpack_require__.n = function(module3) {
+          var getter = module3 && module3.__esModule ? (
+            /******/
+            function getDefault() {
+              return module3["default"];
+            }
+          ) : (
+            /******/
+            function getModuleExports() {
+              return module3;
+            }
+          );
+          __webpack_require__.d(getter, "a", getter);
+          return getter;
+        };
+        __webpack_require__.o = function(object, property) {
+          return Object.prototype.hasOwnProperty.call(object, property);
+        };
+        __webpack_require__.p = "";
+        return __webpack_require__(__webpack_require__.s = 7);
+      })([
+        /* 0 */
+        /***/
+        (function(module3, exports3) {
+          module3.exports = require_moo();
+        }),
+        /* 1 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.unbox = exports3.doubleQuoted = exports3.box = exports3.track = exports3.tracking = exports3.trackingComments = exports3.lexerAny = exports3.lexer = void 0;
+          const moo_1 = __webpack_require__(0);
+          const keywords_1 = __webpack_require__(3);
+          const keywordsMap = {};
+          for (const k of keywords_1.sqlKeywords) {
+            keywordsMap["kw_" + k.toLowerCase()] = k;
+          }
+          const caseInsensitiveKeywords = (map) => {
+            const transform = (0, moo_1.keywords)(map);
+            return (text) => transform(text.toUpperCase());
+          };
+          exports3.lexer = (0, moo_1.compile)({
+            word: {
+              match: /[eE](?!')[A-Za-z0-9_]*|[a-df-zA-DF-Z_][A-Za-z0-9_]*/,
+              type: caseInsensitiveKeywords(keywordsMap),
+              value: (x) => x.toLowerCase()
+            },
+            wordQuoted: {
+              match: /"(?:[^"\*]|"")+"/,
+              type: () => "quoted_word",
+              value: (x) => x.substring(1, x.length - 1)
+            },
+            string: {
+              match: /'(?:[^']|\'\')*'/,
+              value: (x) => {
+                return x.substring(1, x.length - 1).replace(/''/g, "'");
+              }
+            },
+            eString: {
+              match: /\b(?:e|E)'(?:[^'\\]|[\r\n\s]|(?:\\\s)|(?:\\\n)|(?:\\.)|(?:\'\'))+'/,
+              value: (x) => {
+                return x.substring(2, x.length - 1).replace(/''/g, "'").replace(/\\([\s\n])/g, (_, x2) => x2).replace(/\\./g, (m) => JSON.parse('"' + m + '"'));
+              }
+            },
+            qparam: {
+              match: /\$\d+/
+            },
+            commentLine: /\-\-.*?$[\s\r\n]*/,
+            commentFullOpen: /\/\*/,
+            commentFullClose: /\*\/[\s\r\n]*/,
+            star: "*",
+            comma: ",",
+            space: { match: /[\s\t\n\v\f\r]+/, lineBreaks: true },
+            int: /\-?\d+(?![\.\d])/,
+            float: /\-?(?:(?:\d*\.\d+)|(?:\d+\.\d*))/,
+            // word: /[a-zA-Z][A-Za-z0-9_\-]*/,
+            lparen: "(",
+            rparen: ")",
+            lbracket: "[",
+            rbracket: "]",
+            semicolon: ";",
+            dot: /\.(?!\d)/,
+            op_cast: "::",
+            op_colon: ":",
+            op_plus: "+",
+            op_eq: "=",
+            op_neq: {
+              match: /(?:!=)|(?:\<\>)/,
+              value: () => "!="
+            },
+            op_membertext: "->>",
+            op_member: "->",
+            op_minus: "-",
+            op_div: /\//,
+            op_not_ilike: /\!~~\*/,
+            op_not_like: /\!~~/,
+            op_ilike: /~~\*/,
+            op_like: /~~/,
+            op_mod: "%",
+            op_exp: "^",
+            op_additive: {
+              // group other additive operators
+              match: ["||", "-", "#-", "&&"]
+            },
+            op_compare: {
+              // group other comparison operators
+              // ... to add: "IN" and "NOT IN" that are matched by keywords
+              match: [">", ">=", "<", "<=", "@>", "<@", "?", "?|", "?&", "#>>", ">>", "<<", "~", "~*", "!~", "!~*", "@@"]
+            },
+            ops_others: {
+              // referenced as (any other operator) in https://www.postgresql.org/docs/12/sql-syntax-lexical.html#SQL-PRECEDENCE
+              // see also https://www.postgresql.org/docs/9.0/functions-math.html
+              match: ["|", "&", "^", "#"]
+            },
+            codeblock: {
+              match: /\$\$(?:.|[\s\t\n\v\f\r])*?\$\$/s,
+              lineBreaks: true,
+              value: (x) => x.substring(2, x.length - 2)
+            }
+          });
+          exports3.lexer.next = /* @__PURE__ */ ((next) => () => {
+            let tok;
+            let commentFull = null;
+            while (tok = next.call(exports3.lexer)) {
+              if (tok.type === "commentFullOpen") {
+                if (commentFull === null) {
+                  commentFull = {
+                    nested: 0,
+                    offset: tok.offset,
+                    text: tok.text
+                  };
+                  continue;
+                }
+                commentFull.nested++;
+              }
+              if (commentFull != null) {
+                commentFull.text += tok.text;
+                if (tok.type === "commentFullClose") {
+                  if (commentFull.nested === 0) {
+                    comments === null || comments === void 0 ? void 0 : comments.push(makeComment(commentFull));
+                    commentFull = null;
+                    continue;
+                  }
+                  commentFull.nested--;
+                }
+                continue;
+              }
+              if (tok.type === "space") {
+                continue;
+              }
+              if (tok.type === "commentLine") {
+                comments === null || comments === void 0 ? void 0 : comments.push(makeComment(tok));
+                continue;
+              }
+              break;
+            }
+            if (trackingLoc && tok) {
+              const start = tok.offset;
+              const loc = {
+                start,
+                end: start + tok.text.length
+              };
+              tok._location = loc;
+            }
+            return tok;
+          })(exports3.lexer.next);
+          exports3.lexerAny = exports3.lexer;
+          let comments = null;
+          const makeComment = ({ offset, text }) => ({
+            _location: { start: offset, end: offset + text.length },
+            comment: text
+          });
+          function trackingComments(act) {
+            if (comments) {
+              throw new Error("WAT ? Recursive comments tracking 🤔🤨 ?");
+            }
+            try {
+              comments = [];
+              const ast = act();
+              return { comments, ast };
+            } finally {
+              comments = null;
+            }
+          }
+          exports3.trackingComments = trackingComments;
+          let trackingLoc = false;
+          function tracking(act) {
+            if (trackingLoc) {
+              return act();
+            }
+            try {
+              trackingLoc = true;
+              return act();
+            } finally {
+              trackingLoc = false;
+            }
+          }
+          exports3.tracking = tracking;
+          function track(xs, ret) {
+            if (!trackingLoc || !ret || typeof ret !== "object") {
+              return ret;
+            }
+            const start = seek(xs, true);
+            const end = seek(xs, false);
+            if (!start || !end) {
+              return ret;
+            }
+            if (start === end) {
+              ret._location = start;
+            } else {
+              const loc = {
+                start: start.start,
+                end: end.end
+              };
+              ret._location = loc;
+            }
+            return ret;
+          }
+          exports3.track = track;
+          const literal = /* @__PURE__ */ Symbol("_literal");
+          const doubleQuotedSym = /* @__PURE__ */ Symbol("_doublequoted");
+          function box(xs, value2, doubleQuoted2) {
+            if (!trackingLoc && !doubleQuoted2) {
+              return value2;
+            }
+            return track(xs, { [literal]: value2, [doubleQuotedSym]: doubleQuoted2 });
+          }
+          exports3.box = box;
+          function unwrapNoBox(e) {
+            if (Array.isArray(e) && e.length === 1) {
+              e = unwrapNoBox(e[0]);
+            }
+            if (Array.isArray(e) && !e.length) {
+              return null;
+            }
+            return e;
+          }
+          function doubleQuoted(value2) {
+            const uw = unwrapNoBox(value2);
+            if (typeof value2 === "object" && (uw === null || uw === void 0 ? void 0 : uw[doubleQuotedSym])) {
+              return { doubleQuoted: true };
+            }
+            return void 0;
+          }
+          exports3.doubleQuoted = doubleQuoted;
+          function unbox(value2) {
+            var _a;
+            if (typeof value2 === "object") {
+              return (_a = value2 === null || value2 === void 0 ? void 0 : value2[literal]) !== null && _a !== void 0 ? _a : value2;
+            }
+            return value2;
+          }
+          exports3.unbox = unbox;
+          function seek(xs, start) {
+            if (!xs) {
+              return null;
+            }
+            if (Array.isArray(xs)) {
+              const diff = start ? 1 : -1;
+              for (let i = start ? 0 : xs.length - 1; i >= 0 && i < xs.length; i += diff) {
+                const v = seek(xs[i], start);
+                if (v) {
+                  return v;
+                }
+              }
+              return null;
+            }
+            if (typeof xs !== "object") {
+              return null;
+            }
+            return xs._location;
+          }
+        }),
+        /* 2 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.AstDefaultMapper = exports3.arrayNilMap = exports3.assignChanged = exports3.astMapper = void 0;
+          const utils_1 = __webpack_require__(6);
+          function astMapper(modifierBuilder) {
+            const instance = new AstDefaultMapper();
+            instance.wrapped = modifierBuilder(instance);
+            return instance;
+          }
+          exports3.astMapper = astMapper;
+          function assignChanged(orig, assign) {
+            if (!orig) {
+              return orig;
+            }
+            let changed = false;
+            for (const k of Object.keys(assign)) {
+              if (orig[k] !== assign[k]) {
+                changed = true;
+                break;
+              }
+            }
+            if (!changed) {
+              return orig;
+            }
+            return (0, utils_1.trimNullish)({
+              ...orig,
+              ...assign
+            }, 0);
+          }
+          exports3.assignChanged = assignChanged;
+          function arrayNilMap(collection, mapper) {
+            if (!(collection === null || collection === void 0 ? void 0 : collection.length)) {
+              return collection;
+            }
+            let changed = false;
+            let ret = collection;
+            for (let i = 0; i < collection.length; i++) {
+              const orig = collection[i];
+              const val = mapper(orig);
+              if (!changed && (!val || val !== orig)) {
+                changed = true;
+                ret = collection.slice(0, i);
+              }
+              if (!val) {
+                continue;
+              }
+              if (changed) {
+                ret.push(val);
+              }
+            }
+            return ret;
+          }
+          exports3.arrayNilMap = arrayNilMap;
+          function withAccepts(val) {
+            switch (val === null || val === void 0 ? void 0 : val.type) {
+              case "select":
+              case "delete":
+              case "insert":
+              case "update":
+              case "union":
+              case "union all":
+              case "with":
+                return true;
+              default:
+                return false;
+            }
+          }
+          class AstDefaultMapper {
+            super() {
+              return new SkipModifier(this);
+            }
+            statement(val) {
+              switch (val.type) {
+                case "alter table":
+                  return this.alterTable(val);
+                case "alter index":
+                  return this.alterIndex(val);
+                case "commit":
+                case "start transaction":
+                case "rollback":
+                  return this.transaction(val);
+                case "create index":
+                  return this.createIndex(val);
+                case "create table":
+                  return this.createTable(val);
+                case "truncate table":
+                  return this.truncateTable(val);
+                case "delete":
+                  return this.delete(val);
+                case "insert":
+                  return this.insert(val);
+                case "with":
+                  return this.with(val);
+                case "with recursive":
+                  return this.withRecursive(val);
+                case "select":
+                  return this.selection(val);
+                case "update":
+                  return this.update(val);
+                case "create extension":
+                  return this.createExtension(val);
+                case "tablespace":
+                  return this.tablespace(val);
+                case "set":
+                  return this.setGlobal(val);
+                case "set timezone":
+                  return this.setTimezone(val);
+                case "set names":
+                  return this.setNames(val);
+                case "create sequence":
+                  return this.createSequence(val);
+                case "alter sequence":
+                  return this.alterSequence(val);
+                case "begin":
+                  return this.begin(val);
+                case "drop table":
+                case "drop index":
+                case "drop sequence":
+                case "drop type":
+                case "drop trigger":
+                  return this.drop(val);
+                case "create enum":
+                  return this.createEnum(val);
+                case "alter enum":
+                  return this.alterEnum(val);
+                case "create composite type":
+                  return this.createCompositeType(val);
+                case "union":
+                case "union all":
+                  return this.union(val);
+                case "show":
+                  return this.show(val);
+                case "prepare":
+                  return this.prepare(val);
+                case "deallocate":
+                  return this.deallocate(val);
+                case "create view":
+                  return this.createView(val);
+                case "create materialized view":
+                  return this.createMaterializedView(val);
+                case "refresh materialized view":
+                  return this.refreshMaterializedView(val);
+                case "create schema":
+                  return this.createSchema(val);
+                case "raise":
+                  return this.raise(val);
+                case "comment":
+                  return this.comment(val);
+                case "do":
+                  return this.do(val);
+                case "create function":
+                  return this.createFunction(val);
+                case "drop function":
+                  return this.dropFunction(val);
+                case "values":
+                  return this.values(val);
+                default:
+                  throw utils_1.NotSupported.never(val);
+              }
+            }
+            comment(val) {
+              return val;
+            }
+            createView(val) {
+              const query = this.select(val.query);
+              if (!query) {
+                return null;
+              }
+              const ref = this.tableRef(val.name);
+              if (!ref) {
+                return null;
+              }
+              return assignChanged(val, {
+                query,
+                name: ref
+              });
+            }
+            createMaterializedView(val) {
+              const query = this.select(val.query);
+              if (!query) {
+                return null;
+              }
+              const ref = this.tableRef(val.name);
+              if (!ref) {
+                return null;
+              }
+              return assignChanged(val, {
+                query,
+                name: ref
+              });
+            }
+            refreshMaterializedView(val) {
+              return val;
+            }
+            do(val) {
+              return val;
+            }
+            createFunction(val) {
+              const args = arrayNilMap(val.arguments, (a) => {
+                const type = this.dataType(a.type);
+                return assignChanged(a, { type });
+              });
+              let returns;
+              if (val.returns) {
+                switch (val.returns.kind) {
+                  case "table":
+                    returns = assignChanged(val.returns, {
+                      columns: arrayNilMap(val.returns.columns, (v) => {
+                        const type = this.dataType(v.type);
+                        return type && assignChanged(v, { type });
+                      })
+                    });
+                    break;
+                  case void 0:
+                  case null:
+                  case "array":
+                    returns = this.dataType(val.returns);
+                    break;
+                  default:
+                    throw utils_1.NotSupported.never(val.returns);
+                }
+              }
+              return assignChanged(val, {
+                returns,
+                arguments: args
+              });
+            }
+            dropFunction(val) {
+              const args = arrayNilMap(val.arguments, (a) => {
+                const type = this.dataType(a.type);
+                return assignChanged(a, { type });
+              });
+              return assignChanged(val, {
+                arguments: args
+              });
+            }
+            show(val) {
+              return val;
+            }
+            createEnum(val) {
+              return val;
+            }
+            alterEnum(val) {
+              return val;
+            }
+            createCompositeType(val) {
+              const attributes = arrayNilMap(val.attributes, (a) => assignChanged(a, {
+                dataType: this.dataType(a.dataType)
+              }));
+              return assignChanged(val, { attributes });
+            }
+            drop(val) {
+              return val;
+            }
+            alterSequence(seq) {
+              if (seq.change.type === "set options") {
+                if (seq.change.as) {
+                  this.dataType(seq.change.as);
+                }
+              }
+              return seq;
+            }
+            begin(begin) {
+              return begin;
+            }
+            createSequence(seq) {
+              if (seq.options.as) {
+                this.dataType(seq.options.as);
+              }
+              return seq;
+            }
+            tablespace(val) {
+              return val;
+            }
+            setGlobal(val) {
+              return val;
+            }
+            setTimezone(val) {
+              return val;
+            }
+            setNames(val) {
+              return val;
+            }
+            update(val) {
+              if (!val) {
+                return val;
+              }
+              const table = this.tableRef(val.table);
+              if (!table) {
+                return null;
+              }
+              const from = val.from && this.from(val.from);
+              const where = val.where && this.expr(val.where);
+              const sets = arrayNilMap(val.sets, (x) => this.set(x));
+              if (!(sets === null || sets === void 0 ? void 0 : sets.length)) {
+                return null;
+              }
+              const returning = arrayNilMap(val.returning, (c) => this.selectionColumn(c));
+              return assignChanged(val, {
+                table,
+                where,
+                sets,
+                from,
+                returning
+              });
+            }
+            insert(val) {
+              var _a, _b;
+              const into = this.tableRef(val.into);
+              if (!into) {
+                return null;
+              }
+              const select = val.insert && this.select(val.insert);
+              if (!select) {
+                return null;
+              }
+              const returning = arrayNilMap(val.returning, (c) => this.selectionColumn(c));
+              let on = (_a = val.onConflict) === null || _a === void 0 ? void 0 : _a.on;
+              switch (on === null || on === void 0 ? void 0 : on.type) {
+                case "on constraint":
+                  break;
+                case "on expr":
+                  on = assignChanged(on, {
+                    exprs: arrayNilMap(on.exprs, (e) => this.expr(e))
+                  });
+                  break;
+                case null:
+                case void 0:
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(on);
+              }
+              let ocdo = (_b = val.onConflict) === null || _b === void 0 ? void 0 : _b.do;
+              if (ocdo && ocdo !== "do nothing") {
+                const sets = arrayNilMap(ocdo.sets, (x) => this.set(x));
+                if (!(sets === null || sets === void 0 ? void 0 : sets.length)) {
+                  ocdo = "do nothing";
+                } else if (ocdo.sets !== sets) {
+                  ocdo = { sets };
+                }
+              }
+              return assignChanged(val, {
+                into,
+                insert: select,
+                returning,
+                onConflict: !ocdo ? val.onConflict : assignChanged(val.onConflict, {
+                  do: ocdo,
+                  on
+                })
+              });
+            }
+            raise(val) {
+              return assignChanged(val, {
+                formatExprs: val.formatExprs && arrayNilMap(val.formatExprs, (x) => this.expr(x)),
+                using: val.using && arrayNilMap(val.using, (u) => {
+                  return assignChanged(u, {
+                    value: this.expr(u.value)
+                  });
+                })
+              });
+            }
+            delete(val) {
+              const from = this.tableRef(val.from);
+              if (!from) {
+                return null;
+              }
+              const where = val.where && this.expr(val.where);
+              const returning = arrayNilMap(val.returning, (c) => this.selectionColumn(c));
+              return assignChanged(val, {
+                where,
+                returning,
+                from
+              });
+            }
+            createSchema(val) {
+              return val;
+            }
+            createTable(val) {
+              const columns = arrayNilMap(val.columns, (col) => {
+                switch (col.kind) {
+                  case "column":
+                    return this.createColumn(col);
+                  case "like table":
+                    return this.likeTable(col);
+                  default:
+                    throw utils_1.NotSupported.never(col);
+                }
+              });
+              if (!(columns === null || columns === void 0 ? void 0 : columns.length)) {
+                return null;
+              }
+              return assignChanged(val, {
+                columns
+              });
+            }
+            likeTable(col) {
+              const like = this.tableRef(col.like);
+              if (!like) {
+                return null;
+              }
+              return assignChanged(col, { like });
+            }
+            truncateTable(val) {
+              return val;
+            }
+            constraint(c) {
+              switch (c.type) {
+                case "not null":
+                case "null":
+                case "primary key":
+                case "unique":
+                case "add generated":
+                  if (c.type === "add generated" && c.expression) {
+                    const expression = this.expr(c.expression);
+                    if (!expression) {
+                      return null;
+                    }
+                    return assignChanged(c, {
+                      expression
+                    });
+                  }
+                  return c;
+                case "default": {
+                  const def = this.expr(c.default);
+                  if (!def) {
+                    return null;
+                  }
+                  return assignChanged(c, {
+                    default: def
+                  });
+                }
+                case "check": {
+                  const def = this.expr(c.expr);
+                  if (!def) {
+                    return null;
+                  }
+                  return assignChanged(c, {
+                    expr: def
+                  });
+                }
+                case "reference": {
+                  const foreignTable = this.tableRef(c.foreignTable);
+                  if (!foreignTable) {
+                    return null;
+                  }
+                  return assignChanged(c, {
+                    foreignTable
+                  });
+                }
+                default:
+                  throw utils_1.NotSupported.never(c);
+              }
+            }
+            set(st) {
+              const value2 = this.expr(st.value);
+              if (!value2) {
+                return null;
+              }
+              return assignChanged(st, {
+                value: value2
+              });
+            }
+            // =========================================
+            // ================ STUFF ==================
+            // =========================================
+            /** Called when a data type definition is encountered */
+            dataType(dataType) {
+              return dataType;
+            }
+            /** Called when an alias of a table is created */
+            tableRef(st) {
+              return st;
+            }
+            transaction(val) {
+              return val;
+            }
+            createExtension(val) {
+              return val;
+            }
+            createIndex(val) {
+              const expressions = arrayNilMap(val.expressions, (e) => {
+                const expression = this.expr(e.expression);
+                if (expression === e.expression) {
+                  return e;
+                }
+                if (!expression) {
+                  return null;
+                }
+                return {
+                  ...e,
+                  expression
+                };
+              });
+              if (!(expressions === null || expressions === void 0 ? void 0 : expressions.length)) {
+                return null;
+              }
+              return assignChanged(val, {
+                expressions
+              });
+            }
+            prepare(st) {
+              const statement = this.statement(st.statement);
+              if (!statement) {
+                return null;
+              }
+              return assignChanged(st, {
+                args: arrayNilMap(st.args, (a) => this.dataType(a)),
+                statement
+              });
+            }
+            deallocate(st) {
+              return st;
+            }
+            // =========================================
+            // ============== ALTER INDEX ==============
+            // =========================================
+            alterIndex(st) {
+              return st;
+            }
+            // =========================================
+            // ============== ALTER TABLE ==============
+            // =========================================
+            alterTable(st) {
+              var _a;
+              const table = this.tableRef(st.table);
+              if (!table) {
+                return null;
+              }
+              let changes = [];
+              let hasChanged = false;
+              for (let i = 0; i < (((_a = st.changes) === null || _a === void 0 ? void 0 : _a.length) || 0); i++) {
+                const currentChange = st.changes[i];
+                const change = this.tableAlteration(currentChange, st.table);
+                hasChanged = hasChanged || change != currentChange;
+                if (!!change) {
+                  changes.push(change);
+                }
+              }
+              if (!changes.length) {
+                return null;
+              }
+              if (!hasChanged) {
+                return st;
+              }
+              return assignChanged(st, {
+                table,
+                changes
+              });
+            }
+            tableAlteration(change, table) {
+              switch (change.type) {
+                case "add column":
+                  return this.addColumn(change, table);
+                case "add constraint":
+                  return this.addConstraint(change, table);
+                case "alter column":
+                  return this.alterColumn(change, table);
+                case "rename":
+                  return this.renameTable(change, table);
+                case "rename column":
+                  return this.renameColumn(change, table);
+                case "rename constraint":
+                  return this.renameConstraint(change, table);
+                case "drop column":
+                  return this.dropColumn(change, table);
+                case "drop constraint":
+                  return this.dropConstraint(change, table);
+                case "owner":
+                  return this.setTableOwner(change, table);
+                default:
+                  throw utils_1.NotSupported.never(change);
+              }
+            }
+            dropColumn(change, table) {
+              return change;
+            }
+            dropConstraint(change, table) {
+              return change;
+            }
+            setTableOwner(change, table) {
+              return change;
+            }
+            renameConstraint(change, table) {
+              return change;
+            }
+            renameColumn(change, table) {
+              return change;
+            }
+            renameTable(change, table) {
+              return change;
+            }
+            alterColumn(change, inTable) {
+              let alter;
+              switch (change.alter.type) {
+                case "set default":
+                  alter = this.setColumnDefault(change.alter, inTable, change.column);
+                  break;
+                case "set type":
+                  alter = this.setColumnType(change.alter, inTable, change.column);
+                  break;
+                case "drop default":
+                case "set not null":
+                case "drop not null":
+                  alter = this.alterColumnSimple(change.alter, inTable, change.column);
+                  break;
+                case "add generated":
+                  alter = this.alterColumnAddGenerated(change.alter, inTable, change.column);
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(change.alter);
+              }
+              if (!alter) {
+                return null;
+              }
+              return assignChanged(change, {
+                alter
+              });
+            }
+            setColumnType(alter, inTable, inColumn) {
+              const dataType = this.dataType(alter.dataType);
+              return assignChanged(alter, {
+                dataType
+              });
+            }
+            alterColumnAddGenerated(alter, inTable, inColumn) {
+              return alter;
+            }
+            alterColumnSimple(alter, inTable, inColumn) {
+              return alter;
+            }
+            setColumnDefault(alter, inTable, inColumn) {
+              const def = this.expr(alter.default);
+              if (!def) {
+                return null;
+              }
+              return assignChanged(alter, {
+                default: def
+              });
+            }
+            addConstraint(change, inTable) {
+              return change;
+            }
+            addColumn(change, inTable) {
+              const column = this.createColumn(change.column);
+              if (!column) {
+                return null;
+              }
+              return assignChanged(change, {
+                column
+              });
+            }
+            createColumn(col) {
+              var _a;
+              const dataType = this.dataType(col.dataType);
+              if (!dataType) {
+                return null;
+              }
+              const constraints = (_a = arrayNilMap(col.constraints, (m) => this.constraint(m))) !== null && _a !== void 0 ? _a : void 0;
+              return assignChanged(col, {
+                dataType,
+                constraints
+              });
+            }
+            // =========================================
+            // ============== SELECTIONS ==============
+            // =========================================
+            select(val) {
+              switch (val.type) {
+                case "select":
+                  return this.selection(val);
+                case "union":
+                case "union all":
+                  return this.union(val);
+                case "with":
+                  return this.with(val);
+                case "values":
+                  return this.values(val);
+                case "with recursive":
+                  return this.withRecursive(val);
+                default:
+                  throw utils_1.NotSupported.never(val);
+              }
+            }
+            selection(val) {
+              var _a, _b;
+              const from = arrayNilMap(val.from, (c) => this.from(c));
+              const columns = arrayNilMap(val.columns, (c) => this.selectionColumn(c));
+              const where = val.where && this.expr(val.where);
+              const groupBy = arrayNilMap(val.groupBy, (c) => this.expr(c));
+              const having = val.having && this.expr(val.having);
+              const orderBy = this.orderBy(val.orderBy);
+              const limit = assignChanged(val.limit, {
+                limit: this.expr((_a = val.limit) === null || _a === void 0 ? void 0 : _a.limit),
+                offset: this.expr((_b = val.limit) === null || _b === void 0 ? void 0 : _b.offset)
+              });
+              return assignChanged(val, {
+                from,
+                columns,
+                where,
+                groupBy,
+                having,
+                orderBy,
+                limit
+              });
+            }
+            orderBy(orderBy) {
+              return arrayNilMap(orderBy, (c) => {
+                const by = this.expr(c.by);
+                if (!by) {
+                  return null;
+                }
+                if (by === c.by) {
+                  return c;
+                }
+                return {
+                  ...c,
+                  by
+                };
+              });
+            }
+            union(val) {
+              const left = this.select(val.left);
+              const right = this.select(val.right);
+              if (!left || !right) {
+                return left !== null && left !== void 0 ? left : right;
+              }
+              return assignChanged(val, {
+                left,
+                right
+              });
+            }
+            with(val) {
+              const bind = arrayNilMap(val.bind, (s) => {
+                const statement = this.statement(s.statement);
+                return withAccepts(statement) ? assignChanged(s, { statement }) : null;
+              });
+              if (!bind) {
+                return null;
+              }
+              const _in = this.statement(val.in);
+              if (!withAccepts(_in)) {
+                return null;
+              }
+              return assignChanged(val, {
+                bind,
+                in: _in
+              });
+            }
+            withRecursive(val) {
+              const statement = this.union(val.bind);
+              if (!statement) {
+                return null;
+              }
+              if (statement.type !== "union" && statement.type !== "union all") {
+                return null;
+              }
+              const _in = this.statement(val.in);
+              if (!withAccepts(_in)) {
+                return null;
+              }
+              return assignChanged(val, {
+                bind: statement,
+                in: _in
+              });
+            }
+            from(from) {
+              switch (from.type) {
+                case "table":
+                  return this.fromTable(from);
+                case "statement":
+                  return this.fromStatement(from);
+                case "call":
+                  return this.fromCall(from);
+                default:
+                  throw utils_1.NotSupported.never(from);
+              }
+            }
+            fromCall(from) {
+              const call = this.call(from);
+              if (!call || call.type !== "call") {
+                return null;
+              }
+              return assignChanged(from, call);
+            }
+            fromStatement(from) {
+              const statement = this.select(from.statement);
+              if (!statement) {
+                return null;
+              }
+              const join = from.join && this.join(from.join);
+              return assignChanged(from, {
+                statement,
+                join
+              });
+            }
+            values(from) {
+              const values = arrayNilMap(from.values, (x) => arrayNilMap(x, (y) => this.expr(y)));
+              if (!(values === null || values === void 0 ? void 0 : values.length)) {
+                return null;
+              }
+              return assignChanged(from, {
+                values
+              });
+            }
+            join(join) {
+              const on = join.on && this.expr(join.on);
+              if (!on && !join.using) {
+                return join;
+              }
+              return assignChanged(join, {
+                on
+              });
+            }
+            fromTable(from) {
+              const nfrom = this.tableRef(from.name);
+              if (!nfrom) {
+                return null;
+              }
+              const join = from.join && this.join(from.join);
+              return assignChanged(from, {
+                name: nfrom,
+                join
+              });
+            }
+            selectionColumn(val) {
+              const expr = this.expr(val.expr);
+              if (!expr) {
+                return null;
+              }
+              return assignChanged(val, {
+                expr
+              });
+            }
+            // =========================================
+            // ============== EXPRESSIONS ==============
+            // =========================================
+            expr(val) {
+              if (!val) {
+                return val;
+              }
+              switch (val.type) {
+                case "binary":
+                  return this.binary(val);
+                case "unary":
+                  return this.unary(val);
+                case "ref":
+                  return this.ref(val);
+                case "string":
+                case "numeric":
+                case "integer":
+                case "boolean":
+                case "constant":
+                case "null":
+                  return this.constant(val);
+                case "list":
+                case "array":
+                  return this.array(val);
+                case "array select":
+                  return this.arraySelect(val);
+                case "call":
+                  return this.call(val);
+                case "cast":
+                  return this.cast(val);
+                case "case":
+                  return this.case(val);
+                case "member":
+                  return this.member(val);
+                case "arrayIndex":
+                  return this.arrayIndex(val);
+                case "ternary":
+                  return this.ternary(val);
+                case "select":
+                case "union":
+                case "union all":
+                case "with":
+                case "with recursive":
+                  return this.select(val);
+                case "keyword":
+                  return this.valueKeyword(val);
+                case "parameter":
+                  return this.parameter(val);
+                case "extract":
+                  return this.extract(val);
+                case "overlay":
+                  return this.callOverlay(val);
+                case "substring":
+                  return this.callSubstring(val);
+                case "values":
+                  return this.values(val);
+                case "default":
+                  return this.default(val);
+                default:
+                  throw utils_1.NotSupported.never(val);
+              }
+            }
+            arraySelect(val) {
+              const select = this.select(val.select);
+              if (!select) {
+                return null;
+              }
+              return assignChanged(val, { select });
+            }
+            extract(st) {
+              const from = this.expr(st.from);
+              if (!from) {
+                return null;
+              }
+              return assignChanged(st, { from });
+            }
+            valueKeyword(val) {
+              return val;
+            }
+            ternary(val) {
+              const value2 = this.expr(val.value);
+              const lo = this.expr(val.lo);
+              const hi = this.expr(val.hi);
+              if (!value2 || !lo || !hi) {
+                return null;
+              }
+              return assignChanged(val, {
+                value: value2,
+                lo,
+                hi
+              });
+            }
+            parameter(st) {
+              return st;
+            }
+            arrayIndex(val) {
+              const array = this.expr(val.array);
+              const index = this.expr(val.index);
+              if (!array || !index) {
+                return null;
+              }
+              return assignChanged(val, {
+                array,
+                index
+              });
+            }
+            member(val) {
+              const operand = this.expr(val.operand);
+              if (!operand) {
+                return null;
+              }
+              return assignChanged(val, {
+                operand
+              });
+            }
+            case(val) {
+              const value2 = val.value && this.expr(val.value);
+              const whens = arrayNilMap(val.whens, (w) => {
+                const when = this.expr(w.when);
+                const value3 = this.expr(w.value);
+                if (!when || !value3) {
+                  return null;
+                }
+                return assignChanged(w, {
+                  value: value3,
+                  when
+                });
+              });
+              if (!(whens === null || whens === void 0 ? void 0 : whens.length)) {
+                return null;
+              }
+              const els = val.else && this.expr(val.else);
+              return assignChanged(val, {
+                value: value2,
+                whens,
+                else: els
+              });
+            }
+            cast(val) {
+              const operand = this.expr(val.operand);
+              if (!operand) {
+                return null;
+              }
+              return assignChanged(val, {
+                operand
+              });
+            }
+            call(val) {
+              var _a;
+              const args = arrayNilMap(val.args, (a) => this.expr(a));
+              if (!args) {
+                return null;
+              }
+              const orderBy = this.orderBy(val.orderBy);
+              const filter = this.expr(val.filter);
+              const withinGroupList = val.withinGroup ? [val.withinGroup] : void 0;
+              const withinGroup = (_a = this.orderBy(withinGroupList)) === null || _a === void 0 ? void 0 : _a[0];
+              return assignChanged(val, {
+                args,
+                orderBy,
+                filter,
+                withinGroup
+              });
+            }
+            callSubstring(val) {
+              return assignChanged(val, {
+                value: this.expr(val.value),
+                from: this.expr(val.from),
+                for: this.expr(val.for)
+              });
+            }
+            callOverlay(val) {
+              return assignChanged(val, {
+                value: this.expr(val.value),
+                placing: this.expr(val.placing),
+                from: this.expr(val.from),
+                for: this.expr(val.for)
+              });
+            }
+            array(val) {
+              const expressions = arrayNilMap(val.expressions, (a) => this.expr(a));
+              if (!expressions) {
+                return null;
+              }
+              return assignChanged(val, {
+                expressions
+              });
+            }
+            constant(value2) {
+              return value2;
+            }
+            default(value2) {
+              return value2;
+            }
+            /** Called when a reference is used */
+            ref(val) {
+              return val;
+            }
+            unary(val) {
+              const operand = this.expr(val.operand);
+              if (!operand) {
+                return null;
+              }
+              return assignChanged(val, {
+                operand
+              });
+            }
+            binary(val) {
+              const left = this.expr(val.left);
+              const right = this.expr(val.right);
+              if (!left || !right) {
+                return null;
+              }
+              return assignChanged(val, {
+                left,
+                right
+              });
+            }
+          }
+          exports3.AstDefaultMapper = AstDefaultMapper;
+          const proto = AstDefaultMapper.prototype;
+          for (const k of Object.getOwnPropertyNames(proto)) {
+            const orig = proto[k];
+            if (k === "constructor" || k === "super" || typeof orig !== "function") {
+              continue;
+            }
+            Object.defineProperty(proto, k, {
+              configurable: false,
+              get() {
+                return function(...args) {
+                  var _a;
+                  if (this.skipNext) {
+                    this.skipNext = false;
+                    return orig.apply(this, args);
+                  }
+                  const impl = (_a = this.wrapped) === null || _a === void 0 ? void 0 : _a[k];
+                  if (!impl) {
+                    return orig.apply(this, args);
+                  }
+                  return impl.apply(this.wrapped, args);
+                };
+              }
+            });
+          }
+          class SkipModifier extends AstDefaultMapper {
+            constructor(parent) {
+              super();
+              this.parent = parent;
+            }
+          }
+          for (const k of Object.getOwnPropertyNames(proto)) {
+            const orig = proto[k];
+            if (k === "constructor" || k === "super" || typeof orig !== "function") {
+              continue;
+            }
+            Object.defineProperty(SkipModifier.prototype, k, {
+              configurable: false,
+              get() {
+                return function(...args) {
+                  this.parent.skipNext = true;
+                  return orig.apply(this.parent, args);
+                };
+              }
+            });
+          }
+        }),
+        /* 3 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.sqlKeywords = void 0;
+          exports3.sqlKeywords = [
+            "ALL",
+            "ANALYSE",
+            "ANALYZE",
+            "AND",
+            "ANY",
+            "ARRAY",
+            "AS",
+            "ASC",
+            "ASYMMETRIC",
+            "AUTHORIZATION",
+            "BINARY",
+            "BOTH",
+            "CASE",
+            "CAST",
+            "CHECK",
+            "COLLATE",
+            "COLLATION",
+            "CONCURRENTLY",
+            "CONSTRAINT",
+            "CREATE",
+            "CROSS",
+            "CURRENT_CATALOG",
+            "CURRENT_DATE",
+            "CURRENT_ROLE",
+            "CURRENT_SCHEMA",
+            "CURRENT_TIME",
+            "CURRENT_TIMESTAMP",
+            "CURRENT_USER",
+            "DEFAULT",
+            "DEFERRABLE",
+            "DESC",
+            "DISTINCT",
+            "DO",
+            "ELSE",
+            "END",
+            "EXCEPT",
+            "FALSE",
+            "FETCH",
+            "FOR",
+            "FOREIGN",
+            "FREEZE",
+            "FROM",
+            "FULL",
+            "GRANT",
+            "GROUP",
+            "HAVING",
+            "ILIKE",
+            "IN",
+            "INITIALLY",
+            "INNER",
+            "INTERSECT",
+            "INTO",
+            "IS",
+            "ISNULL",
+            "JOIN",
+            "LATERAL",
+            "LEADING",
+            "LEFT",
+            "LIKE",
+            "LIMIT",
+            "LOCALTIME",
+            "LOCALTIMESTAMP",
+            "NATURAL",
+            "NOT",
+            "NOTNULL",
+            "NULL",
+            "OFFSET",
+            "ON",
+            "ONLY",
+            "OR",
+            "ORDER",
+            "OUTER",
+            "OVERLAPS",
+            "PLACING",
+            "PRIMARY",
+            "REFERENCES",
+            "RETURNING",
+            "RIGHT",
+            "SELECT",
+            "SESSION_USER",
+            "SIMILAR",
+            "SOME",
+            "SYMMETRIC",
+            "TABLE",
+            "TABLESAMPLE",
+            "THEN",
+            "TO",
+            "TRAILING",
+            "TRUE",
+            "UNION",
+            "UNIQUE",
+            "USER",
+            "USING",
+            "VARIADIC",
+            "VERBOSE",
+            "WHEN",
+            "WHERE",
+            "WINDOW",
+            "WITH",
+            "PRECISION"
+          ];
+        }),
+        /* 4 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.intervalToString = exports3.normalizeInterval = exports3.buildInterval = void 0;
+          const types = [
+            ["years", 12],
+            ["months", 30],
+            ["days", 24],
+            ["hours", 60],
+            ["minutes", 60],
+            ["seconds", 1e3],
+            ["milliseconds", 0]
+          ];
+          function* unwrap(k) {
+            if (typeof k[1] === "number") {
+              yield k;
+            } else {
+              for (const v of k) {
+                yield* unwrap(v);
+              }
+            }
+          }
+          function buildInterval(orig, vals) {
+            var _a;
+            const ret = {};
+            if (vals === "invalid") {
+              throw new Error('invalid input syntax for type interval: "'.concat(orig, '"'));
+            }
+            for (const [k, v] of unwrap(vals)) {
+              ret[k] = ((_a = ret[k]) !== null && _a !== void 0 ? _a : 0) + v;
+            }
+            return ret;
+          }
+          exports3.buildInterval = buildInterval;
+          function normalizeInterval(value2) {
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j;
+            const ret = { ...value2 };
+            for (let i = 0; i < types.length; i++) {
+              const [k, mul] = types[i];
+              const v = (_a = ret[k]) !== null && _a !== void 0 ? _a : 0;
+              const int2 = v >= 0 ? Math.floor(v) : Math.ceil(v);
+              if (!v || int2 === v) {
+                continue;
+              }
+              const nk = (_b = types[i + 1]) === null || _b === void 0 ? void 0 : _b[0];
+              if (nk) {
+                ret[nk] = ((_c = ret[nk]) !== null && _c !== void 0 ? _c : 0) + mul * (v - int2);
+              }
+              ret[k] = int2;
+            }
+            if (ret.months || ret.years) {
+              const m = ((_d = ret.months) !== null && _d !== void 0 ? _d : 0) + ((_e = ret.years) !== null && _e !== void 0 ? _e : 0) * 12;
+              ret.months = m % 12;
+              ret.years = (m - ret.months) / 12;
+            }
+            let t = ((_f = ret.hours) !== null && _f !== void 0 ? _f : 0) * 3600 + ((_g = ret.minutes) !== null && _g !== void 0 ? _g : 0) * 60 + ((_h = ret.seconds) !== null && _h !== void 0 ? _h : 0) + ((_j = ret.milliseconds) !== null && _j !== void 0 ? _j : 0) / 1e3;
+            let sign = 1;
+            if (t < 0) {
+              sign = -1;
+              t = -t;
+            }
+            if (t >= 3600) {
+              ret.hours = sign * Math.floor(t / 3600);
+              t -= sign * ret.hours * 3600;
+            } else {
+              delete ret.hours;
+            }
+            if (t >= 60) {
+              ret.minutes = sign * Math.floor(t / 60);
+              t -= sign * ret.minutes * 60;
+            } else {
+              delete ret.minutes;
+            }
+            if (t > 0) {
+              ret.seconds = sign * Math.floor(t);
+              t -= sign * ret.seconds;
+            } else {
+              delete ret.seconds;
+            }
+            if (t > 0) {
+              ret.milliseconds = sign * Math.round(t * 1e3);
+            } else {
+              delete ret.milliseconds;
+            }
+            for (const [k] of types) {
+              if (!ret[k]) {
+                delete ret[k];
+              }
+            }
+            return ret;
+          }
+          exports3.normalizeInterval = normalizeInterval;
+          function intervalToString(value2) {
+            var _a, _b, _c;
+            value2 = normalizeInterval(value2);
+            const ret = [];
+            if (value2.years) {
+              ret.push(value2.years === 1 ? "1 year" : value2.years + " years");
+            }
+            if (value2.months) {
+              ret.push(value2.months === 1 ? "1 month" : value2.months + " months");
+            }
+            if (value2.days) {
+              ret.push(value2.days === 1 ? "1 day" : value2.days + " days");
+            }
+            if (value2.hours || value2.minutes || value2.seconds || value2.milliseconds) {
+              let time = "".concat(num((_a = value2.hours) !== null && _a !== void 0 ? _a : 0), ":").concat(num((_b = value2.minutes) !== null && _b !== void 0 ? _b : 0), ":").concat(num((_c = value2.seconds) !== null && _c !== void 0 ? _c : 0));
+              if (value2.milliseconds) {
+                time = time + (value2.milliseconds / 1e3).toString().substr(1);
+              }
+              if (neg2(value2.hours) || neg2(value2.minutes) || neg2(value2.seconds) || neg2(value2.milliseconds)) {
+                time = "-" + time;
+              }
+              ret.push(time);
+            }
+            return ret.join(" ");
+          }
+          exports3.intervalToString = intervalToString;
+          function num(v) {
+            v = Math.abs(v);
+            return v < 10 ? "0" + v : v.toString();
+          }
+          function neg2(v) {
+            return v && v < 0;
+          }
+        }),
+        /* 5 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.astVisitor = void 0;
+          const ast_mapper_1 = __webpack_require__(2);
+          class Visitor {
+            super() {
+              return new SkipVisitor(this);
+            }
+          }
+          const mapperProto = ast_mapper_1.AstDefaultMapper.prototype;
+          for (const k of Object.getOwnPropertyNames(mapperProto)) {
+            const orig = mapperProto[k];
+            if (k === "constructor" || k === "super" || typeof orig !== "function") {
+              continue;
+            }
+            Object.defineProperty(Visitor.prototype, k, {
+              configurable: false,
+              get() {
+                return function(...args) {
+                  const impl = this.visitor[k];
+                  if (!impl) {
+                    return orig.apply(this, args);
+                  }
+                  impl.apply(this.visitor, args);
+                  return args[0];
+                };
+              }
+            });
+          }
+          class SkipVisitor {
+            constructor(parent) {
+              this.parent = parent;
+            }
+          }
+          for (const k of Object.getOwnPropertyNames(mapperProto)) {
+            const orig = mapperProto[k];
+            if (k === "constructor" || k === "super" || typeof orig !== "function") {
+              continue;
+            }
+            Object.defineProperty(SkipVisitor.prototype, k, {
+              configurable: false,
+              get() {
+                return function(...args) {
+                  return orig.apply(this.parent, args);
+                };
+              }
+            });
+          }
+          function astVisitor(visitorBuilder) {
+            return (0, ast_mapper_1.astMapper)((m) => {
+              const ret = new Visitor();
+              ret.mapper = m;
+              ret.visitor = visitorBuilder(ret);
+              return ret;
+            });
+          }
+          exports3.astVisitor = astVisitor;
+        }),
+        /* 6 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.trimNullish = exports3.NotSupported = void 0;
+          class NotSupported extends Error {
+            constructor(what) {
+              super("Not supported" + (what ? ": " + what : ""));
+            }
+            static never(value2, msg) {
+              return new NotSupported("".concat(msg !== null && msg !== void 0 ? msg : "", " ").concat(JSON.stringify(value2)));
+            }
+          }
+          exports3.NotSupported = NotSupported;
+          function trimNullish(value2, depth = 5) {
+            if (depth < 0)
+              return value2;
+            if (value2 instanceof Array) {
+              value2.forEach((x) => trimNullish(x, depth - 1));
+            }
+            if (typeof value2 !== "object" || value2 instanceof Date)
+              return value2;
+            if (!value2) {
+              return value2;
+            }
+            for (const k of Object.keys(value2)) {
+              const val = value2[k];
+              if (val === void 0 || val === null)
+                delete value2[k];
+              else
+                trimNullish(val, depth - 1);
+            }
+            return value2;
+          }
+          exports3.trimNullish = trimNullish;
+        }),
+        /* 7 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          var __createBinding = this && this.__createBinding || (Object.create ? (function(o, m, k, k2) {
+            if (k2 === void 0) k2 = k;
+            var desc = Object.getOwnPropertyDescriptor(m, k);
+            if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+              desc = { enumerable: true, get: function() {
+                return m[k];
+              } };
+            }
+            Object.defineProperty(o, k2, desc);
+          }) : (function(o, m, k, k2) {
+            if (k2 === void 0) k2 = k;
+            o[k2] = m[k];
+          }));
+          var __exportStar = this && this.__exportStar || function(m, exports4) {
+            for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports4, p)) __createBinding(exports4, m, p);
+          };
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.normalizeInterval = exports3.intervalToString = exports3.toSql = exports3.astMapper = exports3.assignChanged = exports3.arrayNilMap = exports3.astVisitor = exports3.parseWithComments = exports3.parseIntervalLiteral = exports3.parseGeometricLiteral = exports3.parseArrayLiteral = exports3.parseFirst = exports3.parse = void 0;
+          var parser_1 = __webpack_require__(8);
+          Object.defineProperty(exports3, "parse", { enumerable: true, get: function() {
+            return parser_1.parse;
+          } });
+          Object.defineProperty(exports3, "parseFirst", { enumerable: true, get: function() {
+            return parser_1.parseFirst;
+          } });
+          Object.defineProperty(exports3, "parseArrayLiteral", { enumerable: true, get: function() {
+            return parser_1.parseArrayLiteral;
+          } });
+          Object.defineProperty(exports3, "parseGeometricLiteral", { enumerable: true, get: function() {
+            return parser_1.parseGeometricLiteral;
+          } });
+          Object.defineProperty(exports3, "parseIntervalLiteral", { enumerable: true, get: function() {
+            return parser_1.parseIntervalLiteral;
+          } });
+          Object.defineProperty(exports3, "parseWithComments", { enumerable: true, get: function() {
+            return parser_1.parseWithComments;
+          } });
+          var ast_visitor_1 = __webpack_require__(5);
+          Object.defineProperty(exports3, "astVisitor", { enumerable: true, get: function() {
+            return ast_visitor_1.astVisitor;
+          } });
+          var ast_mapper_1 = __webpack_require__(2);
+          Object.defineProperty(exports3, "arrayNilMap", { enumerable: true, get: function() {
+            return ast_mapper_1.arrayNilMap;
+          } });
+          Object.defineProperty(exports3, "assignChanged", { enumerable: true, get: function() {
+            return ast_mapper_1.assignChanged;
+          } });
+          Object.defineProperty(exports3, "astMapper", { enumerable: true, get: function() {
+            return ast_mapper_1.astMapper;
+          } });
+          var to_sql_1 = __webpack_require__(19);
+          Object.defineProperty(exports3, "toSql", { enumerable: true, get: function() {
+            return to_sql_1.toSql;
+          } });
+          __exportStar(__webpack_require__(21), exports3);
+          var interval_builder_1 = __webpack_require__(4);
+          Object.defineProperty(exports3, "intervalToString", { enumerable: true, get: function() {
+            return interval_builder_1.intervalToString;
+          } });
+          Object.defineProperty(exports3, "normalizeInterval", { enumerable: true, get: function() {
+            return interval_builder_1.normalizeInterval;
+          } });
+        }),
+        /* 8 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          var __importDefault = this && this.__importDefault || function(mod) {
+            return mod && mod.__esModule ? mod : { "default": mod };
+          };
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.parseGeometricLiteral = exports3.parseIntervalLiteral = exports3.parseArrayLiteral = exports3.parse = exports3.parseWithComments = exports3.parseFirst = void 0;
+          const nearley_1 = __webpack_require__(9);
+          const main_ne_1 = __importDefault(__webpack_require__(10));
+          const array_ne_1 = __importDefault(__webpack_require__(11));
+          const geometric_ne_1 = __importDefault(__webpack_require__(13));
+          const interval_ne_1 = __importDefault(__webpack_require__(15));
+          const interval_iso_ne_1 = __importDefault(__webpack_require__(17));
+          const interval_builder_1 = __webpack_require__(4);
+          const lexer_1 = __webpack_require__(1);
+          let sqlCompiled;
+          let arrayCompiled;
+          let geometricCompiled;
+          let intervalTextCompiled;
+          let intervalIsoCompiled;
+          function parseFirst(sql) {
+            const first = parse2(sql);
+            return first[0];
+          }
+          exports3.parseFirst = parseFirst;
+          function parseWithComments(sql, options) {
+            return (0, lexer_1.trackingComments)(() => parse2(sql, options));
+          }
+          exports3.parseWithComments = parseWithComments;
+          function parse2(sql, optEntry) {
+            if (!sqlCompiled) {
+              sqlCompiled = nearley_1.Grammar.fromCompiled(main_ne_1.default);
+            }
+            const entry = typeof optEntry === "string" ? optEntry : optEntry === null || optEntry === void 0 ? void 0 : optEntry.entry;
+            const opts = typeof optEntry === "string" ? null : optEntry;
+            const doParse = () => _parse(sql, sqlCompiled, entry);
+            let parsed = (opts === null || opts === void 0 ? void 0 : opts.locationTracking) ? (0, lexer_1.tracking)(doParse) : doParse();
+            if (typeof optEntry !== "string" && !Array.isArray(parsed)) {
+              parsed = [parsed];
+            }
+            return parsed;
+          }
+          exports3.parse = parse2;
+          function parseArrayLiteral(sql) {
+            if (!arrayCompiled) {
+              arrayCompiled = nearley_1.Grammar.fromCompiled(array_ne_1.default);
+            }
+            return _parse(sql, arrayCompiled);
+          }
+          exports3.parseArrayLiteral = parseArrayLiteral;
+          function parseIntervalLiteral(literal) {
+            if (literal.startsWith("P")) {
+              if (!intervalIsoCompiled) {
+                intervalIsoCompiled = nearley_1.Grammar.fromCompiled(interval_iso_ne_1.default);
+              }
+              return (0, interval_builder_1.buildInterval)(literal, _parse(literal, intervalIsoCompiled));
+            } else {
+              if (!intervalTextCompiled) {
+                intervalTextCompiled = nearley_1.Grammar.fromCompiled(interval_ne_1.default);
+              }
+              const low = literal.toLowerCase();
+              return (0, interval_builder_1.buildInterval)(literal, _parse(low, intervalTextCompiled));
+            }
+          }
+          exports3.parseIntervalLiteral = parseIntervalLiteral;
+          function parseGeometricLiteral(sql, type) {
+            if (!geometricCompiled) {
+              geometricCompiled = nearley_1.Grammar.fromCompiled(geometric_ne_1.default);
+            }
+            return _parse(sql, geometricCompiled, type);
+          }
+          exports3.parseGeometricLiteral = parseGeometricLiteral;
+          function _parse(sql, grammar, entry) {
+            try {
+              grammar.start = entry !== null && entry !== void 0 ? entry : "main";
+              const parser = new nearley_1.Parser(grammar);
+              parser.feed(sql);
+              const asts = parser.finish();
+              if (!asts.length) {
+                throw new Error("Unexpected end of input");
+              } else if (asts.length !== 1) {
+                throw new Error("💀 Ambiguous SQL syntax: Please file an issue stating the request that has failed at https://github.com/oguimbal/pgsql-ast-parser:\n\n        ".concat(sql, "\n\n        "));
+              }
+              return asts[0];
+            } catch (e) {
+              if (typeof (e === null || e === void 0 ? void 0 : e.message) !== "string") {
+                throw e;
+              }
+              let msg = e.message;
+              let begin = null;
+              const parts = [];
+              const reg = /A (.+) token based on:/g;
+              let m;
+              while (m = reg.exec(msg)) {
+                begin = begin !== null && begin !== void 0 ? begin : msg.substr(0, m.index);
+                parts.push('    - A "'.concat(m[1], '" token'));
+              }
+              if (begin) {
+                msg = begin + parts.join("\n") + "\n\n";
+              }
+              e.message = msg;
+              throw e;
+            }
+          }
+        }),
+        /* 9 */
+        /***/
+        (function(module3, exports3) {
+          module3.exports = require_nearley();
+        }),
+        /* 10 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          function id(d) {
+            return d[0];
+          }
+          const lexer_1 = __webpack_require__(1);
+          const lexer_2 = __webpack_require__(1);
+          function debug(fn) {
+            fn = fn || ((x) => x);
+            return ((x, ...args) => {
+              debugger;
+              return fn(x, ...args);
+            });
+          }
+          function asName(val) {
+            return asNameWithColumns(val, void 0);
+          }
+          function asNameWithColumns(val, columns) {
+            const name = toStr(val);
+            if (!columns || columns.length === 0) {
+              return (0, lexer_2.track)(val, { name });
+            }
+            return (0, lexer_2.track)(val, {
+              name,
+              columns: columns.map((c) => ({ name: toStr(c) }))
+            });
+          }
+          function asLit(val) {
+            const value3 = toStr(val);
+            return (0, lexer_2.track)(val, { value: value3 });
+          }
+          function unwrap(e) {
+            if (Array.isArray(e) && e.length === 1) {
+              e = unwrap(e[0]);
+            }
+            if (Array.isArray(e) && !e.length) {
+              return null;
+            }
+            return (0, lexer_2.unbox)(e);
+          }
+          const get = (i) => (x) => (0, lexer_2.track)(x, x[i]);
+          const last = (x) => Array.isArray(x) ? (0, lexer_2.track)(x[x.length - 1], x[x.length - 1]) : x;
+          const trim = (x) => x && x.trim();
+          const value2 = (x) => x && x.value;
+          function flatten(e) {
+            if (Array.isArray(e)) {
+              const ret = [];
+              for (const i of e) {
+                ret.push(...flatten(i));
+              }
+              return ret;
+            }
+            if (!e) {
+              return [];
+            }
+            return [e];
+          }
+          function asStr(value3) {
+            var _a;
+            value3 = (0, lexer_2.unbox)(value3);
+            return (_a = value3 === null || value3 === void 0 ? void 0 : value3.value) !== null && _a !== void 0 ? _a : value3;
+          }
+          function flattenStr(e) {
+            const fl = flatten((0, lexer_2.unbox)(e));
+            return fl.filter((x) => !!x).map((x) => asStr(x)).filter((x) => typeof x === "string").map((x) => x.trim()).filter((x) => !!x);
+          }
+          function toStr(e, join) {
+            return flattenStr(e).join(join || "");
+          }
+          function fromEntries(vals) {
+            const ret = {};
+            for (const [k, v] of vals) {
+              ret[k] = v;
+            }
+            return ret;
+          }
+          const kwSensitivity = { sensitivity: "accent" };
+          const eqInsensitive = (a, b) => a.localeCompare(b, void 0, kwSensitivity) === 0;
+          const notReservedKw = (kw2) => (x, _, rej) => {
+            const val = asStr(x[0]);
+            if (eqInsensitive(val, kw2)) {
+              return (0, lexer_2.box)(x, kw2);
+            }
+            return rej;
+          };
+          const kw = notReservedKw;
+          const anyKw = (...kw2) => {
+            const kwSet = new Set(kw2);
+            return (x, _, rej) => {
+              const val = typeof x[0] === "string" ? x[0] : x[0].value;
+              return kwSet.has(val) ? val : rej;
+            };
+          };
+          function setSeqOpts(ret, opts) {
+            const defs = /* @__PURE__ */ new Set();
+            const unboxed = opts.map(lexer_2.unbox);
+            for (const [k, v] of unboxed) {
+              if (defs.has(k)) {
+                throw new Error("conflicting or redundant options");
+              }
+              defs.add(k);
+              ret[k] = (0, lexer_2.unbox)(v);
+            }
+          }
+          ;
+          ;
+          ;
+          ;
+          const grammar = {
+            Lexer: lexer_1.lexerAny,
+            ParserRules: [
+              { "name": "lparen", "symbols": [lexer_1.lexerAny.has("lparen") ? { type: "lparen" } : lparen] },
+              { "name": "rparen", "symbols": [lexer_1.lexerAny.has("rparen") ? { type: "rparen" } : rparen] },
+              { "name": "number$subexpression$1", "symbols": ["float"] },
+              { "name": "number$subexpression$1", "symbols": ["int"] },
+              { "name": "number", "symbols": ["number$subexpression$1"], "postprocess": unwrap },
+              { "name": "dot", "symbols": [lexer_1.lexerAny.has("dot") ? { type: "dot" } : dot], "postprocess": id },
+              { "name": "float", "symbols": [lexer_1.lexerAny.has("float") ? { type: "float" } : float], "postprocess": (x) => (0, lexer_2.box)(x, parseFloat(unwrap(x))) },
+              { "name": "int", "symbols": [lexer_1.lexerAny.has("int") ? { type: "int" } : int], "postprocess": (x) => (0, lexer_2.box)(x, parseInt(unwrap(x), 10)) },
+              { "name": "comma", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma], "postprocess": id },
+              { "name": "star", "symbols": [lexer_1.lexerAny.has("star") ? { type: "star" } : star], "postprocess": (x) => (0, lexer_2.box)(x, x[0].value) },
+              { "name": "string$subexpression$1", "symbols": [lexer_1.lexerAny.has("string") ? { type: "string" } : string] },
+              { "name": "string$subexpression$1", "symbols": [lexer_1.lexerAny.has("eString") ? { type: "eString" } : eString] },
+              { "name": "string", "symbols": ["string$subexpression$1"], "postprocess": (x) => (0, lexer_2.box)(x, unwrap(x[0]).value) },
+              { "name": "ident", "symbols": ["word"], "postprocess": get(0) },
+              { "name": "word", "symbols": [lexer_1.lexerAny.has("kw_primary") ? { type: "kw_primary" } : kw_primary], "postprocess": (x) => (0, lexer_2.box)(x, "primary") },
+              { "name": "word", "symbols": [lexer_1.lexerAny.has("kw_unique") ? { type: "kw_unique" } : kw_unique], "postprocess": (x) => (0, lexer_2.box)(x, "unique") },
+              { "name": "word", "symbols": [lexer_1.lexerAny.has("quoted_word") ? { type: "quoted_word" } : quoted_word], "postprocess": (x) => (0, lexer_2.box)(x, x[0].value, true) },
+              { "name": "word", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": (x) => (0, lexer_2.box)(x, x[0].value) },
+              { "name": "collist_paren", "symbols": ["lparen", "collist", "rparen"], "postprocess": get(1) },
+              { "name": "collist$ebnf$1", "symbols": [] },
+              { "name": "collist$ebnf$1$subexpression$1", "symbols": ["comma", "ident"], "postprocess": last },
+              { "name": "collist$ebnf$1", "symbols": ["collist$ebnf$1", "collist$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "collist", "symbols": ["ident", "collist$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "kw_between", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("between") },
+              { "name": "kw_conflict", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("conflict") },
+              { "name": "kw_nothing", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("nothing") },
+              { "name": "kw_begin", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("begin") },
+              { "name": "kw_if", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("if") },
+              { "name": "kw_exists", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("exists") },
+              { "name": "kw_key", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("key") },
+              { "name": "kw_index", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("index") },
+              { "name": "kw_extension", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("extension") },
+              { "name": "kw_schema", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("schema") },
+              { "name": "kw_nulls", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("nulls") },
+              { "name": "kw_first", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("first") },
+              { "name": "kw_last", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("last") },
+              { "name": "kw_start", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("start") },
+              { "name": "kw_restart", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("restart") },
+              { "name": "kw_filter", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("filter") },
+              { "name": "kw_commit", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("commit") },
+              { "name": "kw_tablespace", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("tablespace") },
+              { "name": "kw_transaction", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("transaction") },
+              { "name": "kw_work", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("work") },
+              { "name": "kw_read", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("read") },
+              { "name": "kw_write", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("write") },
+              { "name": "kw_isolation", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("isolation") },
+              { "name": "kw_level", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("level") },
+              { "name": "kw_serializable", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("serializable") },
+              { "name": "kw_rollback", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("rollback") },
+              { "name": "kw_insert", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("insert") },
+              { "name": "kw_value", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("value") },
+              { "name": "kw_values", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("values") },
+              { "name": "kw_update", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("update") },
+              { "name": "kw_column", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("column") },
+              { "name": "kw_set", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("set") },
+              { "name": "kw_version", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("version") },
+              { "name": "kw_alter", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("alter") },
+              { "name": "kw_rename", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("rename") },
+              { "name": "kw_sequence", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("sequence") },
+              { "name": "kw_temp", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("temp") },
+              { "name": "kw_temporary", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("temporary") },
+              { "name": "kw_add", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("add") },
+              { "name": "kw_owner", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("owner") },
+              { "name": "kw_owned", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("owned") },
+              { "name": "kw_including", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("including") },
+              { "name": "kw_excluding", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("excluding") },
+              { "name": "kw_none", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("none") },
+              { "name": "kw_drop", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("drop") },
+              { "name": "kw_operator", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("operator") },
+              { "name": "kw_minvalue", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("minvalue") },
+              { "name": "kw_maxvalue", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("maxvalue") },
+              { "name": "kw_data", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("data") },
+              { "name": "kw_type", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("type") },
+              { "name": "kw_trigger", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("trigger") },
+              { "name": "kw_delete", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("delete") },
+              { "name": "kw_cache", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("cache") },
+              { "name": "kw_cascade", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("cascade") },
+              { "name": "kw_no", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("no") },
+              { "name": "kw_timestamp", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("timestamp") },
+              { "name": "kw_cycle", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("cycle") },
+              { "name": "kw_function", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("function") },
+              { "name": "kw_returns", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("returns") },
+              { "name": "kw_language", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("language") },
+              { "name": "kw_out", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("out") },
+              { "name": "kw_inout", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("inout") },
+              { "name": "kw_variadic", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("variadic") },
+              { "name": "kw_action", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("action") },
+              { "name": "kw_restrict", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("restrict") },
+              { "name": "kw_truncate", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("truncate") },
+              { "name": "kw_increment", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("increment") },
+              { "name": "kw_by", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("by") },
+              { "name": "kw_row", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("row") },
+              { "name": "kw_rows", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("rows") },
+              { "name": "kw_next", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("next") },
+              { "name": "kw_match", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("match") },
+              { "name": "kw_replace", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("replace") },
+              { "name": "kw_recursive", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("recursive") },
+              { "name": "kw_view", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("view") },
+              { "name": "kw_stored", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("stored") },
+              { "name": "kw_cascaded", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("cascaded") },
+              { "name": "kw_unlogged", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("unlogged") },
+              { "name": "kw_global", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("global") },
+              { "name": "kw_option", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("option") },
+              { "name": "kw_materialized", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("materialized") },
+              { "name": "kw_partial", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("partial") },
+              { "name": "kw_partition", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("partition") },
+              { "name": "kw_simple", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("simple") },
+              { "name": "kw_generated", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("generated") },
+              { "name": "kw_always", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("always") },
+              { "name": "kw_identity", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("identity") },
+              { "name": "kw_name", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("name") },
+              { "name": "kw_enum", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("enum") },
+              { "name": "kw_show", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("show") },
+              { "name": "kw_ordinality", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("ordinality") },
+              { "name": "kw_overriding", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("overriding") },
+              { "name": "kw_over", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("over") },
+              { "name": "kw_system", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("system") },
+              { "name": "kw_comment", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("comment") },
+              { "name": "kw_time", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("time") },
+              { "name": "kw_names", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("names") },
+              { "name": "kw_at", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("at") },
+              { "name": "kw_zone", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("zone") },
+              { "name": "kw_interval", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("interval") },
+              { "name": "kw_hour", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("hour") },
+              { "name": "kw_minute", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("minute") },
+              { "name": "kw_local", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("local") },
+              { "name": "kw_session", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("session") },
+              { "name": "kw_prepare", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("prepare") },
+              { "name": "kw_deallocate", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("deallocate") },
+              { "name": "kw_raise", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("raise") },
+              { "name": "kw_continue", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("continue") },
+              { "name": "kw_share", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("share") },
+              { "name": "kw_refresh", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("refresh") },
+              { "name": "kw_nowait", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("nowait") },
+              { "name": "kw_skip", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("skip") },
+              { "name": "kw_locked", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("locked") },
+              { "name": "kw_within", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": notReservedKw("within") },
+              { "name": "kw_ifnotexists", "symbols": ["kw_if", lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not, "kw_exists"] },
+              { "name": "kw_ifexists", "symbols": ["kw_if", "kw_exists"] },
+              { "name": "kw_withordinality", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with, "kw_ordinality"] },
+              { "name": "kw_not_null", "symbols": [lexer_1.lexerAny.has("kw_not") ? { type: "kw_not" } : kw_not, lexer_1.lexerAny.has("kw_null") ? { type: "kw_null" } : kw_null] },
+              { "name": "kw_primary_key", "symbols": [lexer_1.lexerAny.has("kw_primary") ? { type: "kw_primary" } : kw_primary, "kw_key"] },
+              { "name": "data_type$ebnf$1$subexpression$1$macrocall$2", "symbols": ["int"] },
+              { "name": "data_type$ebnf$1$subexpression$1$macrocall$1$ebnf$1", "symbols": [] },
+              { "name": "data_type$ebnf$1$subexpression$1$macrocall$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("comma") ? { type: "comma" } : comma, "data_type$ebnf$1$subexpression$1$macrocall$2"], "postprocess": last },
+              { "name": "data_type$ebnf$1$subexpression$1$macrocall$1$ebnf$1", "symbols": ["data_type$ebnf$1$subexpression$1$macrocall$1$ebnf$1", "data_type$ebnf$1$subexpression$1$macrocall$1$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "data_type$ebnf$1$subexpression$1$macrocall$1", "symbols": ["data_type$ebnf$1$subexpression$1$macrocall$2", "data_type$ebnf$1$subexpression$1$macrocall$1$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "data_type$ebnf$1$subexpression$1", "symbols": ["lparen", "data_type$ebnf$1$subexpression$1$macrocall$1", "rparen"], "postprocess": get(1) },
+              { "name": "data_type$ebnf$1", "symbols": ["data_type$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "data_type$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "data_type$ebnf$2$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_array") ? { type: "kw_array" } : kw_array] },
+              { "name": "data_type$ebnf$2$subexpression$1$ebnf$1$subexpression$1", "symbols": [lexer_1.lexerAny.has("lbracket") ? { type: "lbracket" } : lbracket, lexer_1.lexerAny.has("rbracket") ? { type: "rbracket" } : rbracket] },
+              { "name": "data_type$ebnf$2$subexpression$1$ebnf$1", "symbols": ["data_type$ebnf$2$subexpression$1$ebnf$1$subexpression$1"] },
+              { "name": "data_type$ebnf$2$subexpression$1$ebnf$1$subexpression$2", "symbols": [lexer_1.lexerAny.has("lbracket") ? { type: "lbracket" } : lbracket, lexer_1.lexerAny.has("rbracket") ? { type: "rbracket" } : rbracket] },
+              { "name": "data_type$ebnf$2$subexpression$1$ebnf$1", "symbols": ["data_type$ebnf$2$subexpression$1$ebnf$1", "data_type$ebnf$2$subexpression$1$ebnf$1$subexpression$2"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "data_type$ebnf$2$subexpression$1", "symbols": ["data_type$ebnf$2$subexpression$1$ebnf$1"] },
+              { "name": "data_type$ebnf$2", "symbols": ["data_type$ebnf$2$subexpression$1"], "postprocess": id },
+              { "name": "data_type$ebnf$2", "symbols": [], "postprocess": () => null },
+              { "name": "data_type", "symbols": ["data_type_simple", "data_type$ebnf$1", "data_type$ebnf$2"], "postprocess": (x) => {
+                let asArray = x[2];
+                const name = unwrap(x[0]);
+                let ret;
+                ret = {
+                  ...name,
+                  ...Array.isArray(x[1]) && x[1].length ? { config: x[1].map(unwrap) } : {}
+                };
+                if (asArray) {
+                  if (asArray[0].type === "kw_array") {
+                    asArray = [["array"]];
+                  }
+                  for (const _ of asArray[0]) {
+                    ret = {
+                      kind: "array",
+                      arrayOf: ret
+                    };
+                  }
+                }
+                return (0, lexer_2.track)(x, ret);
+              } },
+              { "name": "data_type_list$ebnf$1", "symbols": [] },
+              { "name": "data_type_list$ebnf$1$subexpression$1", "symbols": ["comma", "data_type"], "postprocess": last },
+              { "name": "data_type_list$ebnf$1", "symbols": ["data_type_list$ebnf$1", "data_type_list$ebnf$1$subexpression$1"], "postprocess": (d) => d[0].concat([d[1]]) },
+              { "name": "data_type_list", "symbols": ["data_type", "data_type_list$ebnf$1"], "postprocess": ([head, tail]) => {
+                return [head, ...tail || []];
+              } },
+              { "name": "data_type_simple", "symbols": ["data_type_text"], "postprocess": (x) => (0, lexer_2.track)(x, { name: toStr(x, " ") }) },
+              { "name": "data_type_simple", "symbols": ["data_type_numeric"], "postprocess": (x) => (0, lexer_2.track)(x, { name: toStr(x, " ") }) },
+              { "name": "data_type_simple", "symbols": ["data_type_date"] },
+              { "name": "data_type_simple", "symbols": ["qualified_name_mark_quotes"] },
+              { "name": "data_type_numeric$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("double") },
+              { "name": "data_type_numeric", "symbols": ["data_type_numeric$subexpression$1", lexer_1.lexerAny.has("kw_precision") ? { type: "kw_precision" } : kw_precision] },
+              { "name": "data_type_text$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("character", "bit") },
+              { "name": "data_type_text$subexpression$2", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("varying") },
+              { "name": "data_type_text", "symbols": ["data_type_text$subexpression$1", "data_type_text$subexpression$2"] },
+              { "name": "data_type_date$subexpression$1", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("timestamp", "time") },
+              { "name": "data_type_date$subexpression$2", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with] },
+              { "name": "data_type_date$subexpression$2", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("without") },
+              { "name": "data_type_date$subexpression$3", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("time") },
+              { "name": "data_type_date$subexpression$4", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("zone") },
+              { "name": "data_type_date", "symbols": ["data_type_date$subexpression$1", "data_type_date$subexpression$2", "data_type_date$subexpression$3", "data_type_date$subexpression$4"], "postprocess": (x) => (0, lexer_2.track)(x, { name: toStr(x, " ") }) },
+              { "name": "data_type_date$subexpression$5", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": anyKw("timestamp", "time") },
+              { "name": "data_type_date$subexpression$6", "symbols": ["lparen", "int", "rparen"], "postprocess": get(1) },
+              { "name": "data_type_date$subexpression$7", "symbols": [lexer_1.lexerAny.has("kw_with") ? { type: "kw_with" } : kw_with] },
+              { "name": "data_type_date$subexpression$7", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("without") },
+              { "name": "data_type_date$subexpression$8", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("time") },
+              { "name": "data_type_date$subexpression$9", "symbols": [lexer_1.lexerAny.has("word") ? { type: "word" } : word], "postprocess": kw("zone") },
+              { "name": "data_type_date", "symbols": ["data_type_date$subexpression$5", "data_type_date$subexpression$6", "data_type_date$subexpression$7", "data_type_date$subexpression$8", "data_type_date$subexpression$9"], "postprocess": (x) => (0, lexer_2.track)(x, { name: "timestamp ".concat(toStr(x[2]), " time zone"), config: [(0, lexer_2.unbox)(x[1])] }) },
+              { "name": "ident_aliased$subexpression$1", "symbols": [lexer_1.lexerAny.has("kw_as") ? { type: "kw_as" } : kw_as, "ident"], "postprocess": last },
+              { "name": "ident_aliased", "symbols": ["ident_aliased$subexpression$1"] },
+              { "name": "ident_aliased", "symbols": ["ident"], "postprocess": unwrap },
+              { "name": "table_ref", "symbols": ["qualified_name"], "postprocess": unwrap },
+              { "name": "qcolumn$ebnf$1$subexpression$1", "symbols": ["dot", "ident"], "postprocess": last },
+              { "name": "qcolumn$ebnf$1", "symbols": ["qcolumn$ebnf$1$subexpression$1"], "postprocess": id },
+              { "name": "qcolumn$ebnf$1", "symbols": [], "postprocess": () => null },
+              { "name": "qcolumn", "symbols": ["ident

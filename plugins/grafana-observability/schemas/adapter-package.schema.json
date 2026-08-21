@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:adapter-package:1",
+  "title": "Production Monitoring adapter package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "packageId", "name", "version", "protocolVersion", "publisher", "entrypoint", "domains", "capabilities", "providerCompatibility", "supportedContractVersions", "conformance"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "packageId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/AdapterPackageId" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "version": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Semver" },
+    "protocolVersion": { "const": "1.0" },
+    "publisher": {
+      "type": "object", "additionalProperties": false, "required": ["name"],
+      "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 256 }, "keyId": { "type": "string", "minLength": 1, "maxLength": 256 } }
+    },
+    "entrypoint": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "registryKey"], "properties": { "kind": { "const": "BUILTIN" }, "registryKey": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "protocol", "artifactPath", "artifactSha256", "signature", "signingKeyId"], "properties": { "kind": { "const": "SIGNED_WORKER" }, "protocol": { "const": "PM_ADAPTER_STDIO_V1" }, "artifactPath": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/PortableRelativePath" }, "artifactSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "signature": { "type": "string", "minLength": 32, "maxLength": 4096 }, "signingKeyId": { "type": "string", "minLength": 1, "maxLength": 256 } } }
+      ]
+    },
+    "domains": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain" } },
+    "capabilities": { "type": "array", "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" } },
+    "providerCompatibility": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["provider", "versions"], "properties": { "provider": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" }, "versions": { "type": "string", "minLength": 1, "maxLength": 256 } } } },
+    "supportedContractVersions": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Semver" } },
+    "conformance": { "type": "array", "minItems": 1, "uniqueItems": true, "contains": { "const": "CORE_READ" }, "items": { "enum": ["CORE_READ", "METRICS", "LOGS", "TRACES", "ALERTS", "RUNTIME", "CHANGES", "RUNBOOKS", "REMOTE_DEPLOYMENT", "ACTION_READY"] } }
+  }
+}

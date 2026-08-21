@@ -1,0 +1,2210 @@
+2, context) {
+    if (context.adapterPackage.packageId !== LOKI_ADAPTER_PACKAGE_ID) {
+      throw new AdapterContractError("Loki adapter package mismatch");
+    }
+    if (operation2.definition.adapterPackageId !== LOKI_ADAPTER_PACKAGE_ID || computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new AdapterContractError("Loki operation is not bound to this adapter and hash");
+    }
+    if (Buffer.byteLength(canonicalJson(operation2.definition), "utf8") > context.maxDefinitionBytes) {
+      throw new AdapterContractError("Loki operation definition exceeds the compile budget");
+    }
+    const reference = operation2.definition.sanitizedProviderDefinition;
+    if (Object.keys(reference).length !== 2 || typeof reference.catalogEntryId !== "string" || typeof reference.catalogEntrySha256 !== "string") {
+      throw new AdapterContractError("Loki operation must contain only a trusted catalog reference");
+    }
+    const entry = this.#catalog.resolve(reference.catalogEntryId, reference.catalogEntrySha256);
+    if (operation2.definition.adapterOperation !== "loki.logs.query-range") {
+      throw new AdapterContractError("Loki adapter operation is not a production-read-only range read");
+    }
+    if (operation2.definition.domain !== "LOGS" || operation2.definition.normalization.resultKind !== "EVENT") {
+      throw new AdapterContractError("Loki operation result contract is invalid");
+    }
+    const expectedSourceLineage = {
+      accessPath: "DIRECT",
+      datasourceType: "loki",
+      sourceIdentitySha256: entry.sourceIdentitySha256
+    };
+    if (canonicalJson(operation2.definition.expectedSourceLineage ?? null) !== canonicalJson(expectedSourceLineage)) {
+      throw new AdapterContractError("Loki source lineage does not match the trusted catalog");
+    }
+    if (entry.allowedLabels.some((label) => !operation2.definition.allowedDimensions.includes(label))) {
+      throw new AdapterContractError("Loki catalog labels exceed the operation dimension allowlist");
+    }
+    return {
+      operationId: operation2.operationId,
+      operationDefinitionSha256: operation2.definitionSha256,
+      adapterPackageId: LOKI_ADAPTER_PACKAGE_ID,
+      adapterOperation: operation2.definition.adapterOperation,
+      binding: bindingFor3(entry)
+    };
+  }
+  async execute(context, operation2) {
+    context.budget.throwIfAborted();
+    const trustedEntry = this.#catalog.resolve(
+      operation2.binding.catalogEntryId,
+      operation2.binding.catalogEntrySha256
+    );
+    if (operation2.adapterPackageId !== LOKI_ADAPTER_PACKAGE_ID || operation2.adapterOperation !== "loki.logs.query-range" || canonicalJson(operation2.binding) !== canonicalJson(bindingFor3(trustedEntry))) {
+      throw new AdapterContractError("Compiled Loki binding no longer matches the trusted catalog");
+    }
+    if (operation2.binding.scopeEnvironment !== context.scope.environment || operation2.binding.scopeService !== context.scope.service) {
+      throw new AdapterExecutionError({
+        code: "LOKI_SCOPE_NOT_ALLOWED",
+        category: "POLICY",
+        message: "The requested scope does not match the reviewed Loki catalog entry",
+        retryable: false
+      });
+    }
+    let response;
+    try {
+      response = await this.#transport.request({
+        method: "GET",
+        route: "QUERY_RANGE",
+        expression: operation2.binding.expression,
+        start: context.window.start,
+        end: context.window.end,
+        direction: operation2.binding.direction,
+        limit: context.budget.limits.maxRows,
+        signal: context.signal,
+        maxResponseBytes: context.budget.limits.maxBytes
+      });
+    } catch (error) {
+      if (error instanceof AdapterExecutionError || error instanceof AdapterContractError || error instanceof BudgetExceededError) {
+        throw error;
+      }
+      if (error?.name === "LokiTransportError") {
+        const transportError2 = error;
+        throw new AdapterExecutionError({
+          code: transportError2.kind === "TIMEOUT" ? "LOKI_TIMEOUT" : "LOKI_UNAVAILABLE",
+          category: transportError2.kind,
+          message: transportError2.kind === "TIMEOUT" ? "Loki read timed out" : "Loki is unavailable",
+          retryable: true
+        });
+      }
+      if (context.signal.aborted) throw context.signal.reason ?? error;
+      throw new AdapterExecutionError({
+        code: "LOKI_UNAVAILABLE",
+        category: "UNAVAILABLE",
+        message: "Loki is unavailable",
+        retryable: true
+      });
+    }
+    const body = await readJson3(response, context);
+    if (response.status < 200 || response.status >= 300) throw statusError3(response.status);
+    if (!isObject5(body) || body.status !== "success") {
+      throw new AdapterContractError("Loki response envelope is invalid");
+    }
+    const state = parseStreams(body.data, operation2.binding, context);
+    const providerTruncated = isObject5(body.data) && isObject5(body.data.stats) && body.data.stats.truncated === true;
+    const truncatedReason = state.truncatedReason ?? (providerTruncated ? "ROW_LIMIT" : void 0);
+    return {
+      schemaVersion: "1.0.0",
+      collectionState: state.events.length === 0 ? "EMPTY" : "COMPLETE",
+      evaluatedAt: state.evaluatedAt,
+      nativeResultType: "streams",
+      nativeDimensions: {},
+      records: state.events,
+      pagination: truncatedReason === void 0 ? { complete: true, pages: 1 } : { complete: false, pages: 1, truncatedReason },
+      warnings: truncatedReason === void 0 ? [] : ["Loki result was truncated by the bounded read policy"],
+      sanitizedReference: "loki:query-range",
+      sourceLineage: {
+        accessPath: "DIRECT",
+        datasourceType: "loki",
+        sourceIdentitySha256: operation2.binding.sourceIdentitySha256
+      },
+      providerScope: {
+        environment: context.scope.environment,
+        ...context.scope.service === void 0 ? {} : { service: context.scope.service },
+        mappings: {
+          environment: "environment",
+          ...context.scope.service === void 0 ? {} : { service: "service" }
+        }
+      }
+    };
+  }
+};
+
+// adapters/loki/src/types.ts
+var LokiTransportError = class extends Error {
+  kind;
+  constructor(kind) {
+    super("Loki transport ".concat(kind.toLowerCase()));
+    this.name = "LokiTransportError";
+    this.kind = kind;
+  }
+};
+
+// adapters/prometheus/src/catalog.ts
+var PROMETHEUS_LABEL = /^[a-zA-Z_][a-zA-Z0-9_]*$/u;
+var SAFE_ID5 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var SHA2563 = /^[a-f0-9]{64}$/u;
+function assertExactKeys4(entry) {
+  const common = ["id", "route", "sourceIdentitySha256", "outputName", "unit", "allowedLabels", "scope"];
+  const specific = entry.route === "instant" ? ["expression", "valueKind"] : entry.route === "range" ? ["expression", "stepSeconds", "valueKind"] : entry.route === "rules" ? ["ruleType"] : [];
+  const allowed = /* @__PURE__ */ new Set([...common, ...specific]);
+  if (Object.keys(entry).some((key) => !allowed.has(key))) {
+    throw new AdapterContractError("Prometheus catalog entry contains an unsupported field");
+  }
+}
+function prometheusCatalogEntryHash(entry) {
+  return sha256Canonical(entry);
+}
+function validateEntry4(entry) {
+  if (!(/* @__PURE__ */ new Set(["instant", "range", "alerts", "rules"])).has(entry.route)) {
+    throw new AdapterContractError("Prometheus catalog route is not read-only and allowlisted");
+  }
+  assertExactKeys4(entry);
+  if (!SAFE_ID5.test(entry.id) || !SAFE_ID5.test(entry.outputName)) {
+    throw new AdapterContractError("Prometheus catalog IDs must use the bounded safe identifier format");
+  }
+  if (!SHA2563.test(entry.sourceIdentitySha256)) {
+    throw new AdapterContractError("Prometheus catalog source identity hash is invalid");
+  }
+  if (entry.allowedLabels.length > 16 || new Set(entry.allowedLabels).size !== entry.allowedLabels.length) {
+    throw new AdapterContractError("Prometheus allowed labels must be unique and bounded");
+  }
+  if (entry.allowedLabels.some((label) => !PROMETHEUS_LABEL.test(label) || label === "__name__")) {
+    throw new AdapterContractError("Prometheus catalog contains an invalid output label");
+  }
+  if (entry.scope !== void 0 && (!SAFE_ID5.test(entry.scope.environment) || !SAFE_ID5.test(entry.scope.service))) {
+    throw new AdapterContractError("Prometheus catalog scope is invalid");
+  }
+  if (entry.route === "instant" || entry.route === "range") {
+    if (entry.expression.length === 0 || entry.expression.length > 16384) {
+      throw new AdapterContractError("Prometheus catalog expression is empty or too large");
+    }
+  }
+  if (entry.route === "range" && (!Number.isSafeInteger(entry.stepSeconds) || entry.stepSeconds <= 0)) {
+    throw new AdapterContractError("Prometheus range step must be a positive integer");
+  }
+  canonicalJson(entry);
+}
+var CompiledPrometheusCatalog = class {
+  #entries;
+  constructor(catalog) {
+    const entries = /* @__PURE__ */ new Map();
+    for (const supplied of catalog.entries) {
+      const entry = structuredClone(supplied);
+      validateEntry4(entry);
+      if (entries.has(entry.id)) throw new AdapterContractError("Duplicate Prometheus catalog entry: ".concat(entry.id));
+      entries.set(entry.id, Object.freeze(entry));
+    }
+    this.#entries = entries;
+  }
+  resolve(id, expectedSha256) {
+    const entry = this.#entries.get(id);
+    if (entry === void 0) throw new AdapterContractError("Prometheus catalog entry is not trusted");
+    if (prometheusCatalogEntryHash(entry) !== expectedSha256) {
+      throw new AdapterContractError("Prometheus catalog entry hash mismatch");
+    }
+    return entry;
+  }
+};
+
+// adapters/prometheus/src/types.ts
+var PrometheusTransportError = class extends Error {
+  kind;
+  constructor(kind) {
+    super("Prometheus transport ".concat(kind.toLowerCase()));
+    this.name = "PrometheusTransportError";
+    this.kind = kind;
+  }
+};
+
+// adapters/prometheus/src/adapter.ts
+var PROMETHEUS_ADAPTER_PACKAGE_ID = "adapter.prometheus.v1";
+var prometheusAdapterPackage = {
+  schemaVersion: "1.0.0",
+  packageId: PROMETHEUS_ADAPTER_PACKAGE_ID,
+  name: "Prometheus read-only adapter",
+  version: "1.0.0",
+  protocolVersion: "1.0",
+  publisher: { name: "Codex Production Monitoring" },
+  entrypoint: { kind: "BUILTIN", registryKey: "prometheus-v1" },
+  domains: ["METRICS", "ALERTS"],
+  capabilities: [
+    "prometheus.query.instant",
+    "prometheus.query.range",
+    "prometheus.alerts.list",
+    "prometheus.rules.list"
+  ],
+  providerCompatibility: [{ provider: "prometheus", versions: ">=2.45 <4" }],
+  supportedContractVersions: ["1.0.0"],
+  conformance: ["CORE_READ", "METRICS", "ALERTS"]
+};
+var OPERATION_BY_ROUTE2 = {
+  instant: "prometheus.query.instant",
+  range: "prometheus.query.range",
+  alerts: "prometheus.alerts.list",
+  rules: "prometheus.rules.list"
+};
+var PATH_BY_ROUTE = {
+  instant: "/api/v1/query",
+  range: "/api/v1/query_range",
+  alerts: "/api/v1/alerts",
+  rules: "/api/v1/rules"
+};
+var RESULT_KIND_BY_ROUTE2 = {
+  instant: "SCALAR",
+  range: "TIMESERIES",
+  alerts: "EVENT",
+  rules: "TABLE"
+};
+function isObject6(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function safeString5(value2, field, maxLength = 4096) {
+  const hasUnsafeControl = typeof value2 === "string" && [...value2].some((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    return code < 32 && code !== 9 && code !== 10 && code !== 13 || code === 127;
+  });
+  if (typeof value2 !== "string" || value2.length > maxLength || hasUnsafeControl) {
+    throw new AdapterContractError("Prometheus ".concat(field, " is invalid"));
+  }
+  return value2;
+}
+function parseTimestamp(value2) {
+  const seconds2 = typeof value2 === "number" ? value2 : typeof value2 === "string" ? Number(value2) : Number.NaN;
+  if (!Number.isFinite(seconds2) || seconds2 < 0) throw new AdapterContractError("Prometheus timestamp is invalid");
+  const milliseconds2 = seconds2 * 1e3;
+  if (!Number.isFinite(milliseconds2)) throw new AdapterContractError("Prometheus timestamp is out of range");
+  const date2 = new Date(milliseconds2);
+  if (Number.isNaN(date2.getTime())) throw new AdapterContractError("Prometheus timestamp is out of range");
+  return { seconds: seconds2, iso: date2.toISOString() };
+}
+function parseSample(value2, warnings) {
+  const text2 = safeString5(value2, "sample value", 128);
+  if (["NaN", "Inf", "+Inf", "-Inf"].includes(text2)) {
+    warnings.push("Prometheus returned a non-finite sample; normalized value is null");
+    return null;
+  }
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(text2)) {
+    throw new AdapterContractError("Prometheus sample value is invalid");
+  }
+  const number = Number(text2);
+  if (!Number.isFinite(number)) throw new AdapterContractError("Prometheus sample value is out of range");
+  return number;
+}
+function parseBoundary(value2) {
+  const text2 = safeString5(value2, "native histogram boundary", 128);
+  if (["Inf", "+Inf", "-Inf"].includes(text2)) return text2;
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/u.test(text2) || !Number.isFinite(Number(text2))) {
+    throw new AdapterContractError("Prometheus native histogram boundary is invalid");
+  }
+  return text2;
+}
+function boundaryNumber(value2) {
+  if (value2 === "Inf" || value2 === "+Inf") return Number.POSITIVE_INFINITY;
+  if (value2 === "-Inf") return Number.NEGATIVE_INFINITY;
+  return Number(value2);
+}
+function parseMetric(value2, allowedLabels) {
+  if (!isObject6(value2)) throw new AdapterContractError("Prometheus metric labels are invalid");
+  const output = {};
+  for (const [label, rawValue] of Object.entries(value2)) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/u.test(label)) {
+      throw new AdapterContractError("Prometheus response contains an invalid label name");
+    }
+    const labelValue = safeString5(rawValue, "label value", 512);
+    if ([...labelValue].some((character) => (character.codePointAt(0) ?? 0) < 32)) {
+      throw new AdapterContractError("Prometheus response contains a control character in a label");
+    }
+    if (allowedLabels.includes(label)) output[label] = labelValue;
+  }
+  return output;
+}
+async function readJson4(response, context) {
+  const chunks = [];
+  for await (const chunk of response.body) {
+    context.budget.throwIfAborted();
+    context.budget.consumeBytes(chunk.byteLength);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new AdapterContractError("Prometheus response is not valid JSON");
+  }
+}
+function parseWarnings(envelope2) {
+  const warnings = [];
+  for (const field of ["warnings", "infos"]) {
+    const value2 = envelope2[field];
+    if (value2 === void 0) continue;
+    if (!Array.isArray(value2) || value2.some((item) => typeof item !== "string")) {
+      throw new AdapterContractError("Prometheus ".concat(field, " field is invalid"));
+    }
+    warnings.push(...value2.map((item) => {
+      const warning = safeString5(item, field, 4096);
+      return field === "infos" ? "info: ".concat(warning) : warning;
+    }));
+  }
+  return warnings;
+}
+function statusError4(status) {
+  if (status === 401 || status === 403) {
+    return new AdapterExecutionError({
+      code: "PROMETHEUS_AUTHORIZATION",
+      category: status === 401 ? "AUTHENTICATION" : "AUTHORIZATION",
+      message: "Prometheus denied the read request",
+      retryable: false,
+      providerStatus: status
+    });
+  }
+  if (status === 429) {
+    return new AdapterExecutionError({
+      code: "PROMETHEUS_RATE_LIMIT",
+      category: "RATE_LIMIT",
+      message: "Prometheus rate limited the read request",
+      retryable: true,
+      providerStatus: status
+    });
+  }
+  return new AdapterExecutionError({
+    code: "PROMETHEUS_HTTP_ERROR",
+    category: status === 503 ? "UNAVAILABLE" : "INVALID_RESPONSE",
+    message: "Prometheus read request failed",
+    retryable: status >= 500,
+    providerStatus: status
+  });
+}
+function apiError(envelope2) {
+  const errorType = typeof envelope2.errorType === "string" ? envelope2.errorType : "unknown";
+  const timeout = errorType === "timeout" || errorType === "canceled";
+  return new AdapterExecutionError({
+    code: timeout ? "PROMETHEUS_QUERY_TIMEOUT" : "PROMETHEUS_API_ERROR",
+    category: timeout ? "TIMEOUT" : "INVALID_RESPONSE",
+    message: timeout ? "Prometheus query timed out" : "Prometheus rejected the trusted catalog request",
+    retryable: timeout
+  });
+}
+function samplePair(value2, warnings) {
+  if (!Array.isArray(value2) || value2.length !== 2) throw new AdapterContractError("Prometheus sample pair is invalid");
+  return { timestamp: parseTimestamp(value2[0]), value: parseSample(value2[1], warnings) };
+}
+function nativeHistogram(value2, warnings) {
+  if (!Array.isArray(value2) || value2.length !== 2 || !isObject6(value2[1])) {
+    throw new AdapterContractError("Prometheus native histogram sample is invalid");
+  }
+  const histogram = value2[1];
+  const count = parseSample(histogram.count, warnings);
+  const sum = parseSample(histogram.sum, warnings);
+  if (count === null || sum === null || count < 0) {
+    throw new AdapterContractError("Prometheus native histogram count or sum is invalid");
+  }
+  if (!Array.isArray(histogram.buckets)) throw new AdapterContractError("Prometheus native histogram buckets are invalid");
+  const buckets = histogram.buckets.map((bucket) => {
+    if (!Array.isArray(bucket) || bucket.length !== 4) {
+      throw new AdapterContractError("Prometheus native histogram bucket is invalid");
+    }
+    const rule = bucket[0];
+    if (!Number.isSafeInteger(rule) || rule < 0 || rule > 3) {
+      throw new AdapterContractError("Prometheus native histogram boundary rule is invalid");
+    }
+    const bucketCount = parseSample(bucket[3], warnings);
+    if (bucketCount === null || bucketCount < 0) {
+      throw new AdapterContractError("Prometheus native histogram bucket count is invalid");
+    }
+    const left = parseBoundary(bucket[1]);
+    const right = parseBoundary(bucket[2]);
+    if (boundaryNumber(left) >= boundaryNumber(right)) {
+      throw new AdapterContractError("Prometheus native histogram bucket boundaries are not increasing");
+    }
+    return {
+      rule,
+      left,
+      right,
+      count: bucketCount
+    };
+  });
+  return { timestamp: parseTimestamp(value2[0]), count, sum, buckets };
+}
+function canAdd2(state, context, kind) {
+  const current = kind === "series" ? state.series : kind === "points" ? state.points : state.rows;
+  const maximum = kind === "series" ? context.budget.limits.maxSeries : kind === "points" ? context.budget.limits.maxPoints : context.budget.limits.maxRows;
+  if (current < maximum) return true;
+  state.truncatedReason ??= kind === "series" ? "SERIES_LIMIT" : kind === "points" ? "POINT_LIMIT" : "ROW_LIMIT";
+  return false;
+}
+function addSeries(state, context) {
+  if (!canAdd2(state, context, "series")) return false;
+  context.budget.consumeSeries(1);
+  state.series += 1;
+  return true;
+}
+function addPoint(state, context) {
+  if (!canAdd2(state, context, "points")) return false;
+  context.budget.consumePoints(1);
+  state.points += 1;
+  return true;
+}
+function addRow(state, context) {
+  if (!canAdd2(state, context, "rows")) return false;
+  context.budget.consumeRows(1);
+  state.rows += 1;
+  return true;
+}
+function updateEvaluatedAt2(state, iso) {
+  if (Date.parse(iso) > Date.parse(state.evaluatedAt)) state.evaluatedAt = iso;
+}
+function histogramTable(name, dimensions2, samples, state, context) {
+  const dimensionNames = Object.keys(dimensions2).sort();
+  const columns = [
+    ...dimensionNames.map((dimension) => ({ name: dimension, type: "STRING" })),
+    { name: "rowType", type: "STRING" },
+    { name: "timestamp", type: "DATETIME" },
+    { name: "boundaryRule", type: "NUMBER" },
+    { name: "leftBoundary", type: "STRING" },
+    { name: "rightBoundary", type: "STRING" },
+    { name: "bucketCount", type: "NUMBER" },
+    { name: "count", type: "NUMBER" },
+    { name: "sum", type: "NUMBER" }
+  ];
+  const rows = [];
+  const prefix = dimensionNames.map((dimension) => dimensions2[dimension]);
+  for (const sample of samples) {
+    if (!addPoint(state, context)) break;
+    updateEvaluatedAt2(state, sample.timestamp.iso);
+    if (addRow(state, context)) {
+      rows.push([...prefix, "summary", sample.timestamp.iso, null, null, null, null, sample.count, sample.sum]);
+    }
+    for (const bucket of sample.buckets) {
+      if (!addRow(state, context)) break;
+      rows.push([
+        ...prefix,
+        "bucket",
+        sample.timestamp.iso,
+        bucket.rule,
+        bucket.left,
+        bucket.right,
+        bucket.count,
+        sample.count,
+        sample.sum
+      ]);
+    }
+  }
+  return { kind: "TABLE", name, columns, rows };
+}
+function parseQueryData(data, binding, context, state) {
+  if (!isObject6(data) || typeof data.resultType !== "string" || data.result === void 0) {
+    throw new AdapterContractError("Prometheus query data is invalid");
+  }
+  if (binding.route === "instant") {
+    if (data.resultType === "scalar" && binding.valueKind === "FLOAT") {
+      if (!addSeries(state, context) || !addPoint(state, context)) return;
+      const sample = samplePair(data.result, state.warnings);
+      updateEvaluatedAt2(state, sample.timestamp.iso);
+      state.records.push({
+        kind: "SCALAR",
+        name: binding.outputName,
+        value: sample.value,
+        dimensions: {},
+        observedAt: sample.timestamp.iso,
+        ...binding.unit === void 0 ? {} : { unit: binding.unit }
+      });
+      return;
+    }
+    if (data.resultType !== "vector" || !Array.isArray(data.result)) {
+      throw new AdapterContractError("Prometheus instant result type drifted from the catalog contract");
+    }
+    if (context.budget.limits.maxSeries > 0 && data.result.length >= context.budget.limits.maxSeries) {
+      state.truncatedReason ??= "SERIES_LIMIT";
+    }
+    for (const item of data.result) {
+      if (!addSeries(state, context)) break;
+      if (!isObject6(item)) throw new AdapterContractError("Prometheus instant vector item is invalid");
+      const dimensions2 = parseMetric(item.metric, binding.allowedLabels);
+      if (binding.valueKind === "FLOAT") {
+        if (item.histogram !== void 0 || item.value === void 0) {
+          throw new AdapterContractError("Prometheus instant sample type drifted from FLOAT");
+        }
+        if (!addPoint(state, context)) break;
+        const sample = samplePair(item.value, state.warnings);
+        updateEvaluatedAt2(state, sample.timestamp.iso);
+        state.records.push({
+          kind: "SCALAR",
+          name: binding.outputName,
+          value: sample.value,
+          dimensions: dimensions2,
+          observedAt: sample.timestamp.iso,
+          ...binding.unit === void 0 ? {} : { unit: binding.unit }
+        });
+      } else {
+        if (item.value !== void 0 || item.histogram === void 0) {
+          throw new AdapterContractError("Prometheus instant sample type drifted from NATIVE_HISTOGRAM");
+        }
+        state.records.push(
+          histogramTable(binding.outputName, dimensions2, [nativeHistogram(item.histogram, state.warnings)], state, context)
+        );
+      }
+    }
+    return;
+  }
+  if (data.resultType !== "matrix" || !Array.isArray(data.result)) {
+    throw new AdapterContractError("Prometheus range result type drifted from the catalog contract");
+  }
+  if (context.budget.limits.maxSeries > 0 && data.result.length >= context.budget.limits.maxSeries) {
+    state.truncatedReason ??= "SERIES_LIMIT";
+  }
+  for (const item of data.result) {
+    if (!addSeries(state, context)) break;
+    if (!isObject6(item)) throw new AdapterContractError("Prometheus range vector item is invalid");
+    const dimensions2 = parseMetric(item.metric, binding.allowedLabels);
+    if (binding.valueKind === "FLOAT") {
+      if (!Array.isArray(item.values) || item.histograms !== void 0) {
+        throw new AdapterContractError("Prometheus range sample type drifted from FLOAT");
+      }
+      const points = [];
+      let previous = -1;
+      for (const rawPoint of item.values) {
+        if (!addPoint(state, context)) break;
+        const sample = samplePair(rawPoint, state.warnings);
+        if (sample.timestamp.seconds <= previous) throw new AdapterContractError("Prometheus range timestamps are not increasing");
+        previous = sample.timestamp.seconds;
+        updateEvaluatedAt2(state, sample.timestamp.iso);
+        points.push({ at: sample.timestamp.iso, value: sample.value });
+      }
+      state.records.push({
+        kind: "TIMESERIES",
+        name: binding.outputName,
+        dimensions: dimensions2,
+        points,
+        ...binding.unit === void 0 ? {} : { unit: binding.unit }
+      });
+    } else {
+      if (!Array.isArray(item.histograms) || item.values !== void 0) {
+        throw new AdapterContractError("Prometheus range sample type drifted from NATIVE_HISTOGRAM");
+      }
+      const samples = item.histograms.map((sample) => nativeHistogram(sample, state.warnings));
+      for (let index = 1; index < samples.length; index += 1) {
+        if (samples[index].timestamp.seconds <= samples[index - 1].timestamp.seconds) {
+          throw new AdapterContractError("Prometheus histogram timestamps are not increasing");
+        }
+      }
+      state.records.push(histogramTable(binding.outputName, dimensions2, samples, state, context));
+    }
+  }
+}
+function parseAlerts(data, binding, context, state) {
+  if (!isObject6(data) || !Array.isArray(data.alerts)) throw new AdapterContractError("Prometheus alerts data is invalid");
+  for (const alert of data.alerts) {
+    if (!addRow(state, context)) break;
+    if (!isObject6(alert) || !isObject6(alert.labels)) throw new AdapterContractError("Prometheus alert is invalid");
+    const activeAt = safeString5(alert.activeAt, "alert activeAt", 128);
+    if (!Number.isFinite(Date.parse(activeAt))) throw new AdapterContractError("Prometheus alert activeAt is invalid");
+    const alertState = safeString5(alert.state, "alert state", 32);
+    if (!(/* @__PURE__ */ new Set(["firing", "pending"])).has(alertState)) throw new AdapterContractError("Prometheus alert state is invalid");
+    const labels = parseMetric(alert.labels, binding.allowedLabels);
+    const attributes = { state: alertState, ...labels };
+    if (typeof alert.value === "string") attributes.value = safeString5(alert.value, "alert value", 128);
+    state.records.push({
+      kind: "EVENT",
+      name: binding.outputName,
+      occurredAt: new Date(activeAt).toISOString(),
+      summary: "Prometheus alert is ".concat(alertState),
+      attributes
+    });
+  }
+}
+function parseRules(data, binding, context, state) {
+  if (!isObject6(data) || !Array.isArray(data.groups)) throw new AdapterContractError("Prometheus rules data is invalid");
+  const rows = [];
+  for (const group of data.groups) {
+    if (!isObject6(group) || !Array.isArray(group.rules)) throw new AdapterContractError("Prometheus rule group is invalid");
+    const groupName = safeString5(group.name, "rule group name", 512);
+    for (const rule of group.rules) {
+      if (!isObject6(rule)) throw new AdapterContractError("Prometheus rule metadata is invalid");
+      const type = safeString5(rule.type, "rule type", 32);
+      if (!(/* @__PURE__ */ new Set(["alerting", "recording"])).has(type)) throw new AdapterContractError("Prometheus rule type is invalid");
+      const expected = binding.ruleType === "alert" ? "alerting" : binding.ruleType === "record" ? "recording" : void 0;
+      if (expected !== void 0 && type !== expected) continue;
+      if (!addRow(state, context)) break;
+      const lastEvaluation = safeString5(rule.lastEvaluation, "rule lastEvaluation", 128);
+      if (!Number.isFinite(Date.parse(lastEvaluation))) throw new AdapterContractError("Prometheus rule timestamp is invalid");
+      const evaluationTime = typeof rule.evaluationTime === "number" && Number.isFinite(rule.evaluationTime) ? rule.evaluationTime : null;
+      rows.push([
+        groupName,
+        safeString5(rule.name, "rule name", 512),
+        type,
+        typeof rule.state === "string" ? rule.state : null,
+        typeof rule.health === "string" ? rule.health : null,
+        new Date(lastEvaluation).toISOString(),
+        evaluationTime
+      ]);
+      updateEvaluatedAt2(state, new Date(lastEvaluation).toISOString());
+    }
+    if (state.truncatedReason !== void 0) break;
+  }
+  if (rows.length > 0) {
+    state.records.push({
+      kind: "TABLE",
+      name: binding.outputName,
+      columns: [
+        { name: "group", type: "STRING" },
+        { name: "name", type: "STRING" },
+        { name: "type", type: "STRING" },
+        { name: "state", type: "STRING" },
+        { name: "health", type: "STRING" },
+        { name: "lastEvaluation", type: "DATETIME" },
+        { name: "evaluationTimeSeconds", type: "NUMBER" }
+      ],
+      rows
+    });
+  }
+}
+function bindingFor4(entry) {
+  return {
+    catalogEntryId: entry.id,
+    catalogEntrySha256: prometheusCatalogEntryHash(entry),
+    sourceIdentitySha256: entry.sourceIdentitySha256,
+    route: entry.route,
+    outputName: entry.outputName,
+    allowedLabels: [...entry.allowedLabels],
+    ...entry.unit === void 0 ? {} : { unit: entry.unit },
+    ...entry.route === "instant" || entry.route === "range" ? { expression: entry.expression, valueKind: entry.valueKind } : {},
+    ...entry.route === "range" ? { stepSeconds: entry.stepSeconds } : {},
+    ...entry.route === "rules" && entry.ruleType !== void 0 ? { ruleType: entry.ruleType } : {},
+    ...entry.scope === void 0 ? {} : { scopeEnvironment: entry.scope.environment, scopeService: entry.scope.service }
+  };
+}
+function compileExpectedResultKind(entry) {
+  if ((entry.route === "instant" || entry.route === "range") && entry.valueKind === "NATIVE_HISTOGRAM") return "TABLE";
+  return RESULT_KIND_BY_ROUTE2[entry.route];
+}
+function buildRequest2(binding, context) {
+  const timeoutSeconds = Math.max(1, Math.ceil(context.budget.limits.timeoutMs / 1e3));
+  const query = {};
+  if (binding.route === "instant") {
+    query.query = binding.expression;
+    query.time = context.window.end;
+    query.timeout = "".concat(timeoutSeconds, "s");
+    query.limit = String(context.budget.limits.maxSeries);
+  } else if (binding.route === "range") {
+    query.query = binding.expression;
+    query.start = context.window.start;
+    query.end = context.window.end;
+    query.step = "".concat(binding.stepSeconds, "s");
+    query.timeout = "".concat(timeoutSeconds, "s");
+    query.limit = String(context.budget.limits.maxSeries);
+  } else if (binding.route === "rules" && binding.ruleType !== void 0) query.type = binding.ruleType;
+  return {
+    method: "GET",
+    path: PATH_BY_ROUTE[binding.route],
+    query,
+    signal: context.signal,
+    maxResponseBytes: context.budget.limits.maxBytes
+  };
+}
+var PrometheusAdapter = class {
+  descriptor = {
+    packageId: PROMETHEUS_ADAPTER_PACKAGE_ID,
+    name: prometheusAdapterPackage.name,
+    version: prometheusAdapterPackage.version,
+    provider: "prometheus",
+    domains: ["METRICS", "ALERTS"],
+    operations: prometheusAdapterPackage.capabilities,
+    resultSchemaVersions: ["1.0.0"]
+  };
+  #transport;
+  #catalog;
+  constructor(options) {
+    this.#transport = options.transport;
+    this.#catalog = new CompiledPrometheusCatalog(options.catalog);
+  }
+  async doctor() {
+    return {
+      status: "READY",
+      checks: [{ name: "read-only-transport", status: "PASS", message: "Trusted Prometheus catalog loaded" }]
+    };
+  }
+  async compile(operation2, context) {
+    if (context.adapterPackage.packageId !== PROMETHEUS_ADAPTER_PACKAGE_ID) {
+      throw new AdapterContractError("Prometheus adapter package mismatch");
+    }
+    if (operation2.definition.adapterPackageId !== PROMETHEUS_ADAPTER_PACKAGE_ID || computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new AdapterContractError("Prometheus operation is not bound to this adapter and hash");
+    }
+    if (Buffer.byteLength(canonicalJson(operation2.definition), "utf8") > context.maxDefinitionBytes) {
+      throw new AdapterContractError("Prometheus operation definition exceeds the compile budget");
+    }
+    const reference = operation2.definition.sanitizedProviderDefinition;
+    if (Object.keys(reference).length !== 2 || typeof reference.catalogEntryId !== "string" || typeof reference.catalogEntrySha256 !== "string") {
+      throw new AdapterContractError("Prometheus operation must contain only a trusted catalog reference");
+    }
+    const entry = this.#catalog.resolve(reference.catalogEntryId, reference.catalogEntrySha256);
+    if (operation2.definition.adapterOperation !== OPERATION_BY_ROUTE2[entry.route]) {
+      throw new AdapterContractError("Prometheus adapter operation does not match the catalog route");
+    }
+    if (operation2.definition.normalization.resultKind !== compileExpectedResultKind(entry)) {
+      throw new AdapterContractError("Prometheus normalization kind does not match the catalog result contract");
+    }
+    const expectedSourceLineage = {
+      accessPath: "DIRECT",
+      datasourceType: "prometheus",
+      sourceIdentitySha256: entry.sourceIdentitySha256
+    };
+    if (canonicalJson(operation2.definition.expectedSourceLineage ?? null) !== canonicalJson(expectedSourceLineage)) {
+      throw new AdapterContractError("Prometheus source lineage does not match the trusted catalog");
+    }
+    if (entry.allowedLabels.some((label) => !operation2.definition.allowedDimensions.includes(label))) {
+      throw new AdapterContractError("Prometheus catalog labels exceed the operation dimension allowlist");
+    }
+    if (entry.scope !== void 0 && (operation2.definition.scopeMapping.environment !== "environment" || operation2.definition.scopeMapping.service !== "service")) {
+      throw new AdapterContractError("Prometheus scoped catalog entry requires exact sealed scope mappings");
+    }
+    return {
+      operationId: operation2.operationId,
+      operationDefinitionSha256: operation2.definitionSha256,
+      adapterPackageId: PROMETHEUS_ADAPTER_PACKAGE_ID,
+      adapterOperation: operation2.definition.adapterOperation,
+      binding: bindingFor4(entry)
+    };
+  }
+  async execute(context, operation2) {
+    context.budget.throwIfAborted();
+    const trustedEntry = this.#catalog.resolve(
+      operation2.binding.catalogEntryId,
+      operation2.binding.catalogEntrySha256
+    );
+    if (operation2.adapterPackageId !== PROMETHEUS_ADAPTER_PACKAGE_ID || operation2.adapterOperation !== OPERATION_BY_ROUTE2[trustedEntry.route] || canonicalJson(operation2.binding) !== canonicalJson(bindingFor4(trustedEntry))) {
+      throw new AdapterContractError("Compiled Prometheus binding no longer matches the trusted catalog");
+    }
+    if (operation2.binding.scopeEnvironment !== void 0 && (operation2.binding.scopeEnvironment !== context.scope.environment || operation2.binding.scopeService !== context.scope.service)) {
+      throw new AdapterExecutionError({
+        code: "PROMETHEUS_SCOPE_NOT_ALLOWED",
+        category: "POLICY",
+        message: "The requested scope does not match the reviewed Prometheus catalog entry",
+        retryable: false
+      });
+    }
+    const request = buildRequest2(operation2.binding, context);
+    let response;
+    try {
+      response = await this.#transport.request(request);
+    } catch (error) {
+      if (error instanceof BudgetExceededError || error instanceof AdapterExecutionError || error instanceof AdapterContractError) throw error;
+      if (error instanceof PrometheusTransportError) {
+        const transportError2 = error;
+        throw new AdapterExecutionError({
+          code: transportError2.kind === "TIMEOUT" ? "PROMETHEUS_TRANSPORT_TIMEOUT" : "PROMETHEUS_UNAVAILABLE",
+          category: transportError2.kind,
+          message: transportError2.kind === "TIMEOUT" ? "Prometheus request timed out" : "Prometheus is unavailable",
+          retryable: true
+        });
+      }
+      throw error;
+    }
+    if (response.status === 401 || response.status === 403 || response.status === 429) throw statusError4(response.status);
+    const body = await readJson4(response, context);
+    if (isObject6(body) && body.status === "error") throw apiError(body);
+    if (response.status < 200 || response.status >= 300) throw statusError4(response.status);
+    if (!isObject6(body) || body.status !== "success" && body.status !== "error") {
+      throw new AdapterContractError("Prometheus response envelope is invalid");
+    }
+    const warnings = parseWarnings(body);
+    const initialEvaluatedAt = operation2.binding.route === "range" || operation2.binding.route === "instant" ? new Date(context.window.end).toISOString() : context.clock.now().toISOString();
+    const state = {
+      records: [],
+      warnings,
+      evaluatedAt: initialEvaluatedAt,
+      series: 0,
+      points: 0,
+      rows: 0
+    };
+    if (operation2.binding.route === "instant" || operation2.binding.route === "range") {
+      parseQueryData(body.data, operation2.binding, context, state);
+    } else if (operation2.binding.route === "alerts") {
+      parseAlerts(body.data, operation2.binding, context, state);
+    } else parseRules(body.data, operation2.binding, context, state);
+    const result = {
+      schemaVersion: "1.0.0",
+      collectionState: state.records.length === 0 ? "EMPTY" : "COMPLETE",
+      evaluatedAt: state.evaluatedAt,
+      nativeResultType: operation2.binding.route,
+      nativeDimensions: {},
+      records: state.records,
+      pagination: state.truncatedReason === void 0 ? { complete: true, pages: 1 } : { complete: false, pages: 1, truncatedReason: state.truncatedReason },
+      warnings: state.warnings,
+      sanitizedReference: "prometheus:".concat(PATH_BY_ROUTE[operation2.binding.route]),
+      sourceLineage: {
+        accessPath: "DIRECT",
+        datasourceType: "prometheus",
+        sourceIdentitySha256: operation2.binding.sourceIdentitySha256
+      },
+      ...operation2.binding.scopeEnvironment === void 0 ? {} : {
+        providerScope: {
+          environment: operation2.binding.scopeEnvironment,
+          service: operation2.binding.scopeService,
+          mappings: { environment: "environment", service: "service" }
+        }
+      },
+      ...operation2.binding.unit === void 0 ? {} : { nativeUnit: operation2.binding.unit }
+    };
+    return result;
+  }
+};
+
+// adapters/tempo/src/catalog.ts
+var SAFE_ID6 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var SAFE_ATTRIBUTE = /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/u;
+var SAFE_SCOPE2 = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+var TRACE_ID = /^[a-fA-F0-9]{32}$/u;
+var SHA2564 = /^[a-f0-9]{64}$/u;
+function assertExactKeys5(entry) {
+  const common = ["id", "sourceIdentitySha256", "outputName", "allowedAttributes", "scope", "route"];
+  const specific = entry.route === "search" ? ["query"] : ["traceId"];
+  const allowed = /* @__PURE__ */ new Set([...common, ...specific]);
+  if (Object.keys(entry).some((key) => !allowed.has(key))) {
+    throw new AdapterContractError("Tempo catalog entry contains an unsupported field");
+  }
+}
+function tempoCatalogEntryHash(entry) {
+  return sha256Canonical(entry);
+}
+function validateEntry5(entry) {
+  assertExactKeys5(entry);
+  if (!SAFE_ID6.test(entry.id) || !SAFE_ID6.test(entry.outputName)) {
+    throw new AdapterContractError("Tempo catalog IDs must use the bounded safe identifier format");
+  }
+  if (!SHA2564.test(entry.sourceIdentitySha256)) {
+    throw new AdapterContractError("Tempo catalog source identity hash is invalid");
+  }
+  if (entry.allowedAttributes.length > 16 || new Set(entry.allowedAttributes).size !== entry.allowedAttributes.length || entry.allowedAttributes.some((attribute) => !SAFE_ATTRIBUTE.test(attribute))) {
+    throw new AdapterContractError("Tempo allowed attributes must be unique, valid, and bounded");
+  }
+  if (!SAFE_SCOPE2.test(entry.scope.environment) || !SAFE_SCOPE2.test(entry.scope.service)) {
+    throw new AdapterContractError("Tempo catalog scope is invalid");
+  }
+  if (entry.route === "search") {
+    if (entry.query.length === 0 || entry.query.length > 16384) {
+      throw new AdapterContractError("Tempo search query is empty or too large");
+    }
+  } else if (!TRACE_ID.test(entry.traceId)) {
+    throw new AdapterContractError("Tempo trace catalog entry must pin a full trace ID");
+  }
+  canonicalJson(entry);
+}
+var CompiledTempoCatalog = class {
+  #entries;
+  constructor(catalog) {
+    const entries = /* @__PURE__ */ new Map();
+    for (const supplied of catalog.entries) {
+      const entry = structuredClone(supplied);
+      validateEntry5(entry);
+      if (entries.has(entry.id)) throw new AdapterContractError("Duplicate Tempo catalog entry: ".concat(entry.id));
+      entries.set(entry.id, Object.freeze({
+        ...entry,
+        allowedAttributes: Object.freeze([...entry.allowedAttributes]),
+        scope: Object.freeze({ ...entry.scope })
+      }));
+    }
+    this.#entries = entries;
+  }
+  resolve(id, expectedSha256) {
+    const entry = this.#entries.get(id);
+    if (entry === void 0) throw new AdapterContractError("Tempo catalog entry is not trusted");
+    if (tempoCatalogEntryHash(entry) !== expectedSha256) {
+      throw new AdapterContractError("Tempo catalog entry hash mismatch");
+    }
+    return entry;
+  }
+};
+
+// adapters/tempo/src/adapter.ts
+var TEMPO_ADAPTER_PACKAGE_ID = "adapter.tempo.v1";
+var tempoAdapterPackage = {
+  schemaVersion: "1.0.0",
+  packageId: TEMPO_ADAPTER_PACKAGE_ID,
+  name: "Tempo production-read-only adapter",
+  version: "1.0.0",
+  protocolVersion: "1.0",
+  publisher: { name: "Codex Production Monitoring" },
+  entrypoint: { kind: "BUILTIN", registryKey: "tempo-v1" },
+  domains: ["TRACES"],
+  capabilities: ["tempo.traces.search", "tempo.trace.read"],
+  providerCompatibility: [{ provider: "tempo", versions: ">=2.4 <3" }],
+  supportedContractVersions: ["1.0.0"],
+  conformance: ["CORE_READ", "TRACES"]
+};
+function isObject7(value2) {
+  return value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+}
+function safeString6(value2, label, maxLength = 4096) {
+  if (typeof value2 !== "string" || value2.length === 0 || value2.length > maxLength) {
+    throw new AdapterContractError("Tempo ".concat(label, " is invalid"));
+  }
+  if ([...value2].some((character) => (character.codePointAt(0) ?? 0) < 32)) {
+    throw new AdapterContractError("Tempo ".concat(label, " contains a control character"));
+  }
+  return value2;
+}
+function nanoTimestamp(value2) {
+  const text2 = safeString6(value2, "timestamp", 32);
+  if (!/^\d{1,20}$/u.test(text2)) throw new AdapterContractError("Tempo timestamp is invalid");
+  const nanoseconds = BigInt(text2);
+  const milliseconds2 = nanoseconds / 1000000n;
+  if (milliseconds2 > BigInt(Number.MAX_SAFE_INTEGER)) throw new AdapterContractError("Tempo timestamp is out of range");
+  const date2 = new Date(Number(milliseconds2));
+  if (Number.isNaN(date2.getTime())) throw new AdapterContractError("Tempo timestamp is out of range");
+  return { iso: date2.toISOString(), nanoseconds };
+}
+function safeDuration(value2) {
+  if (typeof value2 !== "number" || !Number.isFinite(value2) || value2 < 0 || value2 > 864e5) {
+    throw new AdapterContractError("Tempo trace duration is invalid");
+  }
+  return value2;
+}
+function safeStatus(value2) {
+  if (value2 === void 0) return "unset";
+  if (typeof value2 === "string" && ["ok", "error", "unset"].includes(value2.toLowerCase())) {
+    return value2.toLowerCase();
+  }
+  if (isObject7(value2) && (typeof value2.code === "number" || typeof value2.code === "string")) {
+    const code = String(value2.code).toLowerCase();
+    if (["0", "unset"].includes(code)) return "unset";
+    if (["1", "ok"].includes(code)) return "ok";
+    if (["2", "error"].includes(code)) return "error";
+  }
+  throw new AdapterContractError("Tempo status is invalid");
+}
+async function readJson5(response, context) {
+  const chunks = [];
+  for await (const chunk of response.body) {
+    context.budget.throwIfAborted();
+    context.budget.consumeBytes(chunk.byteLength);
+    chunks.push(chunk);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new AdapterContractError("Tempo response is not valid JSON");
+  }
+}
+function statusError5(status) {
+  if (status === 401 || status === 403) {
+    return new AdapterExecutionError({
+      code: "TEMPO_ACCESS_DENIED",
+      category: status === 401 ? "AUTHENTICATION" : "AUTHORIZATION",
+      message: "Tempo denied the bounded read request",
+      retryable: false,
+      providerStatus: status
+    });
+  }
+  if (status === 404) {
+    return new AdapterExecutionError({
+      code: "TEMPO_TRACE_NOT_FOUND",
+      category: "INVALID_RESPONSE",
+      message: "Tempo did not find the pinned trace",
+      retryable: false,
+      providerStatus: status
+    });
+  }
+  if (status === 429) {
+    return new AdapterExecutionError({
+      code: "TEMPO_RATE_LIMIT",
+      category: "RATE_LIMIT",
+      message: "Tempo rate limited the bounded read request",
+      retryable: true,
+      providerStatus: status
+    });
+  }
+  return new AdapterExecutionError({
+    code: "TEMPO_READ_FAILED",
+    category: status >= 500 ? "UNAVAILABLE" : "INVALID_RESPONSE",
+    message: "Tempo bounded read failed",
+    retryable: status >= 500,
+    providerStatus: status
+  });
+}
+function assertScope2(environment, service, context) {
+  if (environment !== void 0 && environment !== context.scope.environment) {
+    throw new AdapterContractError("Tempo response crossed the authorized environment scope");
+  }
+  if (service !== void 0 && context.scope.service !== void 0 && service !== context.scope.service) {
+    throw new AdapterContractError("Tempo response crossed the authorized service scope");
+  }
+}
+function appendEvent(state, event, context) {
+  if (state.events.length >= context.budget.limits.maxRows) {
+    state.truncatedReason = "ROW_LIMIT";
+    return false;
+  }
+  context.budget.consumeRows(1);
+  state.events.push(event);
+  if (Date.parse(event.occurredAt) > Date.parse(state.evaluatedAt)) state.evaluatedAt = event.occurredAt;
+  return true;
+}
+function parseSearch2(body, binding, context) {
+  if (!Array.isArray(body.traces)) throw new AdapterContractError("Tempo search response shape drifted");
+  const state = {
+    events: [],
+    evaluatedAt: new Date(context.window.end).toISOString(),
+    providerTruncated: typeof body.nextPageToken === "string" && body.nextPageToken.length > 0
+  };
+  for (const trace of body.traces) {
+    context.budget.throwIfAborted();
+    if (!isObject7(trace)) throw new AdapterContractError("Tempo search trace is invalid");
+    const traceId = safeString6(trace.traceID, "trace ID", 32);
+    if (!/^[a-fA-F0-9]{32}$/u.test(traceId)) throw new AdapterContractError("Tempo trace ID is invalid");
+    const service = safeString6(trace.rootServiceName, "root service", 256);
+    const environment = trace.environment === void 0 ? void 0 : safeString6(trace.environment, "environment", 128);
+    assertScope2(environment, service, context);
+    const started = nanoTimestamp(trace.startTimeUnixNano);
+    const durationMs = safeDuration(trace.durationMs);
+    const attributes = {
+      traceSha256: sha256Bytes(traceId.toLowerCase()),
+      rootServiceName: service,
+      durationMs,
+      status: safeStatus(trace.status)
+    };
+    if (environment !== void 0 && binding.allowedAttributes.includes("environment")) attributes.environment = environment;
+    if (!appendEvent(state, {
+      kind: "EVENT",
+      name: binding.outputName,
+      occurredAt: started.iso,
+      summary: "Trace ".concat(attributes.status, " (").concat(durationMs, " ms)"),
+      attributes: Object.fromEntries(
+        Object.entries(attributes).filter(([key]) => key === "traceSha256" || key === "durationMs" || key === "status" || binding.allowedAttributes.includes(key))
+      )
+    }, context)) break;
+  }
+  return state;
+}
+function otlpAttributeValue(value2) {
+  if (!isObject7(value2)) return void 0;
+  const candidate = value2.stringValue;
+  return typeof candidate === "string" && candidate.length <= 512 ? candidate : void 0;
+}
+function resourceScope(resource) {
+  if (!isObject7(resource) || !Array.isArray(resource.attributes)) return {};
+  const scope = {};
+  for (const attribute of resource.attributes) {
+    if (!isObject7(attribute) || typeof attribute.key !== "string") continue;
+    const parsed = otlpAttributeValue(attribute.value);
+    if (parsed === void 0) continue;
+    if (attribute.key === "service.name") scope.service = parsed;
+    if (attribute.key === "deployment.environment.name" || attribute.key === "deployment.environment") {
+      scope.environment = parsed;
+    }
+  }
+  return scope;
+}
+function parseTrace(body, binding, context) {
+  if (!Array.isArray(body.batches)) throw new AdapterContractError("Tempo trace response shape drifted");
+  const state = {
+    events: [],
+    evaluatedAt: new Date(context.window.end).toISOString(),
+    providerTruncated: body.truncated === true
+  };
+  for (const batch of body.batches) {
+    if (!isObject7(batch) || !Array.isArray(batch.scopeSpans)) throw new AdapterContractError("Tempo trace batch is invalid");
+    const scope = resourceScope(batch.resource);
+    assertScope2(scope.environment, scope.service, context);
+    for (const scopeSpan of batch.scopeSpans) {
+      if (!isObject7(scopeSpan) || !Array.isArray(scopeSpan.spans)) {
+        throw new AdapterContractError("Tempo scope spans are invalid");
+      }
+      for (const span of scopeSpan.spans) {
+        context.budget.throwIfAborted();
+        if (!isObject7(span)) throw new AdapterContractError("Tempo span is invalid");
+        const traceId = safeString6(span.traceId, "trace ID", 32);
+        const spanId = safeString6(span.spanId, "span ID", 16);
+        if (!/^[a-fA-F0-9]{32}$/u.test(traceId) || !/^[a-fA-F0-9]{16}$/u.test(spanId)) {
+          throw new AdapterContractError("Tempo span identity is invalid");
+        }
+        const started = nanoTimestamp(span.startTimeUnixNano);
+        const ended = nanoTimestamp(span.endTimeUnixNano);
+        if (ended.nanoseconds < started.nanoseconds) throw new AdapterContractError("Tempo span duration is negative");
+        const durationMs = Number(ended.nanoseconds - started.nanoseconds) / 1e6;
+        const name = safeString6(span.name, "span name", 512);
+        const status = safeStatus(span.status);
+        const attributes = {
+          traceSha256: sha256Bytes(traceId.toLowerCase()),
+          spanSha256: sha256Bytes(spanId.toLowerCase()),
+          durationMs,
+          status
+        };
+        if (scope.service !== void 0 && binding.allowedAttributes.includes("service")) attributes.service = scope.service;
+        if (scope.environment !== void 0 && binding.allowedAttributes.includes("environment")) {
+          attributes.environment = scope.environment;
+        }
+        if (!appendEvent(state, {
+          kind: "EVENT",
+          name: binding.outputName,
+          occurredAt: started.iso,
+          summary: name,
+          attributes
+        }, context)) return state;
+      }
+    }
+  }
+  return state;
+}
+function bindingFor5(entry) {
+  return {
+    catalogEntryId: entry.id,
+    catalogEntrySha256: tempoCatalogEntryHash(entry),
+    sourceIdentitySha256: entry.sourceIdentitySha256,
+    route: entry.route,
+    outputName: entry.outputName,
+    allowedAttributes: [...entry.allowedAttributes],
+    scopeEnvironment: entry.scope.environment,
+    scopeService: entry.scope.service,
+    ...entry.route === "search" ? { query: entry.query } : { traceId: entry.traceId }
+  };
+}
+var TempoAdapter = class {
+  descriptor = {
+    packageId: TEMPO_ADAPTER_PACKAGE_ID,
+    name: tempoAdapterPackage.name,
+    version: tempoAdapterPackage.version,
+    provider: "tempo",
+    domains: ["TRACES"],
+    operations: tempoAdapterPackage.capabilities,
+    resultSchemaVersions: ["1.0.0"]
+  };
+  #transport;
+  #catalog;
+  constructor(options) {
+    this.#transport = options.transport;
+    this.#catalog = new CompiledTempoCatalog(options.catalog);
+  }
+  async doctor() {
+    return {
+      status: "READY",
+      checks: [{ name: "production-read-only", status: "PASS", message: "Trusted Tempo catalog loaded" }]
+    };
+  }
+  async compile(operation2, context) {
+    if (context.adapterPackage.packageId !== TEMPO_ADAPTER_PACKAGE_ID) {
+      throw new AdapterContractError("Tempo adapter package mismatch");
+    }
+    if (operation2.definition.adapterPackageId !== TEMPO_ADAPTER_PACKAGE_ID || computeOperationDefinitionHash(operation2) !== operation2.definitionSha256) {
+      throw new AdapterContractError("Tempo operation is not bound to this adapter and hash");
+    }
+    if (Buffer.byteLength(canonicalJson(operation2.definition), "utf8") > context.maxDefinitionBytes) {
+      throw new AdapterContractError("Tempo operation definition exceeds the compile budget");
+    }
+    const reference = operation2.definition.sanitizedProviderDefinition;
+    if (Object.keys(reference).length !== 2 || typeof reference.catalogEntryId !== "string" || typeof reference.catalogEntrySha256 !== "string") {
+      throw new AdapterContractError("Tempo operation must contain only a trusted catalog reference");
+    }
+    const entry = this.#catalog.resolve(reference.catalogEntryId, reference.catalogEntrySha256);
+    const expectedOperation = entry.route === "search" ? "tempo.traces.search" : "tempo.trace.read";
+    if (operation2.definition.adapterOperation !== expectedOperation) {
+      throw new AdapterContractError("Tempo adapter operation does not match the trusted route");
+    }
+    if (operation2.definition.domain !== "TRACES" || operation2.definition.normalization.resultKind !== "EVENT") {
+      throw new AdapterContractError("Tempo operation result contract is invalid");
+    }
+    const expectedSourceLineage = {
+      accessPath: "DIRECT",
+      datasourceType: "tempo",
+      sourceIdentitySha256: entry.sourceIdentitySha256
+    };
+    if (canonicalJson(operation2.definition.expectedSourceLineage ?? null) !== canonicalJson(expectedSourceLineage)) {
+      throw new AdapterContractError("Tempo source lineage does not match the trusted catalog");
+    }
+    if (entry.allowedAttributes.some((attribute) => !operation2.definition.allowedDimensions.includes(attribute))) {
+      throw new AdapterContractError("Tempo catalog attributes exceed the operation allowlist");
+    }
+    return {
+      operationId: operation2.operationId,
+      operationDefinitionSha256: operation2.definitionSha256,
+      adapterPackageId: TEMPO_ADAPTER_PACKAGE_ID,
+      adapterOperation: operation2.definition.adapterOperation,
+      binding: bindingFor5(entry)
+    };
+  }
+  async execute(context, operation2) {
+    context.budget.throwIfAborted();
+    const trustedEntry = this.#catalog.resolve(
+      operation2.binding.catalogEntryId,
+      operation2.binding.catalogEntrySha256
+    );
+    const expectedOperation = trustedEntry.route === "search" ? "tempo.traces.search" : "tempo.trace.read";
+    if (operation2.adapterPackageId !== TEMPO_ADAPTER_PACKAGE_ID || operation2.adapterOperation !== expectedOperation || canonicalJson(operation2.binding) !== canonicalJson(bindingFor5(trustedEntry))) {
+      throw new AdapterContractError("Compiled Tempo binding no longer matches the trusted catalog");
+    }
+    if (operation2.binding.scopeEnvironment !== context.scope.environment || operation2.binding.scopeService !== context.scope.service) {
+      throw new AdapterExecutionError({
+        code: "TEMPO_SCOPE_NOT_ALLOWED",
+        category: "POLICY",
+        message: "The requested scope does not match the reviewed Tempo catalog entry",
+        retryable: false
+      });
+    }
+    let response;
+    try {
+      response = await this.#transport.request(operation2.binding.route === "search" ? {
+        method: "GET",
+        route: "SEARCH",
+        query: operation2.binding.query,
+        start: context.window.start,
+        end: context.window.end,
+        limit: context.budget.limits.maxRows,
+        signal: context.signal,
+        maxResponseBytes: context.budget.limits.maxBytes
+      } : {
+        method: "GET",
+        route: "TRACE",
+        traceId: operation2.binding.traceId,
+        signal: context.signal,
+        maxResponseBytes: context.budget.limits.maxBytes
+      });
+    } catch (error) {
+      if (error instanceof AdapterExecutionError || error instanceof AdapterContractError || error instanceof BudgetExceededError) {
+        throw error;
+      }
+      if (error?.name === "TempoTransportError") {
+        const transportError2 = error;
+        throw new AdapterExecutionError({
+          code: transportError2.kind === "TIMEOUT" ? "TEMPO_TIMEOUT" : "TEMPO_UNAVAILABLE",
+          category: transportError2.kind,
+          message: transportError2.kind === "TIMEOUT" ? "Tempo read timed out" : "Tempo is unavailable",
+          retryable: true
+        });
+      }
+      if (context.signal.aborted) throw context.signal.reason ?? error;
+      throw new AdapterExecutionError({
+        code: "TEMPO_UNAVAILABLE",
+        category: "UNAVAILABLE",
+        message: "Tempo is unavailable",
+        retryable: true
+      });
+    }
+    const rawBody = await readJson5(response, context);
+    if (response.status < 200 || response.status >= 300) throw statusError5(response.status);
+    if (!isObject7(rawBody)) throw new AdapterContractError("Tempo response envelope is invalid");
+    const state = operation2.binding.route === "search" ? parseSearch2(rawBody, operation2.binding, context) : parseTrace(rawBody, operation2.binding, context);
+    const truncatedReason = state.truncatedReason ?? (state.providerTruncated ? "ROW_LIMIT" : void 0);
+    return {
+      schemaVersion: "1.0.0",
+      collectionState: state.events.length === 0 ? "EMPTY" : "COMPLETE",
+      evaluatedAt: state.evaluatedAt,
+      nativeResultType: operation2.binding.route,
+      nativeUnit: "milliseconds",
+      nativeDimensions: {},
+      records: state.events,
+      pagination: truncatedReason === void 0 ? { complete: true, pages: 1 } : { complete: false, pages: 1, truncatedReason },
+      warnings: truncatedReason === void 0 ? [] : ["Tempo result was truncated by the bounded read policy"],
+      sanitizedReference: operation2.binding.route === "search" ? "tempo:search" : "tempo:trace",
+      sourceLineage: {
+        accessPath: "DIRECT",
+        datasourceType: "tempo",
+        sourceIdentitySha256: operation2.binding.sourceIdentitySha256
+      },
+      providerScope: {
+        environment: context.scope.environment,
+        ...context.scope.service === void 0 ? {} : { service: context.scope.service },
+        mappings: {
+          environment: "environment",
+          ...context.scope.service === void 0 ? {} : { service: "service" }
+        }
+      }
+    };
+  }
+};
+
+// adapters/tempo/src/types.ts
+var TempoTransportError = class extends Error {
+  kind;
+  constructor(kind) {
+    super("Tempo transport ".concat(kind.toLowerCase()));
+    this.name = "TempoTransportError";
+    this.kind = kind;
+  }
+};
+
+// packages/provider-runtime/src/http-transport.ts
+var import_promises2 = require("node:dns/promises");
+var import_node_http = require("node:http");
+var import_node_https = require("node:https");
+var import_node_net2 = require("node:net");
+var MAX_JSON_REQUEST_BYTES = 262144;
+var RuntimeTransportError = class extends Error {
+  code;
+  kind;
+  constructor(code, kind) {
+    super("Trusted provider transport failed (".concat(code, ")"));
+    this.name = "RuntimeTransportError";
+    this.code = code;
+    this.kind = kind;
+  }
+};
+var defaultResolver = {
+  async lookup(hostname) {
+    const literal = normalizeAddress(hostname);
+    const family = (0, import_node_net2.isIP)(literal);
+    if (family === 4 || family === 6) return [{ address: literal, family }];
+    const results = await (0, import_promises2.lookup)(hostname, { all: true, verbatim: true });
+    return results.filter((entry) => entry.family === 4 || entry.family === 6).map((entry) => ({ address: normalizeAddress(entry.address), family: entry.family }));
+  }
+};
+var loopbackAddresses = new import_node_net2.BlockList();
+loopbackAddresses.addSubnet("127.0.0.0", 8, "ipv4");
+loopbackAddresses.addAddress("::1", "ipv6");
+var privateAddresses = new import_node_net2.BlockList();
+privateAddresses.addSubnet("10.0.0.0", 8, "ipv4");
+privateAddresses.addSubnet("172.16.0.0", 12, "ipv4");
+privateAddresses.addSubnet("192.168.0.0", 16, "ipv4");
+privateAddresses.addSubnet("fc00::", 7, "ipv6");
+var nonPublicAddresses = new import_node_net2.BlockList();
+for (const [address, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4]
+]) {
+  nonPublicAddresses.addSubnet(address, prefix, "ipv4");
+}
+for (const [address, prefix] of [
+  ["::", 128],
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["ff00::", 8],
+  ["2001:db8::", 32],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["2001::", 32],
+  ["2002::", 16]
+]) {
+  nonPublicAddresses.addSubnet(address, prefix, "ipv6");
+}
+function normalizeAddress(value2) {
+  const unwrapped = value2.startsWith("[") && value2.endsWith("]") ? value2.slice(1, -1) : value2;
+  return unwrapped.toLowerCase().startsWith("::ffff:") ? unwrapped.slice(7) : unwrapped.toLowerCase();
+}
+function classifyNetworkAddress(value2) {
+  const address = normalizeAddress(value2);
+  const family = (0, import_node_net2.isIP)(address);
+  if (family !== 4 && family !== 6) return "forbidden";
+  const type = family === 4 ? "ipv4" : "ipv6";
+  if (loopbackAddresses.check(address, type)) return "loopback";
+  if (privateAddresses.check(address, type)) return "private";
+  if (nonPublicAddresses.check(address, type)) return "forbidden";
+  return "public";
+}
+function normalizeHost2(value2) {
+  return value2.trim().toLowerCase().replace(/\.$/u, "").replace(/^\[(.*)\]$/u, "$1");
+}
+function isLoopback2(hostname) {
+  const host = normalizeHost2(hostname);
+  if (host === "localhost" || host === "::1") return true;
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(host);
+  if (match === null) return false;
+  const octets = match.slice(1).map(Number);
+  return octets.every((octet) => octet >= 0 && octet <= 255) && octets[0] === 127;
+}
+function hasUnsafeHeaderMaterial(value2) {
+  return /[\r\n\0]/u.test(value2);
+}
+function resolveCredential(reference, options) {
+  let value2;
+  if (reference.kind === "env") {
+    value2 = options.environment[reference.key];
+  } else {
+    if (options.credentialResolver === void 0) {
+      throw new RuntimeTransportError("CREDENTIAL_RESOLVER_NOT_CONFIGURED", "POLICY");
+    }
+    try {
+      value2 = options.credentialResolver.resolve(reference);
+    } catch {
+      throw new RuntimeTransportError("CREDENTIAL_RESOLUTION_FAILED", "POLICY");
+    }
+  }
+  if (value2 === void 0 || value2.length === 0 || value2.length > 1048576 || value2.includes("\0")) {
+    throw new RuntimeTransportError("CREDENTIAL_UNAVAILABLE", "POLICY");
+  }
+  return value2;
+}
+function responseHeaders(headers) {
+  const output = {};
+  for (const [name, value2] of Object.entries(headers)) {
+    if (typeof value2 === "string") output[name.toLowerCase()] = value2;
+    else if (Array.isArray(value2)) output[name.toLowerCase()] = value2.join(", ");
+  }
+  return Object.freeze(output);
+}
+function safePathSegments(pathname) {
+  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname.includes("\\") || pathname.includes("\0")) {
+    throw new RuntimeTransportError("UNSAFE_PATH", "POLICY");
+  }
+  for (const segment of pathname.split("/")) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new RuntimeTransportError("INVALID_PATH_ENCODING", "POLICY");
+    }
+    if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\")) {
+      throw new RuntimeTransportError("PATH_TRAVERSAL", "POLICY");
+    }
+  }
+}
+function asyncBody(body) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield body;
+    }
+  };
+}
+async function boundedLookup(resolver, hostname, signal, timeoutMs) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      if ("error" in result) rejectPromise(result.error);
+      else resolvePromise(result.addresses);
+    };
+    const onAbort = () => finish({ error: signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE") });
+    const timer = setTimeout(
+      () => finish({ error: new RuntimeTransportError("DEADLINE_EXCEEDED", "TIMEOUT") }),
+      timeoutMs
+    );
+    timer.unref();
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    void resolver.lookup(hostname).then(
+      (addresses) => finish({ addresses }),
+      () => finish({ error: new RuntimeTransportError("DNS_UNAVAILABLE", "UNAVAILABLE") })
+    );
+  });
+}
+function bufferedBody(body) {
+  return asyncBody(body);
+}
+var NodeTrustedHttpClient = class {
+  #endpoint;
+  #base;
+  #headers;
+  #tls;
+  #timeoutMs;
+  #maxResponseBytes;
+  #resolver;
+  constructor(options) {
+    this.#endpoint = options.endpoint;
+    this.#base = new URL(options.endpoint.baseUrl);
+    if (this.#base.username !== "" || this.#base.password !== "" || this.#base.search !== "" || this.#base.hash !== "") {
+      throw new RuntimeTransportError("UNSAFE_ENDPOINT_MATERIAL", "POLICY");
+    }
+    const hostname = normalizeHost2(this.#base.hostname);
+    const allowedHosts = options.endpoint.network.allowedHosts.map(normalizeHost2);
+    if (!allowedHosts.includes(hostname)) throw new RuntimeTransportError("HOST_NOT_ALLOWED", "POLICY");
+    if (options.endpoint.network.followRedirects !== false) {
+      throw new RuntimeTransportError("REDIRECTS_MUST_BE_DISABLED", "POLICY");
+    }
+    if (options.endpoint.network.routeMode === "application_proxy") {
+      throw new RuntimeTransportError("APPLICATION_PROXY_NOT_IMPLEMENTED", "POLICY");
+    }
+    if (options.endpoint.network.routeMode === "host_vpn" && options.endpoint.network.networkClass !== "private") {
+      throw new RuntimeTransportError("HOST_VPN_REQUIRES_PRIVATE_NETWORK", "POLICY");
+    }
+    if (this.#base.protocol !== "https:") {
+      if (this.#base.protocol !== "http:" || !options.endpoint.network.allowLoopbackHttp || !isLoopback2(hostname)) {
+        throw new RuntimeTransportError("INSECURE_ENDPOINT", "POLICY");
+      }
+      if (options.endpoint.authentication.mode === "MTLS" || options.endpoint.tls.caRef !== void 0 || options.endpoint.tls.serverName !== void 0) {
+        throw new RuntimeTransportError("TLS_POLICY_REQUIRES_HTTPS", "POLICY");
+      }
+    }
+    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 12e4) {
+      throw new RuntimeTransportError("INVALID_TIMEOUT", "POLICY");
+    }
+    if (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > 1073741824) {
+      throw new RuntimeTransportError("INVALID_BYTE_LIMIT", "POLICY");
+    }
+    const headers = { Accept: "application/json" };
+    const authentication = options.endpoint.authentication;
+    if (authentication.mode === "BEARER") {
+      const token = resolveCredential(authentication.tokenRef, options);
+      if (hasUnsafeHeaderMaterial(token)) throw new RuntimeTransportError("CREDENTIAL_UNAVAILABLE", "POLICY");
+      headers.Authorization = "Bearer ".concat(token);
+    } else if (authentication.mode === "BASIC") {
+      const username = resolveCredential(authentication.usernameRef, options);
+      const password = resolveCredential(authentication.passwordRef, options);
+      if (username.includes(":") || hasUnsafeHeaderMaterial(username) || hasUnsafeHeaderMaterial(password)) {
+        throw new RuntimeTransportError("CREDENTIAL_UNAVAILABLE", "POLICY");
+      }
+      headers.Authorization = "Basic ".concat(Buffer.from("".concat(username, ":").concat(password), "utf8").toString("base64"));
+    }
+    if (options.endpoint.tenantBinding !== void 0) {
+      const key = options.endpoint.tenantBinding.valueRef.slice("metadata:".length);
+      const tenantValue = options.metadata[key];
+      if (tenantValue === void 0 || tenantValue.length === 0 || hasUnsafeHeaderMaterial(tenantValue)) {
+        throw new RuntimeTransportError("TENANT_BINDING_UNAVAILABLE", "POLICY");
+      }
+      headers[options.endpoint.tenantBinding.headerName] = tenantValue;
+    }
+    this.#headers = Object.freeze(headers);
+    const ca = options.endpoint.tls.caRef === void 0 ? void 0 : resolveCredential(options.endpoint.tls.caRef, options);
+    const clientIdentity = authentication.mode === "MTLS" ? {
+      certificate: resolveCredential(authentication.certificateRef, options),
+      privateKey: resolveCredential(authentication.privateKeyRef, options)
+    } : {};
+    this.#tls = Object.freeze({
+      minimumVersion: options.endpoint.tls.minimumVersion,
+      ...ca === void 0 ? {} : { ca },
+      ...clientIdentity,
+      ...options.endpoint.tls.serverName === void 0 ? {} : { serverName: options.endpoint.tls.serverName }
+    });
+    this.#timeoutMs = options.timeoutMs;
+    this.#maxResponseBytes = options.maxResponseBytes;
+    this.#resolver = options.resolver ?? defaultResolver;
+  }
+  async get(pathname, query, signal, requestedMaxBytes) {
+    safePathSegments(pathname);
+    const url = new URL(this.#base.toString());
+    const basePath = this.#base.pathname.endsWith("/") ? this.#base.pathname : "".concat(this.#base.pathname, "/");
+    url.pathname = "".concat(basePath).concat(pathname.replace(/^\/+/, ""));
+    url.search = "";
+    const entries = query instanceof URLSearchParams ? query.entries() : Object.entries(query);
+    for (const [name, value2] of entries) {
+      if (name.length === 0 || name.length > 128 || hasUnsafeHeaderMaterial(name) || hasUnsafeHeaderMaterial(value2)) {
+        throw new RuntimeTransportError("INVALID_QUERY", "POLICY");
+      }
+      url.searchParams.append(name, value2);
+    }
+    return this.#request(url, signal, requestedMaxBytes, "GET");
+  }
+  async postJson(pathname, body, signal, requestedMaxBytes) {
+    safePathSegments(pathname);
+    const url = new URL(this.#base.toString());
+    const basePath = this.#base.pathname.endsWith("/") ? this.#base.pathname : "".concat(this.#base.pathname, "/");
+    url.pathname = "".concat(basePath).concat(pathname.replace(/^\/+/, ""));
+    url.search = "";
+    let encoded;
+    try {
+      encoded = Buffer.from(canonicalJson(body), "utf8");
+    } catch {
+      throw new RuntimeTransportError("INVALID_JSON_BODY", "POLICY");
+    }
+    if (encoded.byteLength < 2 || encoded.byteLength > MAX_JSON_REQUEST_BYTES) {
+      throw new RuntimeTransportError("REQUEST_TOO_LARGE", "POLICY");
+    }
+    return this.#request(url, signal, requestedMaxBytes, "POST", encoded);
+  }
+  async getAbsolute(absoluteUrl, signal, requestedMaxBytes) {
+    let url;
+    try {
+      url = new URL(absoluteUrl);
+    } catch {
+      throw new RuntimeTransportError("INVALID_ABSOLUTE_URL", "POLICY");
+    }
+    if (url.origin !== this.#base.origin || url.username !== "" || url.password !== "" || url.hash !== "" || !url.pathname.startsWith(this.#base.pathname)) {
+      throw new RuntimeTransportError("ENDPOINT_ESCAPE", "POLICY");
+    }
+    safePathSegments(url.pathname);
+    for (const [name, value2] of url.searchParams.entries()) {
+      if (name.length === 0 || name.length > 128 || hasUnsafeHeaderMaterial(name) || hasUnsafeHeaderMaterial(value2)) {
+        throw new RuntimeTransportError("INVALID_QUERY", "POLICY");
+      }
+    }
+    return this.#request(url, signal, requestedMaxBytes, "GET");
+  }
+  async #request(url, signal, requestedMaxBytes, method, body) {
+    if (signal.aborted) throw signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE");
+    if (method === "POST" && body === void 0 || method === "GET" && body !== void 0) {
+      throw new RuntimeTransportError("INVALID_REQUEST_BODY", "POLICY");
+    }
+    const requestHeaders = { ...this.#headers };
+    if (body !== void 0) {
+      requestHeaders["Content-Type"] = "application/json";
+      requestHeaders["Content-Length"] = String(body.byteLength);
+    }
+    const deadline = Date.now() + this.#timeoutMs;
+    const maximum = Math.min(this.#maxResponseBytes, requestedMaxBytes);
+    if (!Number.isSafeInteger(maximum) || maximum < 1) {
+      throw new RuntimeTransportError("INVALID_BYTE_LIMIT", "POLICY");
+    }
+    const hostname = normalizeHost2(url.hostname);
+    const allowedHosts = this.#endpoint.network.allowedHosts.map(normalizeHost2);
+    if (!allowedHosts.includes(hostname)) throw new RuntimeTransportError("HOST_NOT_ALLOWED", "POLICY");
+    const addresses = await boundedLookup(this.#resolver, hostname, signal, this.#timeoutMs);
+    if (signal.aborted) throw signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE");
+    const candidates = addresses.filter(
+      (entry) => (entry.family === 4 || entry.family === 6) && (0, import_node_net2.isIP)(normalizeAddress(entry.address)) === entry.family
+    );
+    if (candidates.length === 0) throw new RuntimeTransportError("DNS_EMPTY", "UNAVAILABLE");
+    if (candidates.some(
+      (entry) => classifyNetworkAddress(entry.address) !== this.#endpoint.network.networkClass
+    )) {
+      throw new RuntimeTransportError("DNS_NETWORK_CLASS_MISMATCH", "POLICY");
+    }
+    const selected = candidates[0];
+    const selectedAddress = normalizeAddress(selected.address);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < 1) throw new RuntimeTransportError("DEADLINE_EXCEEDED", "TIMEOUT");
+    return new Promise((resolvePromise, rejectPromise) => {
+      let settled = false;
+      let request;
+      const cleanup = {};
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        if (cleanup.timer !== void 0) clearTimeout(cleanup.timer);
+        if (cleanup.onAbort !== void 0) signal.removeEventListener("abort", cleanup.onAbort);
+        rejectPromise(error instanceof RuntimeTransportError ? error : new RuntimeTransportError("NETWORK_UNAVAILABLE", "UNAVAILABLE"));
+      };
+      const succeed = (response) => {
+        if (settled) return;
+        settled = true;
+        if (cleanup.timer !== void 0) clearTimeout(cleanup.timer);
+        if (cleanup.onAbort !== void 0) signal.removeEventListener("abort", cleanup.onAbort);
+        resolvePromise(response);
+      };
+      const requestOptions = {
+        method,
+        headers: requestHeaders,
+        agent: false,
+        ...url.protocol === "https:" ? {
+          rejectUnauthorized: true,
+          minVersion: this.#tls.minimumVersion,
+          ...this.#tls.ca === void 0 ? {} : { ca: this.#tls.ca },
+          ...this.#tls.certificate === void 0 ? {} : { cert: this.#tls.certificate },
+          ...this.#tls.privateKey === void 0 ? {} : { key: this.#tls.privateKey },
+          ...this.#tls.serverName === void 0 ? (0, import_node_net2.isIP)(hostname) === 0 ? { servername: hostname } : {} : { servername: this.#tls.serverName }
+        } : {},
+        lookup: (_lookupHostname, lookupOptions, callback) => {
+          if (typeof lookupOptions === "object" && lookupOptions.all === true) {
+            callback(
+              null,
+              [{ address: selectedAddress, family: selected.family }]
+            );
+          } else {
+            callback(
+              null,
+              selectedAddress,
+              selected.family
+            );
+          }
+        }
+      };
+      try {
+        request = (url.protocol === "https:" ? import_node_https.request : import_node_http.request)(url, requestOptions, (response) => {
+          const peer = normalizeAddress(response.socket.remoteAddress ?? "");
+          if (peer !== selectedAddress) {
+            response.destroy();
+            fail(new RuntimeTransportError("CONNECTED_PEER_MISMATCH", "POLICY"));
+            return;
+          }
+          if (classifyNetworkAddress(peer) !== this.#endpoint.network.networkClass) {
+            response.destroy();
+            fail(new RuntimeTransportError("CONNECTED_PEER_NETWORK_CLASS_MISMATCH", "POLICY"));
+            return;
+          }
+          const chunks = [];
+          let bytes = 0;
+          response.on("data", (chunk) => {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += buffer.byteLength;
+            if (bytes > maximum) {
+              response.destroy();
+              fail(new RuntimeTransportError("RESPONSE_TOO_LARGE", "RESPONSE_TOO_LARGE"));
+              return;
+            }
+            chunks.push(buffer);
+          });
+          response.once("end", () => {
+            succeed({
+              status: response.statusCode ?? 0,
+              headers: responseHeaders(response.headers),
+              body: Buffer.concat(chunks, bytes)
+            });
+          });
+          response.once("error", fail);
+        });
+      } catch {
+        fail(new RuntimeTransportError("NETWORK_UNAVAILABLE", "UNAVAILABLE"));
+        return;
+      }
+      cleanup.onAbort = () => {
+        request?.destroy();
+        fail(signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE"));
+      };
+      signal.addEventListener("abort", cleanup.onAbort, { once: true });
+      cleanup.timer = setTimeout(() => {
+        request?.destroy();
+        fail(new RuntimeTransportError("DEADLINE_EXCEEDED", "TIMEOUT"));
+      }, remainingMs);
+      cleanup.timer.unref();
+      request.once("error", fail);
+      if (body !== void 0) request.write(body);
+      request.end();
+    });
+  }
+};
+
+// packages/provider-runtime/src/worker-runtime.ts
+var HEALTH_PATH = {
+  prometheus: "/api/v1/status/runtimeinfo",
+  grafana: "/api/health",
+  alertmanager: "/-/ready",
+  loki: "/ready",
+  tempo: "/ready",
+  kubernetes: "/version"
+};
+function scopeAdmissionCheck(root, binding) {
+  const required = [...requiredProviderScopesForBinding(binding, root.bundle)];
+  const effective = [...binding.access.effectiveProviderScopes].sort();
+  if (JSON.stringify(required) !== JSON.stringify(effective)) {
+    return {
+      name: "provider-scope-admission:".concat(binding.kind),
+      status: "FAIL",
+      message: "Manifest-sealed provider authority does not exactly match active operation requirements"
+    };
+  }
+  return {
+    name: "provider-scope-admission:".concat(binding.kind),
+    status: "PASS",
+    message: "Manifest-sealed effective provider scopes exactly match active operation requirements; provider IAM was not introspected"
+  };
+}
+function withSealedScopeAdmission(adapter, root, binding) {
+  return {
+    descriptor: adapter.descriptor,
+    async doctor(context) {
+      const configured = await adapter.doctor(context);
+      const scopeAdmission = scopeAdmissionCheck(root, binding);
+      return {
+        status: scopeAdmission.status === "FAIL" ? "BLOCKED" : configured.status,
+        checks: [...configured.checks, scopeAdmission]
+      };
+    },
+    compile: (operation2, context) => adapter.compile(operation2, context),
+    execute: (context, operation2) => adapter.execute(context, operation2)
+  };
+}
+function validStructuredHealthBody(kind, body) {
+  if (kind !== "prometheus" && kind !== "grafana" && kind !== "kubernetes") return true;
+  try {
+    const value2 = JSON.parse(Buffer.from(body).toString("utf8"));
+    if (value2 === null || typeof value2 !== "object" || Array.isArray(value2)) return false;
+    const object2 = value2;
+    if (kind === "prometheus") {
+      return object2.status === "success" && object2.data !== null && typeof object2.data === "object" && !Array.isArray(object2.data);
+    }
+    if (kind === "grafana") return object2.database === "ok" && typeof object2.version === "string";
+    return typeof object2.major === "string" && typeof object2.minor === "string";
+  } catch {
+    return false;
+  }
+}
+function providerClockCheck(kind, warning, unavailable = false) {
+  return warning ? {
+    name: "provider-clock:".concat(kind),
+    status: "WARN",
+    message: unavailable ? "Provider clock could not be evaluated because the fixed health route was unreachable" : "Provider clock could not be verified within the allowed skew"
+  } : {
+    name: "provider-clock:".concat(kind),
+    status: "PASS",
+    message: "Provider clock is within the allowed skew"
+  };
+}
+function blockedConnectivity(kind, checks, message, clockWarning, clockUnavailable = false) {
+  return {
+    status: "BLOCKED",
+    checks: [
+      ...checks,
+      { name: "provider-connectivity:".concat(kind), status: "FAIL", message },
+      providerClockCheck(kind, clockWarning, clockUnavailable)
+    ]
+  };
+}
+function withProviderConnectivity(adapter, root, binding, clients) {
+  const kind = binding.kind;
+  return {
+    descriptor: adapter.descriptor,
+    async doctor(context) {
+      const configured = await adapter.doctor(context);
+      const scopeAdmission = scopeAdmissionCheck(root, binding);
+      const checks = [...configured.checks, scopeAdmission];
+      if (configured.status === "BLOCKED" || scopeAdmission.status === "FAIL") {
+        return {
+          status: "BLOCKED",
+          checks: [
+            ...checks,
+            {
+              name: "provider-connectivity:".concat(kind),
+              status: "WARN",
+              message: "Provider connectivity was not evaluated because adapter or scope admission was blocked"
+            },
+            {
+              name: "provider-clock:".concat(kind),
+              status: "WARN",
+              message: "Provider clock was not evaluated because adapter or scope admission was blocked"
+            }
+          ]
+        };
+      }
+      let clockWarning = false;
+      try {
+        for (const http of clients) {
+          context.signal.throwIfAborted();
+          const response = await http.get(HEALTH_PATH[kind], {}, context.signal, 4096);
+          const providerDate = response.headers.date;
+          if (providerDate === void 0 || !Number.isFinite(Date.parse(providerDate))) {
+            clockWarning = true;
+          } else if (Math.abs(Date.parse(providerDate) - context.clock.now().getTime()) > 5 * 6e4) {
+            clockWarning = true;
+          }
+          if (response.status === 401) {
+            return blockedConnectivity(
+              kind,
+              checks,
+              "Provider rejected the configured read credential",
+              clockWarning
+            );
+          }
+          if (response.status === 403) {
+            return blockedConnectivity(
+              kind,
+              checks,
+              "Provider denied access to the fixed health route",
+              clockWarning
+            );
+          }
+          if (response.status < 200 || response.status >= 300) {
+            return blockedConnectivity(
+              kind,
+              checks,
+              "Provider fixed health route was unavailable",
+              clockWarning
+            );
+          }
+          if (!validStructuredHealthBody(kind, response.body)) {
+            return blockedConnectivity(
+              kind,
+              checks,
+              "Provider fixed health route returned an invalid bounded response",
+              clockWarning
+            );
+          }
+        }
+      } catch (error) {
+        if (context.signal.aborted) throw error;
+        if (error instanceof RuntimeTransportError && error.kind === "TIMEOUT") {
+          return blockedConnectivity(
+            kind,
+            checks,
+            "Provider fixed health route timed out",
+            true,
+            true
+          );
+        }
+        return blockedConnectivity(
+          kind,
+          checks,
+          "Provider fixed health route was unreachable",
+          true,
+          true
+        );
+      }
+      checks.push({
+        name: "provider-connectivity:".concat(kind),
+        status: "PASS",
+        message: "Fixed bounded health route passed the configured transport policy"
+      });
+      checks.push(providerClockCheck(kind, clockWarning));
+      checks.push({
+        name: "provider-read-authorization:".concat(kind),
+        status: "WARN",
+        message: "Health connectivity does not prove that the configured identity can execute a catalog read"
+      });
+      return {
+        status: "WARN",
+        checks
+      };
+    },
+    compile: (operation2, context) => adapter.compile(operation2, context),
+    execute: (context, operation2) => adapter.execute(context, operation2)
+  };
+}
+function endpoint(root, endpointId) {
+  const value2 = root.bundle.endpoints.find((candidate) => candidate.endpointId === endpointId);
+  if (value2 === void 0) throw new RuntimeTransportError("ENDPOINT_NOT_ADMITTED", "POLICY");
+  return value2;
+}
+function client(root, binding, endpointId, options) {
+  return new NodeTrustedHttpClient({
+    endpoint: endpoint(root, endpointId),
+    metadata: root.providerRuntime.configuration.metadata,
+    environment: options.environment ?? process.env,
+    timeoutMs: binding.bootstrap.transport.timeoutMs,
+    maxResponseBytes: binding.bootstrap.transport.maxResponseBytes,
+    ...options.resolver === void 0 ? {} : { resolver: options.resolver },
+    ...options.credentialResolver === void 0 ? {} : { credentialResolver: options.credentialResolver }
+  });
+}
+function transportError(error, create) {
+  if (error instanceof RuntimeTransportError) {
+    throw create(error.kind === "TIMEOUT" ? "TIMEOUT" : "UNAVAILABLE");
+  }
+  throw error;
+}
+function prometheusTransport(http) {
+  return {
+    async request(request) {
+      try {
+        const response = await http.get(request.path, request.query, request.signal, request.maxResponseBytes);
+        return { status: response.status, body: bufferedBody(response.body) };
+      } catch (error) {
+        transportError(error, (kind) => new PrometheusTransportError(kind));
+      }
+    }
+  };
+}
+function grafanaTransport(http) {
+  return {
+    async request(request) {
+      try {
+        const response = request.method === "POST" ? await http.postJson(request.path, request.body, request.signal, request.maxResponseBytes) : await http.get(request.path, request.query, request.signal, request.maxResponseBytes);
+        return { status: response.status, body: bufferedBody(response.body) };
+      } catch (error) {
+        transportError(error, (kind) => new GrafanaTransportError(kind));
+      }
+    }
+  };
+}
+function lokiTransport(http) {
+  return {
+    async request(request) {
+      try {
+        const response = await http.get(
+          "/loki/api/v1/query_range",
+          {
+            query: request.expression,
+            start: request.start,
+            end: request.end,
+            direction: request.direction,
+            limit: String(request.limit)
+          },
+          request.signal,
+          request.maxResponseBytes
+        );
+        return { status: response.status, body: bufferedBody(response.body) };
+      } catch (error) {
+        transportError(error, (kind) => new LokiTransportError(kind));
+      }
+    }
+  };
+}
+function tempoTransport(http) {
+  return {
+    async request(request) {
+      try {
+        const response = request.route === "SEARCH" ? await http.get(
+          "/api/search",
+          { q: request.query, start: request.start, end: request.end, limit: String(request.limit) },
+          request.signal,
+          request.maxResponseBytes
+        ) : await http.get(
+          "/api/traces/".concat(encodeURIComponent(request.traceId)),
+          {},
+          request.signal,
+          request.maxResponseBytes
+        );
+        return { status: response.status, body: bufferedBody(response.body) };
+      } catch (error) {
+        transportError(error, (kind) => new TempoTransportError(kind));
+      }
+    }
+  };
+}
+function kubernetesPath(request) {
+  const prefix = request.resource === "pods" ? "/api/v1" : "/apis/apps/v1";
+  const base = "".concat(prefix, "/namespaces/").concat(encodeURIComponent(request.namespace), "/").concat(request.resource);
+  return request.mode === "GET" ? "".concat(base, "/").concat(encodeURIComponent(request.name)) : base;
+}
+function kubernetesTransport(http) {
+  return {
+    async request(request) {
+      try {
+        const query = { limit: String(request.limit) };
+        if (request.selector !== void 0) query.labelSelector = "".concat(request.selector.key, "=").concat(request.selector.value);
+        const response = await http.get(kubernetesPath(request), query, request.signal, request.maxResponseBytes);
+        return { status: response.status, body: bufferedBody(response.body) };
+      } catch (error) {
+        transportError(error, (kind) => new KubernetesTransportError(kind));
+      }
+    }
+  };
+}
+function instantiateProviderAdapter(root, binding, options = {}) {
+  if (binding.kind === "fixture") return withSealedScopeAdmission(fixtureAdapter, root, binding);
+  if (binding.kind === "git") {
+    return withSealedScopeAdmission(new GitAdapter({
+      gitExecutable: binding.bootstrap.gitExecutable,
+      workspaces: binding.bootstrap.workspaces,
+      catalog: binding.bootstrap.catalog
+    }), root, binding);
+  }
+  if (binding.kind === "alertmanager") {
+    const clients = new Map(
+      binding.bootstrap.endpointIds.map((endpointId) => [endpointId, client(root, binding, endpointId, options)])
+    );
+    const transport = {
+      async request(request) {
+        const http2 = clients.get(request.endpointId);
+        if (http2 === void 0) throw new RuntimeTransportError("ENDPOINT_NOT_ADMITTED", "POLICY");
+        const response = await http2.getAbsolute(request.url, request.signal, request.maxBytes);
+        return { status: response.status, headers: response.headers, body: response.body };
+      }
+    };
+    const adapter = new AlertmanagerAdapter({
+      endpoints: binding.bootstrap.endpointIds.map((endpointId) => ({
+        endpointId,
+        baseUrl: endpoint(root, endpointId).baseUrl
+      })),
+      catalog: binding.bootstrap.catalog,
+      transport
+    });
+    return withProviderConnectivity(adapter, root, binding, [...clients.values()]);
+  }
+  const http = client(root, binding, binding.bootstrap.endpointId, options);
+  if (binding.kind === "prometheus") {
+    return withProviderConnectivity(new PrometheusAdapter({
+      transport: prometheusTransport(http),
+      catalog: binding.bootstrap.catalog
+    }), root, binding, [http]);
+  }
+  if (binding.kind === "grafana") {
+    return withProviderConnectivity(new GrafanaAdapter({
+      transport: grafanaTransport(http),
+      catalog: binding.bootstrap.catalog
+    }), root, binding, [http]);
+  }
+  if (binding.kind === "loki") {
+    return withProviderConnectivity(new LokiAdapter({
+      transport: lokiTransport(http),
+      catalog: binding.bootstrap.catalog
+    }), root, binding, [http]);
+  }
+  if (binding.kind === "tempo") {
+    return withProviderConnectivity(new TempoAdapter({
+      transport: tempoTransport(http),
+      catalog: binding.bootstrap.catalog
+    }), root, binding, [http]);
+  }
+  return withProviderConnectivity(new KubernetesAdapter({
+    transport: kubernetesTransport(http),
+    catalog: binding.bootstrap.catalog
+  }), root, binding, [http]);
+}
+
+// packages/provider-runtime/src/worker-entrypoint.ts
+var SHA2565 = /^[a-f0-9]{64}$/u;
+var PACKAGE_ID = /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/u;
+function parseArguments(argv) {
+  const expectedFlags = [
+    "--trust-root",
+    "--root-manifest-sha256",
+    "--trust-bundle-sha256",
+    "--runtime-sha256",
+    "--package-id"
+  ];
+  const validateOnly = argv.at(-1) === "--validate-only";
+  const fixedArguments = validateOnly ? argv.slice(0, -1) : argv;
+  if (fixedArguments.length !== expectedFlags.length * 2) throw new Error("Invalid fixed worker bootstrap");
+  const values = /* @__PURE__ */ new Map();
+  for (let index = 0; index < expectedFlags.length; index += 1) {
+    const flag = fixedArguments[index * 2];
+    const value2 = fixedArguments[index * 2 + 1];
+    if (flag !== expectedFlags[index] || value2 === void 0 || value2.length === 0 || value2.includes("\0")) {
+      throw new Error("Invalid fixed worker bootstrap");
+    }
+    values.set(flag, value2);
+  }
+  const trustRoot = values.get("--trust-root");
+  const rootManifestSha256 = values.get("--root-manifest-sha256");
+  const trustBundleSha256 = values.get("--trust-bundle-sha256");
+  const runtimeSha256 = values.get("--runtime-sha256");
+  const packageId = values.get("--package-id");
+  if (!trustRoot.startsWith("/") || !SHA2565.test(rootManifestSha256) || !SHA2565.test(trustBundleSha256) || !SHA2565.test(runtimeSha256) || !PACKAGE_ID.test(packageId)) {
+    throw new Error("Invalid fixed worker bootstrap");
+  }
+  return {
+    trustRoot,
+    rootManifestSha256,
+    trustBundleSha256,
+    runtimeSha256,
+    packageId,
+    validateOnly
+  };
+}
+async function runProviderWorker(argv = process.argv.slice(2)) {
+  const args = parseArguments(argv);
+  const root = loadTrustedRoot({ rootPath: args.trustRoot });
+  if (root.rootManifestSha256 !== args.rootManifestSha256 || root.trustBundleSha256 !== args.trustBundleSha256 || root.providerRuntime?.sourceSha256 !== args.runtimeSha256) {
+    throw new Error("Trusted worker bootstrap changed");
+  }
+  const binding = root.providerRuntime.configuration.adapters.find((candidate) => candidate.packageId === args.packageId);
+  const adapterPackage2 = root.bundle.adapters.find((candidate) => candidate.packageId === args.packageId);
+  if (binding === void 0 || adapterPackage2 === void 0 || adapterPackage2.entrypoint.kind !== "SIGNED_WORKER") {
+    throw new Error("Worker package is not admitted");
+  }
+  const configuredEnvironment = new Set(binding.credentialEnv);
+  const platformAmbient = (key, value2) => key === "__CF_USER_TEXT_ENCODING" && value2 !== void 0 && /^[A-Fa-f0-9x:]{1,64}$/u.test(value2);
+  if (Object.entries(process.env).some(([key, value2]) => !configuredEnvironment.has(key) && !platformAmbient(key, value2))) {
+    throw new Error("Worker received an unapproved environment entry");
+  }
+  const admission = root.providerRuntime.configuration.workerAdmission;
+  verifyWorkerAdmission(adapterPackage2, {
+    trustedSigningKeys: new Map(root.providerRuntime.signingKeys.map((key) => [key.keyId, key.publicKeyPem])),
+    allowedPackageIds: /* @__PURE__ */ new Set([adapterPackage2.packageId]),
+    allowedArtifactHashes: /* @__PURE__ */ new Set([adapterPackage2.entrypoint.artifactSha256]),
+    revokedPackageIds: new Set(admission.revocations.packageIds),
+    revokedArtifactHashes: new Set(admission.revocations.artifactSha256s),
+    revokedArtifactPaths: new Set(admission.revocations.artifactPaths),
+    revokedSigningKeyIds: new Set(admission.revocations.signingKeyIds)
+  });
+  await verifyWorkerArtifact({
+    artifactPath: process.argv[1],
+    artifactSha256: adapterPackage2.entrypoint.artifactSha256
+  });
+  if (args.validateOnly) return;
+  const expectedCredentials = [...new Map(
+    providerBindingCredentialReferences(binding, root.bundle).filter((reference) => reference.kind !== "env").map((reference) => [credentialReferenceIdentity(reference), reference])
+  ).values()];
+  let frame;
+  let credentials;
+  let adapter;
+  try {
+    if (expectedCredentials.length > 0) {
+      frame = readCredentialBootstrapFrameFromFd(3);
+      credentials = decodeCredentialBootstrapFrame(frame, expectedCredentials);
+    }
+    adapter = instantiateProviderAdapter(root, binding, {
+      environment: process.env,
+      ...credentials === void 0 ? {} : { credentialResolver: { resolve: (reference) => credentials?.resolve(reference) } }
+    });
+  } finally {
+    frame?.fill(0);
+    credentials?.dispose();
+  }
+  await runAdapterWorker(adapter);
+}
+void runProviderWorker().catch(() => {
+  process.exitCode = 1;
+});
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  runProviderWorker
+});

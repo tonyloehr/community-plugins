@@ -1,0 +1,5 @@
+interface:
+  display_name: "Review Business KPIs"
+  short_description: "Compare bounded operational and financial KPIs"
+  brand_color: "#7058E8"
+  default_prompt: "Use $review-business-kpis to compare approved revenue, conversion, and operational KPIs with a reviewed baseline."

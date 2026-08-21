@@ -1,0 +1,3232 @@
+
+              }
+              if (typeof c.leakproof === "boolean") {
+                ret.push(c.leakproof ? "LEAKPROOF " : "NOT LEAKPROOF ");
+              }
+              switch (c.onNullInput) {
+                case "call":
+                  ret.push("CALLED ON NULL INPUT ");
+                  break;
+                case "null":
+                  ret.push("RETURNS NULL ON NULL INPUT ");
+                  break;
+                case "strict":
+                  ret.push("STRICT ");
+                  break;
+                case null:
+                case void 0:
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(c.onNullInput);
+              }
+            },
+            dropFunction: (d) => {
+              ret.push("DROP FUNCTION ");
+              if (d.ifExists) {
+                ret.push("IF EXISTS ");
+              }
+              visitQualifiedName(d.name);
+              if (d.arguments) {
+                list(d.arguments, (a) => {
+                  if (a.name) {
+                    visitQualifiedName(a.name);
+                    ret.push(" ");
+                  }
+                  m.dataType(a.type);
+                }, true);
+              }
+              ret.push(" ");
+            },
+            with: (w) => {
+              ret.push("WITH ");
+              list(w.bind, (b) => {
+                ret.push(name(b.alias), " AS (");
+                m.statement(b.statement);
+                ret.push(") ");
+              }, false);
+              m.statement(w.in);
+            },
+            withRecursive: (val) => {
+              ret.push("WITH RECURSIVE ", name(val.alias), "(", ...val.columnNames.map(name).join(", "), ") AS (");
+              m.union(val.bind);
+              ret.push(") ");
+              m.statement(val.in);
+            },
+            setGlobal: (g) => {
+              ret.push("SET ");
+              if (g.scope) {
+                ret.push(g.scope.toUpperCase() + " ");
+              }
+              ret.push(name(g.variable), " = ");
+              visitSetVal(g.set);
+            },
+            setTimezone: (g) => {
+              ret.push("SET TIME ZONE ");
+              switch (g.to.type) {
+                case "default":
+                case "local":
+                  ret.push(g.to.type.toUpperCase(), " ");
+                  break;
+                case "value":
+                  ret.push(typeof g.to.value === "string" ? (0, pg_escape_1.literal)(g.to.value) : g.to.value.toString(10));
+                  break;
+                case "interval":
+                  ret.push("INTERVAL ", (0, pg_escape_1.literal)(g.to.value), " HOUR TO MINUTE");
+                  break;
+                default:
+                  throw utils_1.NotSupported.never(g.to);
+              }
+            },
+            setNames: (g) => {
+              ret.push("SET NAMES ");
+              switch (g.to.type) {
+                case "value":
+                  ret.push((0, pg_escape_1.literal)(g.to.value));
+                  break;
+              }
+            },
+            dataType: (d) => {
+              var _a, _b;
+              if ((d === null || d === void 0 ? void 0 : d.kind) === "array") {
+                m.dataType(d.arrayOf);
+                ret.push("[]");
+                return;
+              }
+              if (!(d === null || d === void 0 ? void 0 : d.name)) {
+                ret.push("unkown");
+                return;
+              }
+              let appendConfig = true;
+              if (d.schema) {
+                visitQualifiedName(d, d.doubleQuoted);
+              } else {
+                if (d.doubleQuoted) {
+                  visitQualifiedName(d, true);
+                } else {
+                  switch (d.name) {
+                    case "double precision":
+                    case "character varying":
+                    case "bit varying":
+                      ret.push(d.name, " ");
+                      break;
+                    case "time without time zone":
+                    case "timestamp without time zone":
+                    case "time with time zone":
+                    case "timestamp with time zone":
+                      const parts = d.name.split(" ");
+                      ret.push(parts.shift());
+                      if ((_a = d.config) === null || _a === void 0 ? void 0 : _a.length) {
+                        list(d.config, (v) => ret.push(v.toString(10)), true);
+                      }
+                      ret.push(" ");
+                      ret.push(parts.join(" "), " ");
+                      appendConfig = false;
+                      break;
+                    default:
+                      visitQualifiedName(d);
+                      break;
+                  }
+                }
+              }
+              if (appendConfig && ((_b = d.config) === null || _b === void 0 ? void 0 : _b.length)) {
+                list(d.config, (v) => ret.push(v.toString(10)), true);
+              }
+            },
+            createIndex: (c) => {
+              ret.push(c.unique ? "CREATE UNIQUE INDEX " : "CREATE INDEX ");
+              if (c.concurrently) {
+                ret.push("CONCURRENTLY ");
+              }
+              if (c.ifNotExists) {
+                ret.push(" IF NOT EXISTS ");
+              }
+              if (c.indexName) {
+                ret.push(name(c.indexName), " ");
+              }
+              ret.push("ON ");
+              m.tableRef(c.table);
+              if (c.using) {
+                ret.push("USING ", name(c.using), " ");
+              }
+              list(c.expressions, (e) => {
+                m.expr(e.expression);
+                ret.push(" ");
+                if (e.collate) {
+                  ret.push("COLLATE ");
+                  visitQualifiedName(e.collate);
+                }
+                if (e.opclass) {
+                  visitQualifiedName(e.opclass);
+                }
+                if (e.order) {
+                  ret.push(e.order, " ");
+                }
+                if (e.nulls) {
+                  ret.push("nulls ", e.nulls, " ");
+                }
+              }, true);
+              if (c.with) {
+                ret.push("WITH ");
+                list(c.with, (w) => {
+                  ret.push(w.parameter, " = ", (0, pg_escape_1.literal)(w.value));
+                }, true);
+              }
+              if (c.tablespace) {
+                ret.push("TABLESPACE ", ident(c.tablespace));
+              }
+              if (c.where) {
+                ret.push(" WHERE ");
+                m.expr(c.where);
+              }
+              ret.push(" ");
+            },
+            createTable: (t) => {
+              var _a;
+              ret.push("CREATE ");
+              if (t.locality) {
+                ret.push(t.locality.toUpperCase(), " ");
+              }
+              if (t.temporary) {
+                ret.push("TEMPORARY ");
+              }
+              if (t.unlogged) {
+                ret.push("UNLOGGED ");
+              }
+              ret.push(t.ifNotExists ? "TABLE IF NOT EXISTS " : "TABLE ");
+              m.tableRef(t.name);
+              ret.push("(");
+              list(t.columns, (c) => {
+                switch (c.kind) {
+                  case "column":
+                    return m.createColumn(c);
+                  case "like table":
+                    return m.likeTable(c);
+                  default:
+                    throw utils_1.NotSupported.never(c);
+                }
+              }, false);
+              if (t.constraints) {
+                ret.push(", ");
+                list(t.constraints, (c) => {
+                  const cname = c.constraintName;
+                  if (cname) {
+                    ret.push("CONSTRAINT ", name(cname), " ");
+                  }
+                  addConstraint(c, m);
+                }, false);
+              }
+              ret.push(") ");
+              if ((_a = t.inherits) === null || _a === void 0 ? void 0 : _a.length) {
+                ret.push(" INHERITS ");
+                list(t.inherits, (i) => visitQualifiedName(i), true);
+              }
+            },
+            likeTable: (l) => {
+              ret.push(" LIKE ");
+              m.tableRef(l.like);
+              ret.push(" ");
+              for (const { verb, option } of l.options) {
+                ret.push(verb.toUpperCase(), " ", option.toUpperCase(), " ");
+              }
+            },
+            createSchema: (s) => {
+              ret.push(s.ifNotExists ? "CREATE SCHEMA IF NOT EXISTS " : "CREATE SCHEMA ");
+              ret.push(name(s.name));
+            },
+            truncateTable: (t) => {
+              ret.push("TRUNCATE TABLE ");
+              let first = true;
+              for (const tbl of t.tables) {
+                if (!first) {
+                  ret.push(", ");
+                }
+                first = false;
+                m.tableRef(tbl);
+              }
+              if (t.identity) {
+                switch (t.identity) {
+                  case "restart":
+                    ret.push(" RESTART IDENTITY ");
+                    break;
+                  case "continue":
+                    ret.push(" CONTINUE IDENTITY ");
+                    break;
+                }
+              }
+              if (t.cascade) {
+                ret.push(" ", t.cascade, " ");
+              }
+            },
+            delete: (t) => {
+              ret.push("DELETE FROM ");
+              m.tableRef(t.from);
+              if (t.where) {
+                ret.push(" WHERE ");
+                m.expr(t.where);
+              }
+              if (t.returning) {
+                ret.push(" RETURNING ");
+                list(t.returning, (r) => m.selectionColumn(r), false);
+              }
+              ret.push(" ");
+            },
+            dropColumn: (t) => {
+              ret.push(" DROP COLUMN ");
+              if (t.ifExists) {
+                ret.push(" IF EXISTS ");
+              }
+              ret.push(name(t.column));
+              if (t.behaviour) {
+                ret.push(" ", t.behaviour);
+              }
+              ret.push(" ");
+            },
+            dropConstraint: (t) => {
+              ret.push(" DROP CONSTRAINT ");
+              if (t.ifExists) {
+                ret.push(" IF EXISTS ");
+              }
+              ret.push(name(t.constraint));
+              if (t.behaviour) {
+                ret.push(" ", t.behaviour.toUpperCase(), " ");
+              }
+            },
+            from: (t) => m.super().from(t),
+            fromCall: (s) => {
+              join(m, s.join, () => {
+                var _a, _b;
+                if (s.lateral) {
+                  ret.push("LATERAL ");
+                }
+                m.call(s);
+                if (s.withOrdinality) {
+                  ret.push(" WITH ORDINALITY");
+                }
+                if (s.alias) {
+                  ret.push(" AS ", name(s.alias), " ");
+                  const len = (_b = (_a = s.alias.columns) === null || _a === void 0 ? void 0 : _a.length) !== null && _b !== void 0 ? _b : 0;
+                  if (len > 0) {
+                    ret.push("(");
+                    for (let ix = 0; ix < len; ++ix) {
+                      if (ix !== 0) {
+                        ret.push(", ");
+                      }
+                      ret.push(name(s.alias.columns[ix]));
+                    }
+                    ret.push(")");
+                  }
+                }
+              });
+              ret.push(" ");
+            },
+            fromStatement: (s) => {
+              join(m, s.join, () => {
+                if (s.lateral) {
+                  ret.push("LATERAL ");
+                }
+                ret.push("(");
+                m.select(s.statement);
+                ret.push(") ");
+                if (s.alias) {
+                  ret.push(" AS ", ident(s.alias));
+                  if (s.columnNames) {
+                    list(s.columnNames, (c) => ret.push(name(c)), true);
+                  }
+                  ret.push(" ");
+                }
+              });
+              ret.push(" ");
+            },
+            values: (s) => {
+              ret.push("VALUES ");
+              list(s.values, (vlist) => {
+                list(vlist, (e) => {
+                  m.expr(e);
+                }, true);
+              }, false);
+            },
+            fromTable: (s) => {
+              join(m, s.join, () => {
+                m.tableRef(s.name);
+                if (s.name.columnNames) {
+                  if (!s.name.alias) {
+                    throw new Error("Cannot specify aliased column names without an alias");
+                  }
+                  list(s.name.columnNames, (c) => ret.push(name(c)), true);
+                }
+              });
+            },
+            join: (j) => {
+              throw new Error("Should not happen 💀");
+            },
+            insert: (i) => {
+              ret.push("INSERT INTO ");
+              m.tableRef(i.into);
+              if (i.columns) {
+                ret.push("(", i.columns.map(name).join(", "), ")");
+              }
+              ret.push(" ");
+              if (i.overriding) {
+                ret.push("OVERRIDING ", i.overriding.toUpperCase(), " VALUE ");
+              }
+              m.select(i.insert);
+              ret.push(" ");
+              if (i.onConflict) {
+                ret.push("ON CONFLICT ");
+                const on = i.onConflict.on;
+                switch (on === null || on === void 0 ? void 0 : on.type) {
+                  case "on expr":
+                    list(on.exprs, (e) => m.expr(e), true);
+                    break;
+                  case "on constraint":
+                    ret.push("ON CONSTRAINT ");
+                    visitQualifiedName(on.constraint);
+                  case null:
+                  case void 0:
+                    break;
+                  default:
+                    throw utils_1.NotSupported.never(on);
+                }
+                if (i.onConflict.do === "do nothing") {
+                  ret.push(" DO NOTHING");
+                } else {
+                  ret.push(" DO UPDATE SET ");
+                  list(i.onConflict.do.sets, (s) => m.set(s), false);
+                  if (i.onConflict.where) {
+                    ret.push(" WHERE ");
+                    m.expr(i.onConflict.where);
+                  }
+                }
+                ret.push(" ");
+              }
+              if (i.returning) {
+                ret.push(" RETURNING ");
+                list(i.returning, (r) => m.selectionColumn(r), false);
+              }
+            },
+            raise: (r) => {
+              var _a, _b;
+              ret.push("RAISE ");
+              if (r.level) {
+                ret.push(r.level.toUpperCase(), " ");
+              }
+              ret.push((0, pg_escape_1.literal)(r.format), " ");
+              if ((_a = r.formatExprs) === null || _a === void 0 ? void 0 : _a.length) {
+                ret.push(", ");
+                list(r.formatExprs, (e) => m.expr(e), false);
+              }
+              if ((_b = r.using) === null || _b === void 0 ? void 0 : _b.length) {
+                ret.push(" USING ");
+                list(r.using, ({ type, value: value2 }) => {
+                  ret.push(type.toUpperCase(), "=");
+                  m.expr(value2);
+                }, false);
+              }
+              ret.push(" ");
+            },
+            default: () => {
+              ret.push(" DEFAULT ");
+            },
+            member: (e) => {
+              m.expr(e.operand);
+              ret.push(e.op);
+              ret.push(typeof e.member === "number" ? e.member.toString(10) : (0, pg_escape_1.literal)(e.member));
+            },
+            ref: (r) => {
+              if (r.table) {
+                visitQualifiedName(r.table);
+                ret.push(".");
+              }
+              ret.push(r.name === "*" ? "*" : ident(r.name));
+            },
+            parameter: (p) => {
+              ret.push(p.name);
+            },
+            renameColumn: (r) => {
+              ret.push(" RENAME COLUMN ", name(r.column), " TO ", name(r.to));
+            },
+            renameConstraint: (r) => {
+              ret.push(" RENAME CONSTRAINT ", name(r.constraint), " TO ", name(r.to));
+            },
+            renameTable: (r) => {
+              ret.push(" RENAME TO ", name(r.to));
+            },
+            createView: (c) => {
+              ret.push("CREATE ");
+              if (c.orReplace) {
+                ret.push("OR REPLACE ");
+              }
+              if (c.temp) {
+                ret.push("TEMP ");
+              }
+              if (c.recursive) {
+                ret.push("RECURSIVE ");
+              }
+              ret.push("VIEW ");
+              m.tableRef(c.name);
+              if (c.columnNames) {
+                list(c.columnNames, (c2) => ret.push(name(c2)), true);
+              }
+              const opts = c.parameters && Object.entries(c.parameters);
+              if (opts === null || opts === void 0 ? void 0 : opts.length) {
+                ret.push(" WITH ");
+                list(opts, ([k, v]) => ret.push(k, "=", v), false);
+              }
+              ret.push(" AS ");
+              m.select(c.query);
+              if (c.checkOption) {
+                ret.push(" WITH ", c.checkOption.toUpperCase(), " CHECK OPTION");
+              }
+            },
+            createMaterializedView: (c) => {
+              ret.push("CREATE MATERIALIZED VIEW ");
+              if (c.ifNotExists) {
+                ret.push("IF NOT EXISTS ");
+              }
+              m.tableRef(c.name);
+              if (c.columnNames) {
+                list(c.columnNames, (c2) => ret.push(name(c2)), true);
+              }
+              const opts = c.parameters && Object.entries(c.parameters);
+              if (opts === null || opts === void 0 ? void 0 : opts.length) {
+                ret.push(" WITH ");
+                list(opts, ([k, v]) => ret.push(k, "=", v), false);
+              }
+              if (c.tablespace) {
+                ret.push(" TABLESPACE ", name(c.tablespace));
+              }
+              ret.push(" AS ");
+              m.select(c.query);
+              if (typeof c.withData === "boolean") {
+                ret.push(c.withData ? " WITH DATA" : " WITH NO DATA");
+              }
+            },
+            refreshMaterializedView: (val) => {
+              ret.push("REFRESH MATERIALIZED VIEW ");
+              if (val.concurrently) {
+                ret.push("CONCURRENTLY ");
+              }
+              m.tableRef(val.name);
+              if (typeof val.withData === "boolean") {
+                ret.push(val.withData ? " WITH DATA" : " WITH NO DATA");
+              }
+            },
+            select: (s) => m.super().select(s),
+            selection: (s) => {
+              ret.push("SELECT ");
+              if (s.distinct) {
+                if (typeof s.distinct === "string") {
+                  ret.push(s.distinct.toUpperCase());
+                } else {
+                  ret.push(" DISTINCT ON ");
+                  list(s.distinct, (v) => m.expr(v), true);
+                }
+                ret.push(" ");
+              }
+              if (s.columns) {
+                list(s.columns, (c) => m.selectionColumn(c), false);
+              }
+              ret.push(" ");
+              if (s.from) {
+                ret.push("FROM ");
+                const tblCnt = s.from.length;
+                for (let i = 0; i < tblCnt; i++) {
+                  const f = s.from[i];
+                  if (i > 0 && !f.join) {
+                    ret.push(",");
+                  }
+                  m.from(f);
+                }
+                ret.push(" ");
+              }
+              if (s.where) {
+                ret.push("WHERE ");
+                m.expr(s.where);
+                ret.push(" ");
+              }
+              if (s.groupBy) {
+                ret.push("GROUP BY ");
+                list(s.groupBy, (e) => m.expr(e), false);
+                ret.push(" ");
+                if (s.having) {
+                  ret.push(" HAVING ");
+                  m.expr(s.having);
+                  ret.push(" ");
+                }
+              }
+              if (s.orderBy) {
+                visitOrderBy(m, s.orderBy);
+                ret.push(" ");
+              }
+              if (s.limit) {
+                if (s.limit.offset) {
+                  ret.push("OFFSET ");
+                  m.expr(s.limit.offset);
+                }
+                if (s.limit.limit) {
+                  ret.push("LIMIT ");
+                  m.expr(s.limit.limit);
+                }
+              }
+              if (s.for) {
+                ret.push("FOR ", s.for.type.toUpperCase());
+                if (s.skip) {
+                  ret.push(" ", s.skip.type.toUpperCase());
+                }
+              }
+            },
+            show: (s) => {
+              ret.push("SHOW ", name(s.variable));
+            },
+            prepare: (s) => {
+              var _a;
+              ret.push("PREPARE ", name(s.name));
+              if ((_a = s.args) === null || _a === void 0 ? void 0 : _a.length) {
+                list(s.args, (a) => m.dataType(a), true);
+              }
+              ret.push(" AS ");
+              m.statement(s.statement);
+            },
+            deallocate: (s) => {
+              ret.push("DEALLOCATE ");
+              if ("name" in s.target) {
+                ret.push(s.target.name);
+                return;
+              }
+              ret.push("ALL");
+            },
+            arraySelect: (s) => {
+              ret.push("array(");
+              m.select(s.select);
+              ret.push(")");
+            },
+            union: (s) => {
+              ret.push("(");
+              m.statement(s.left);
+              ret.push(") ", s.type.toUpperCase(), " ");
+              if (s.right.type === "union" || s.right.type === "union all") {
+                m.union(s.right);
+              } else {
+                ret.push("(");
+                m.statement(s.right);
+                ret.push(")");
+              }
+            },
+            selectionColumn: (c) => {
+              m.expr(c.expr);
+              if (c.alias) {
+                ret.push(" AS ", name(c.alias));
+              }
+              ret.push(" ");
+            },
+            set: (s) => {
+              ret.push(name(s.column), " = ");
+              m.expr(s.value);
+              ret.push(" ");
+            },
+            statement: (s) => m.super().statement(s),
+            tableRef: (r) => {
+              visitQualifiedName(r);
+              if (r.alias) {
+                ret.push(" AS ", ident(r.alias));
+              }
+              ret.push(" ");
+            },
+            ternary: (t) => {
+              m.expr(t.value);
+              ret.push(" ", t.op, " ");
+              m.expr(t.lo);
+              ret.push(" AND ");
+              m.expr(t.hi);
+              ret.push(" ");
+            },
+            transaction: (t) => {
+              ret.push(t.type);
+            },
+            unary: (t) => {
+              switch (t.op) {
+                case "+":
+                case "-":
+                  visitOp(t);
+                  m.expr(t.operand);
+                  break;
+                case "NOT":
+                  ret.push(t.op);
+                  ret.push(" ");
+                  m.expr(t.operand);
+                  break;
+                default:
+                  m.expr(t.operand);
+                  ret.push(" ");
+                  ret.push(t.op);
+              }
+            },
+            update: (u) => {
+              ret.push("UPDATE ");
+              m.tableRef(u.table);
+              ret.push(" SET ");
+              list(u.sets, (s) => m.set(s), false);
+              ret.push(" ");
+              if (u.from) {
+                ret.push("FROM ");
+                m.from(u.from);
+                ret.push(" ");
+              }
+              if (u.where) {
+                ret.push("WHERE ");
+                m.expr(u.where);
+                ret.push(" ");
+              }
+              if (u.returning) {
+                ret.push(" RETURNING ");
+                list(u.returning, (r) => m.selectionColumn(r), false);
+                ret.push(" ");
+              }
+            }
+          }));
+          exports3.toSql = {};
+          const proto = ast_mapper_1.AstDefaultMapper.prototype;
+          for (const k of Object.getOwnPropertyNames(proto)) {
+            const orig = proto[k];
+            if (k === "constructor" || k === "super" || typeof orig !== "function") {
+              continue;
+            }
+            exports3.toSql[k] = function(...args) {
+              try {
+                visitor[k].apply(visitor, args);
+                return ret.join("").trim();
+              } finally {
+                ret = [];
+              }
+            };
+          }
+        }),
+        /* 20 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.literal = void 0;
+          function literal(val) {
+            if (null == val)
+              return "NULL";
+            if (Array.isArray(val)) {
+              var vals = val.map(literal);
+              return "(" + vals.join(", ") + ")";
+            }
+            var backslash = ~val.indexOf("\\");
+            var prefix = backslash ? "E" : "";
+            val = val.replace(/'/g, "''");
+            val = val.replace(/\\/g, "\\\\");
+            return prefix + "'" + val + "'";
+          }
+          exports3.literal = literal;
+          ;
+        }),
+        /* 21 */
+        /***/
+        (function(module3, exports3, __webpack_require__) {
+          "use strict";
+          Object.defineProperty(exports3, "__esModule", { value: true });
+          exports3.locationOf = void 0;
+          function locationOf(node) {
+            const n = node._location;
+            if (!n) {
+              throw new Error("This statement has not been parsed using location tracking (which has a small performance hit). ");
+            }
+            return n;
+          }
+          exports3.locationOf = locationOf;
+          ;
+          ;
+        })
+        /******/
+      ])
+    );
+  }
+});
+
+// packages/provider-runtime/src/worker-entrypoint.ts
+var worker_entrypoint_exports = {};
+__export(worker_entrypoint_exports, {
+  runProviderWorker: () => runProviderWorker
+});
+module.exports = __toCommonJS(worker_entrypoint_exports);
+
+// packages/adapter-sdk/src/errors.ts
+var AdapterExecutionError = class extends Error {
+  sanitized;
+  constructor(sanitized) {
+    super(sanitized.message);
+    this.name = "AdapterExecutionError";
+    this.sanitized = sanitized;
+  }
+};
+var AdapterContractError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AdapterContractError";
+  }
+};
+var BudgetExceededError = class extends Error {
+  dimension;
+  constructor(dimension) {
+    super("Evidence ".concat(dimension, " budget exceeded"));
+    this.name = "BudgetExceededError";
+    this.dimension = dimension;
+  }
+};
+var AdapterAdmissionError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "AdapterAdmissionError";
+  }
+};
+var WorkerProtocolError = class extends Error {
+  failure;
+  constructor(failure) {
+    super("Adapter worker protocol failure: ".concat(failure));
+    this.name = "WorkerProtocolError";
+    this.failure = failure;
+  }
+};
+
+// packages/adapter-sdk/src/budget.ts
+function assertCount(value2) {
+  if (!Number.isSafeInteger(value2) || value2 < 0) throw new TypeError("Budget consumption must be a non-negative safe integer");
+}
+function createBudgetController(limits2, signal) {
+  const used = { bytes: 0, rows: 0, series: 0, points: 0 };
+  const consume = (dimension, count) => {
+    assertCount(count);
+    if (signal.aborted) throw signal.reason ?? new Error("Evidence collection cancelled");
+    used[dimension] += count;
+    const maximum = {
+      bytes: limits2.maxBytes,
+      rows: limits2.maxRows,
+      series: limits2.maxSeries,
+      points: limits2.maxPoints
+    }[dimension];
+    if (used[dimension] > maximum) throw new BudgetExceededError(dimension);
+  };
+  return {
+    limits: limits2,
+    consumeBytes: (count) => consume("bytes", count),
+    consumeRows: (count) => consume("rows", count),
+    consumeSeries: (count) => consume("series", count),
+    consumePoints: (count) => consume("points", count),
+    checkpoint: () => ({ ...used }),
+    throwIfAborted: () => {
+      if (signal.aborted) throw signal.reason ?? new Error("Evidence collection cancelled");
+    }
+  };
+}
+
+// packages/adapter-sdk/src/protocol.ts
+var import_node_util = require("node:util");
+var WORKER_PROTOCOL = "PM_ADAPTER_STDIO_V1";
+var WORKER_FRAME_HEADER_BYTES = 4;
+var DEFAULT_MAX_WORKER_FRAME_BYTES = 1024 * 1024;
+var utf8 = new import_node_util.TextDecoder("utf-8", { fatal: true });
+var HASH = /^[a-f0-9]{64}$/u;
+var REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+var ERROR_CODE = /^(?:[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*|[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*)$/u;
+var CATEGORIES = /* @__PURE__ */ new Set([
+  "AUTHORIZATION",
+  "AUTHENTICATION",
+  "UNAVAILABLE",
+  "TIMEOUT",
+  "RATE_LIMIT",
+  "INVALID_RESPONSE",
+  "POLICY",
+  "INTERNAL"
+]);
+function invalid() {
+  throw new WorkerProtocolError("INVALID_MESSAGE");
+}
+function record(value2) {
+  if (value2 === null || typeof value2 !== "object" || Array.isArray(value2)) invalid();
+  return value2;
+}
+function exact(value2, required, optional = []) {
+  const object2 = record(value2);
+  const permitted = /* @__PURE__ */ new Set([...required, ...optional]);
+  if (Object.keys(object2).some((key) => !permitted.has(key))) invalid();
+  if (required.some((key) => !Object.hasOwn(object2, key))) invalid();
+  return object2;
+}
+function string2(value2, maximum = 4096) {
+  if (typeof value2 !== "string" || value2.length === 0 || value2.length > maximum || value2.includes("\0")) invalid();
+  return value2;
+}
+function optionalString(value2, maximum = 4096) {
+  return value2 === void 0 ? void 0 : string2(value2, maximum);
+}
+function integer(value2, minimum = 0, maximum = Number.MAX_SAFE_INTEGER) {
+  if (!Number.isSafeInteger(value2) || value2 < minimum || value2 > maximum) invalid();
+  return value2;
+}
+function finiteNumber(value2) {
+  if (typeof value2 !== "number" || !Number.isFinite(value2)) invalid();
+  return value2;
+}
+function boolean(value2) {
+  if (typeof value2 !== "boolean") invalid();
+  return value2;
+}
+function enumeration(value2, values) {
+  if (typeof value2 !== "string" || !values.includes(value2)) invalid();
+  return value2;
+}
+function date(value2) {
+  const result = string2(value2, 64);
+  if (!Number.isFinite(Date.parse(result))) invalid();
+  return result;
+}
+function hash(value2) {
+  const result = string2(value2, 64);
+  if (!HASH.test(result)) invalid();
+  return result;
+}
+function requestId(value2) {
+  const result = string2(value2, 128);
+  if (!REQUEST_ID.test(result)) invalid();
+  return result;
+}
+function stringArray(value2, maximum = 1024) {
+  if (!Array.isArray(value2) || value2.length > maximum) invalid();
+  return value2.map((item) => string2(item, 2048));
+}
+function stringMap(value2, maximum = 1024) {
+  const object2 = record(value2);
+  if (Object.keys(object2).length > maximum) invalid();
+  return Object.fromEntries(
+    Object.entries(object2).map(([key, member]) => [string2(key, 256), string2(member, 2048)])
+  );
+}
+function jsonValue(value2, depth = 0, budget = { nodes: 0 }) {
+  budget.nodes += 1;
+  if (budget.nodes > 1e5 || depth > 32) invalid();
+  if (value2 === null || typeof value2 === "boolean" || typeof value2 === "string") return value2;
+  if (typeof value2 === "number") return finiteNumber(value2);
+  if (Array.isArray(value2)) {
+    if (value2.length > 1e4) invalid();
+    return value2.map((member) => jsonValue(member, depth + 1, budget));
+  }
+  const object2 = record(value2);
+  if (Object.keys(object2).length > 1e4) invalid();
+  return Object.fromEntries(
+    Object.entries(object2).map(([key, member]) => [string2(key, 256), jsonValue(member, depth + 1, budget)])
+  );
+}
+function limits(value2) {
+  const object2 = exact(value2, ["timeoutMs", "maxAgeMs", "maxBytes", "maxRows", "maxSeries", "maxPoints"]);
+  return {
+    timeoutMs: integer(object2.timeoutMs, 1, 3e5),
+    maxAgeMs: integer(object2.maxAgeMs, 0, 31536e6),
+    maxBytes: integer(object2.maxBytes, 1, 1073741824),
+    maxRows: integer(object2.maxRows, 0, 1e6),
+    maxSeries: integer(object2.maxSeries, 0, 1e5),
+    maxPoints: integer(object2.maxPoints, 0, 1e7)
+  };
+}
+function adapterPackage(value2) {
+  const object2 = exact(value2, [
+    "schemaVersion",
+    "packageId",
+    "name",
+    "version",
+    "protocolVersion",
+    "publisher",
+    "entrypoint",
+    "domains",
+    "capabilities",
+    "providerCompatibility",
+    "supportedContractVersions",
+    "conformance"
+  ]);
+  if (object2.schemaVersion !== "1.0.0" || object2.protocolVersion !== "1.0") invalid();
+  const publisher = exact(object2.publisher, ["name"], ["keyId"]);
+  string2(publisher.name, 256);
+  optionalString(publisher.keyId, 256);
+  const entrypoint = record(object2.entrypoint);
+  if (entrypoint.kind === "BUILTIN") {
+    const builtin = exact(entrypoint, ["kind", "registryKey"]);
+    string2(builtin.registryKey, 128);
+  } else if (entrypoint.kind === "SIGNED_WORKER") {
+    const worker = exact(entrypoint, [
+      "kind",
+      "protocol",
+      "artifactPath",
+      "artifactSha256",
+      "signature",
+      "signingKeyId"
+    ]);
+    if (worker.protocol !== WORKER_PROTOCOL) invalid();
+    string2(worker.artifactPath, 1024);
+    hash(worker.artifactSha256);
+    string2(worker.signature, 4096);
+    string2(worker.signingKeyId, 256);
+  } else invalid();
+  string2(object2.packageId, 128);
+  string2(object2.name, 128);
+  string2(object2.version, 128);
+  stringArray(object2.domains, 16);
+  stringArray(object2.capabilities, 1024);
+  if (!Array.isArray(object2.providerCompatibility) || object2.providerCompatibility.length > 1024) invalid();
+  for (const item of object2.providerCompatibility) {
+    const compatibility = exact(item, ["provider", "versions"]);
+    string2(compatibility.provider, 128);
+    string2(compatibility.versions, 256);
+  }
+  stringArray(object2.supportedContractVersions, 64);
+  stringArray(object2.conformance, 64);
+  return value2;
+}
+function operationSnapshot(value2) {
+  const object2 = exact(value2, [
+    "schemaVersion",
+    "operationId",
+    "revision",
+    "capturedAt",
+    "definition",
+    "definitionSha256"
+  ]);
+  if (object2.schemaVersion !== "1.0.0") invalid();
+  string2(object2.operationId, 128);
+  integer(object2.revision, 1);
+  date(object2.capturedAt);
+  hash(object2.definitionSha256);
+  const definition = exact(object2.definition, [
+    "domain",
+    "sourceAlias",
+    "adapterPackageId",
+    "adapterOperation",
+    "authority",
+    "sanitizedProviderDefinition",
+    "scopeMapping",
+    "allowedDimensions",
+    "requiredProviderScopes",
+    "sensitivity",
+    "limits",
+    "normalization"
+  ], ["expectedSourceLineage"]);
+  enumeration(definition.domain, ["METRICS", "ALERTS", "LOGS", "TRACES", "RUNTIME", "CHANGES", "RUNBOOKS"]);
+  string2(definition.sourceAlias, 128);
+  string2(definition.adapterPackageId, 128);
+  string2(definition.adapterOperation, 128);
+  enumeration(definition.authority, ["AUTHORITATIVE", "CORROBORATING"]);
+  jsonValue(definition.sanitizedProviderDefinition);
+  if (definition.expectedSourceLineage !== void 0) {
+    const lineage = exact(definition.expectedSourceLineage, [
+      "accessPath",
+      "datasourceType",
+      "sourceIdentitySha256"
+    ]);
+    enumeration(lineage.accessPath, ["DIRECT", "GRAFANA"]);
+    enumeration(lineage.datasourceType, ["prometheus", "loki", "tempo", "postgres"]);
+    hash(lineage.sourceIdentitySha256);
+  }
+  stringMap(definition.scopeMapping);
+  stringArray(definition.allowedDimensions);
+  stringArray(definition.requiredProviderScopes);
+  enumeration(definition.sensitivity, ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"]);
+  limits(definition.limits);
+  const normalization = exact(definition.normalization, ["resultKind", "dimensionMappings"], ["targetUnit"]);
+  enumeration(normalization.resultKind, ["SCALAR", "TIMESERIES", "TABLE", "EVENT"]);
+  optionalString(normalization.targetUnit, 64);
+  stringMap(normalization.dimensionMappings);
+  return value2;
+}
+function compiledOperation(value2) {
+  const object2 = exact(value2, [
+    "operationId",
+    "operationDefinitionSha256",
+    "adapterPackageId",
+    "adapterOperation",
+    "binding"
+  ]);
+  string2(object2.operationId, 128);
+  hash(object2.operationDefinitionSha256);
+  string2(object2.adapterPackageId, 128);
+  string2(object2.adapterOperation, 128);
+  record(jsonValue(object2.binding));
+  return value2;
+}
+function pagination(value2) {
+  const object2 = exact(value2, ["complete", "pages"], ["truncatedReason"]);
+  boolean(object2.complete);
+  integer(object2.pages, 0, 1e4);
+  if (object2.truncatedReason !== void 0) {
+    enumeration(object2.truncatedReason, ["BYTE_LIMIT", "ROW_LIMIT", "SERIES_LIMIT", "POINT_LIMIT", "TIME_LIMIT"]);
+  }
+  return value2;
+}
+function sanitizedError(value2) {
+  const object2 = exact(value2, ["code", "category", "message", "retryable"], ["providerStatus"]);
+  const code = string2(object2.code, 128);
+  if (!ERROR_CODE.test(code)) invalid();
+  if (typeof object2.category !== "string" || !CATEGORIES.has(object2.category)) invalid();
+  string2(object2.message, 1024);
+  boolean(object2.retryable);
+  if (object2.providerStatus !== void 0) integer(object2.providerStatus, 100, 599);
+  return value2;
+}
+function providerValue(value2) {
+  const kind = record(value2).kind;
+  if (kind === "SCALAR") {
+    const object2 = exact(value2, ["kind", "name", "value", "dimensions"], ["unit", "observedAt"]);
+    string2(object2.name, 256);
+    const scalar = object2.value;
+    if (!(scalar === null || typeof scalar === "string" || typeof scalar === "boolean" || typeof scalar === "number")) invalid();
+    if (typeof scalar === "number") finiteNumber(scalar);
+    stringMap(object2.dimensions);
+    optionalString(object2.unit, 64);
+    if (object2.observedAt !== void 0) date(object2.observedAt);
+  } else if (kind === "TIMESERIES") {
+    const object2 = exact(value2, ["kind", "name", "dimensions", "points"], ["unit"]);
+    string2(object2.name, 256);
+    stringMap(object2.dimensions);
+    optionalString(object2.unit, 64);
+    if (!Array.isArray(object2.points) || object2.points.length > 1e5) invalid();
+    for (const pointValue of object2.points) {
+      const point = exact(pointValue, ["at", "value"]);
+      date(point.at);
+      if (point.value !== null) finiteNumber(point.value);
+    }
+  } else if (kind === "TABLE") {
+    const object2 = exact(value2, ["kind", "name", "columns", "rows"]);
+    string2(object2.name, 256);
+    if (!Array.isArray(object2.columns) || object2.columns.length > 1024) invalid();
+    for (const columnValue of object2.columns) {
+      const column = exact(columnValue, ["name", "type"]);
+      string2(column.name, 256);
+      enumeration(column.type, ["STRING", "NUMBER", "BOOLEAN", "DATETIME", "NULL"]);
+    }
+    if (!Array.isArray(object2.rows) || object2.rows.length > 1e5) invalid();
+    for (const row of object2.rows) {
+      if (!Array.isArray(row) || row.length !== object2.columns.length) invalid();
+      for (const cell of row) {
+        if (!(cell === null || typeof cell === "string" || typeof cell === "boolean" || typeof cell === "number")) invalid();
+        if (typeof cell === "number") finiteNumber(cell);
+      }
+    }
+  } else if (kind === "EVENT") {
+    const object2 = exact(value2, ["kind", "name", "occurredAt", "summary", "attributes"]);
+    string2(object2.name, 256);
+    date(object2.occurredAt);
+    string2(object2.summary, 4096);
+    const attributes = record(object2.attributes);
+    if (Object.keys(attributes).length > 1e4) invalid();
+    for (const [key, member] of Object.entries(attributes)) {
+      string2(key, 256);
+      if (!(member === null || typeof member === "string" || typeof member === "boolean" || typeof member === "number")) invalid();
+      if (typeof member === "number") finiteNumber(member);
+    }
+  } else invalid();
+  return value2;
+}
+function providerResult(value2) {
+  const object2 = exact(value2, [
+    "schemaVersion",
+    "collectionState",
+    "evaluatedAt",
+    "nativeResultType",
+    "nativeDimensions",
+    "records",
+    "pagination",
+    "warnings"
+  ], ["nativeUnit", "sanitizedReference", "sourceLineage", "providerScope", "error"]);
+  string2(object2.schemaVersion, 32);
+  enumeration(object2.collectionState, ["COMPLETE", "EMPTY", "ERROR"]);
+  date(object2.evaluatedAt);
+  string2(object2.nativeResultType, 128);
+  optionalString(object2.nativeUnit, 64);
+  stringMap(object2.nativeDimensions);
+  if (!Array.isArray(object2.records) || object2.records.length > 1e5) invalid();
+  object2.records.forEach(providerValue);
+  pagination(object2.pagination);
+  stringArray(object2.warnings, 256);
+  optionalString(object2.sanitizedReference, 2048);
+  if (object2.sourceLineage !== void 0) {
+    const lineage = exact(object2.sourceLineage, [
+      "accessPath",
+      "datasourceType",
+      "sourceIdentitySha256"
+    ]);
+    enumeration(lineage.accessPath, ["DIRECT", "GRAFANA"]);
+    enumeration(lineage.datasourceType, ["prometheus", "loki", "tempo", "postgres"]);
+    hash(lineage.sourceIdentitySha256);
+  }
+  if (object2.providerScope !== void 0) {
+    const scope = exact(object2.providerScope, [], ["environment", "service", "subject", "tenantSha256", "mappings"]);
+    optionalString(scope.environment, 128);
+    optionalString(scope.service, 128);
+    if (scope.subject !== void 0) {
+      const subject = exact(scope.subject, ["kind", "ref"]);
+      enumeration(subject.kind, ["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"]);
+      const ref = string2(subject.ref, 134);
+      if (!/^pmsub_[A-Za-z0-9_-]{20,128}$/u.test(ref)) invalid();
+    }
+    if (scope.tenantSha256 !== void 0) hash(scope.tenantSha256);
+    if (scope.mappings !== void 0) {
+      const mappings = stringMap(scope.mappings);
+      if (Object.keys(mappings).some((key) => !["environment", "service", "subject.ref", "tenantSha256"].includes(key))) {
+        invalid();
+      }
+    }
+  }
+  if (object2.error !== void 0) sanitizedError(object2.error);
+  if (object2.collectionState === "EMPTY" && object2.records.length !== 0) invalid();
+  if (object2.collectionState === "ERROR" && (object2.records.length !== 0 || object2.error === void 0)) invalid();
+  return value2;
+}
+function doctorResult(value2) {
+  const object2 = exact(value2, ["status", "checks"]);
+  enumeration(object2.status, ["READY", "WARN", "BLOCKED"]);
+  if (!Array.isArray(object2.checks) || object2.checks.length > 64) invalid();
+  for (const rawCheck of object2.checks) {
+    const check = exact(rawCheck, ["name", "status", "message"]);
+    string2(check.name, 256);
+    enumeration(check.status, ["PASS", "WARN", "FAIL"]);
+    string2(check.message, 1024);
+  }
+  return value2;
+}
+function assertWorkerRequest(value2) {
+  const base = record(value2);
+  if (base.kind === "doctor") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    return;
+  }
+  if (base.kind === "compile") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId", "operation", "adapterPackage", "maxDefinitionBytes"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    operationSnapshot(object2.operation);
+    adapterPackage(object2.adapterPackage);
+    integer(object2.maxDefinitionBytes, 1);
+    return;
+  }
+  if (base.kind === "execute") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId", "operation", "context"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    compiledOperation(object2.operation);
+    const context = exact(object2.context, ["origin", "scope", "window", "deadlineAt", "limits"], ["expectedTenantSha256"]);
+    enumeration(context.origin, ["LIVE", "REPLAY", "SIMULATED"]);
+    const scope = exact(context.scope, ["environment"], ["service", "region", "cohort", "subject"]);
+    string2(scope.environment, 128);
+    optionalString(scope.service, 128);
+    optionalString(scope.region, 128);
+    optionalString(scope.cohort, 128);
+    if (scope.subject !== void 0) {
+      const subject = exact(scope.subject, ["kind", "ref"]);
+      enumeration(subject.kind, ["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"]);
+      const subjectRef = string2(subject.ref, 134);
+      if (!/^pmsub_[A-Za-z0-9_-]{20,128}$/u.test(subjectRef)) invalid();
+    }
+    const window = exact(context.window, ["start", "end"]);
+    date(window.start);
+    date(window.end);
+    date(context.deadlineAt);
+    limits(context.limits);
+    if (context.expectedTenantSha256 !== void 0) hash(context.expectedTenantSha256);
+    return;
+  }
+  invalid();
+}
+function assertWorkerResponse(value2) {
+  const base = record(value2);
+  if (base.kind === "doctor-result") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId", "result"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    doctorResult(object2.result);
+    return;
+  }
+  if (base.kind === "compiled") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId", "operation"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    compiledOperation(object2.operation);
+    return;
+  }
+  if (base.kind === "result") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId", "result"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    providerResult(object2.result);
+    return;
+  }
+  if (base.kind === "error") {
+    const object2 = exact(value2, ["protocol", "kind", "requestId", "error"]);
+    if (object2.protocol !== WORKER_PROTOCOL) invalid();
+    requestId(object2.requestId);
+    sanitizedError(object2.error);
+    return;
+  }
+  invalid();
+}
+function parsePayload(payload) {
+  let source;
+  try {
+    source = utf8.decode(payload);
+    return JSON.parse(source);
+  } catch {
+    throw new WorkerProtocolError("INVALID_FRAME");
+  }
+}
+function parseWorkerRequestPayload(payload) {
+  const value2 = parsePayload(payload);
+  assertWorkerRequest(value2);
+  return value2;
+}
+function encodeWorkerFrame(value2, maximumBytes = DEFAULT_MAX_WORKER_FRAME_BYTES) {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 4294967295) {
+    throw new RangeError("Worker frame byte limit is invalid");
+  }
+  const payload = Buffer.from(JSON.stringify(value2), "utf8");
+  if (payload.byteLength > maximumBytes) throw new WorkerProtocolError("OVERSIZE");
+  const frame = Buffer.allocUnsafe(WORKER_FRAME_HEADER_BYTES + payload.byteLength);
+  frame.writeUInt32BE(payload.byteLength, 0);
+  payload.copy(frame, WORKER_FRAME_HEADER_BYTES);
+  return frame;
+}
+var WorkerFrameDecoder = class {
+  #maximumBytes;
+  #buffer = Buffer.alloc(0);
+  constructor(maximumBytes = DEFAULT_MAX_WORKER_FRAME_BYTES) {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 4294967295) {
+      throw new RangeError("Worker frame byte limit is invalid");
+    }
+    this.#maximumBytes = maximumBytes;
+  }
+  push(chunk) {
+    if (!Buffer.isBuffer(chunk)) throw new TypeError("Worker protocol chunks must be buffers");
+    if (chunk.byteLength === 0) return [];
+    this.#buffer = this.#buffer.byteLength === 0 ? chunk : Buffer.concat([this.#buffer, chunk]);
+    const payloads = [];
+    while (this.#buffer.byteLength >= WORKER_FRAME_HEADER_BYTES) {
+      const length = this.#buffer.readUInt32BE(0);
+      if (length === 0) throw new WorkerProtocolError("INVALID_FRAME");
+      if (length > this.#maximumBytes) throw new WorkerProtocolError("OVERSIZE");
+      const frameBytes = WORKER_FRAME_HEADER_BYTES + length;
+      if (this.#buffer.byteLength < frameBytes) break;
+      payloads.push(this.#buffer.subarray(WORKER_FRAME_HEADER_BYTES, frameBytes));
+      this.#buffer = this.#buffer.subarray(frameBytes);
+    }
+    if (this.#buffer.byteLength > this.#maximumBytes + WORKER_FRAME_HEADER_BYTES) {
+      throw new WorkerProtocolError("OVERSIZE");
+    }
+    return payloads;
+  }
+  finish() {
+    if (this.#buffer.byteLength !== 0) throw new WorkerProtocolError("INVALID_FRAME");
+  }
+};
+
+// packages/adapter-sdk/src/worker.ts
+var import_node_crypto2 = require("node:crypto");
+var import_node_fs = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_path = require("node:path");
+
+// packages/contracts/src/canonical-json.ts
+var import_node_crypto = require("node:crypto");
+var HEX_64 = /^[a-f0-9]{64}$/u;
+var HASH_CONTRACT_VERSION = "sha256-jcs-v1";
+var JCS_CANONICALIZATION = "RFC8785";
+function assertValidUnicode(value2, path) {
+  for (let index = 0; index < value2.length; index += 1) {
+    const code = value2.charCodeAt(index);
+    if (code >= 55296 && code <= 56319) {
+      const next = value2.charCodeAt(index + 1);
+      if (!Number.isInteger(next) || next < 56320 || next > 57343) {
+        throw new TypeError("Unpaired high surrogate at ".concat(path));
+      }
+      index += 1;
+    } else if (code >= 56320 && code <= 57343) {
+      throw new TypeError("Unpaired low surrogate at ".concat(path));
+    }
+  }
+}
+function assertJsonDataProperties(value2, path) {
+  const descriptors = Object.getOwnPropertyDescriptors(value2);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key === "symbol") throw new TypeError("Symbol-keyed member at ".concat(path));
+    if (Array.isArray(value2) && key === "length") continue;
+    const descriptor4 = descriptors[key];
+    if (descriptor4 === void 0 || descriptor4.get !== void 0 || descriptor4.set !== void 0) {
+      throw new TypeError("Accessor member at ".concat(path, ".").concat(key));
+    }
+    if (!descriptor4.enumerable) throw new TypeError("Non-enumerable member at ".concat(path, ".").concat(key));
+    if (Array.isArray(value2) && !/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+      throw new TypeError("Non-index array member at ".concat(path, ".").concat(key));
+    }
+  }
+}
+function canonicalize(value2, path, ancestors) {
+  if (value2 === null) return "null";
+  if (typeof value2 === "boolean") return value2 ? "true" : "false";
+  if (typeof value2 === "string") {
+    assertValidUnicode(value2, path);
+    return JSON.stringify(value2);
+  }
+  if (typeof value2 === "number") {
+    if (!Number.isFinite(value2)) throw new TypeError("Non-finite number at ".concat(path));
+    return JSON.stringify(value2);
+  }
+  if (typeof value2 !== "object") {
+    throw new TypeError("Non-JSON value at ".concat(path));
+  }
+  if (ancestors.has(value2)) throw new TypeError("Circular reference at ".concat(path));
+  assertJsonDataProperties(value2, path);
+  ancestors.add(value2);
+  try {
+    if (Array.isArray(value2)) {
+      const items = [];
+      for (let index = 0; index < value2.length; index += 1) {
+        if (!Object.hasOwn(value2, index)) {
+          throw new TypeError("Sparse array at ".concat(path, "[").concat(index, "]"));
+        }
+        items.push(canonicalize(value2[index], "".concat(path, "[").concat(index, "]"), ancestors));
+      }
+      return "[".concat(items.join(","), "]");
+    }
+    const prototype = Object.getPrototypeOf(value2);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Non-plain object at ".concat(path));
+    }
+    const object2 = value2;
+    const keys = Object.keys(object2).sort();
+    const properties = [];
+    for (const key of keys) {
+      assertValidUnicode(key, "".concat(path, " key"));
+      const member = object2[key];
+      if (member === void 0) throw new TypeError("Undefined member at ".concat(path, ".").concat(key));
+      properties.push("".concat(JSON.stringify(key), ":").concat(canonicalize(member, "".concat(path, ".").concat(key), ancestors)));
+    }
+    return "{".concat(properties.join(","), "}");
+  } finally {
+    ancestors.delete(value2);
+  }
+}
+function canonicalJson(value2) {
+  return canonicalize(value2, "$", /* @__PURE__ */ new Set());
+}
+function sha256Bytes(value2) {
+  return (0, import_node_crypto.createHash)("sha256").update(value2).digest("hex");
+}
+function sha256Canonical(value2) {
+  return sha256Bytes(canonicalJson(value2));
+}
+function withoutTopLevelIntegrity(value2) {
+  const copy = { ...value2 };
+  delete copy.integrity;
+  return copy;
+}
+function computeIntegrity(value2) {
+  return {
+    hashContractVersion: HASH_CONTRACT_VERSION,
+    algorithm: "sha256",
+    canonicalization: JCS_CANONICALIZATION,
+    contentSha256: sha256Canonical(withoutTopLevelIntegrity(value2))
+  };
+}
+function verifyIntegrity(value2) {
+  return value2.integrity.hashContractVersion === HASH_CONTRACT_VERSION && value2.integrity.algorithm === "sha256" && value2.integrity.canonicalization === JCS_CANONICALIZATION && HEX_64.test(value2.integrity.contentSha256) && computeIntegrity(value2).contentSha256 === value2.integrity.contentSha256;
+}
+function computeOperationDefinitionHash(snapshot) {
+  return sha256Canonical({
+    operationId: snapshot.operationId,
+    revision: snapshot.revision,
+    definition: snapshot.definition
+  });
+}
+function computeCapabilityPackDefinitionHash(pack) {
+  return sha256Canonical(pack);
+}
+
+// packages/contracts/src/capability-packs.ts
+function operation(value2) {
+  return value2;
+}
+function packId(value2) {
+  return value2;
+}
+function sealCapabilityPack(draft) {
+  const pack = {
+    ...structuredClone(draft),
+    definitionSha256: computeCapabilityPackDefinitionHash(draft)
+  };
+  validateCapabilityPack(pack);
+  return deepFreeze(pack);
+}
+function deepFreeze(value2, seen = /* @__PURE__ */ new Set()) {
+  if (value2 === null || typeof value2 !== "object" || seen.has(value2)) return value2;
+  seen.add(value2);
+  for (const child of Object.values(value2)) deepFreeze(child, seen);
+  return Object.freeze(value2);
+}
+function unique(values, label) {
+  if (new Set(values).size !== values.length) throw new TypeError("".concat(label, " must be unique"));
+}
+function validateCapabilityPack(pack) {
+  const { definitionSha256: _definitionSha256, ...draft } = pack;
+  void _definitionSha256;
+  if (computeCapabilityPackDefinitionHash(draft) !== pack.definitionSha256) {
+    throw new TypeError("Capability pack ".concat(pack.packId, " has an invalid definition hash"));
+  }
+  unique(pack.requiredOperationIds, "".concat(pack.packId, " required operations"));
+  unique(pack.optionalOperationIds, "".concat(pack.packId, " optional operations"));
+  unique(pack.supportedSubjectKinds, "".concat(pack.packId, " subject kinds"));
+  unique(pack.scopeMappings.map((mapping) => mapping.scopeField), "".concat(pack.packId, " scope fields"));
+  unique(pack.scopeMappings.map((mapping) => mapping.providerField), "".concat(pack.packId, " provider scope fields"));
+  unique(pack.signals.map((signal) => signal.signalId), "".concat(pack.packId, " signal IDs"));
+  unique(pack.signals.map((signal) => String(signal.order)), "".concat(pack.packId, " signal order"));
+  unique(pack.issueRules.map((rule) => rule.ruleId), "".concat(pack.packId, " rule IDs"));
+  const required = new Set(pack.requiredOperationIds);
+  if (pack.optionalOperationIds.some((id) => required.has(id))) {
+    throw new TypeError("Capability pack ".concat(pack.packId, " repeats required operations as optional"));
+  }
+  const subjectMapping = pack.scopeMappings.find((mapping) => mapping.scopeField === "subject.ref");
+  if (pack.supportedSubjectKinds.length > 0 && (subjectMapping === void 0 || !subjectMapping.required)) {
+    throw new TypeError("Capability pack ".concat(pack.packId, " must require an opaque subject mapping"));
+  }
+  if (pack.supportedSubjectKinds.length === 0 && subjectMapping !== void 0) {
+    throw new TypeError("Capability pack ".concat(pack.packId, " cannot map a subject kind it does not support"));
+  }
+  const admitted = /* @__PURE__ */ new Set([...pack.requiredOperationIds, ...pack.optionalOperationIds]);
+  for (const signal of pack.signals) {
+    if (!admitted.has(signal.operationId)) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " signal references an unbound operation"));
+    }
+    if (signal.thresholds !== void 0 && signal.thresholds.warning === void 0 && signal.thresholds.critical === void 0) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " has an empty signal threshold"));
+    }
+  }
+  for (const rule of pack.issueRules) {
+    if (!admitted.has(rule.operationId)) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " rule references an unbound operation"));
+    }
+    if (rule.comparisonOperationId !== void 0 && !admitted.has(rule.comparisonOperationId)) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " rule comparison is unbound"));
+    }
+    if (rule.issueKind === "ANOMALY" && !rule.signedThreshold) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " cannot label an unsigned deviation as an anomaly"));
+    }
+    if (rule.comparison === "THRESHOLD" && (rule.resultName === void 0 || rule.comparator === void 0 || rule.threshold === void 0)) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " threshold rule is incomplete"));
+    }
+    if (rule.comparison === "BASELINE_DELTA" && (rule.resultName === void 0 || rule.comparator === void 0 || rule.delta === void 0)) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " baseline rule is incomplete"));
+    }
+    if (rule.comparison === "STALE" && rule.maxAgeMs === void 0) {
+      throw new TypeError("Capability pack ".concat(pack.packId, " stale rule is incomplete"));
+    }
+    if (rule.reducer !== void 0 && rule.comparison !== "THRESHOLD" && rule.comparison !== "BASELINE_DELTA") {
+      throw new TypeError("Capability pack ".concat(pack.packId, " reducer is valid only for numeric rules"));
+    }
+    if (rule.comparison === "THRESHOLD" || rule.comparison === "BASELINE_DELTA") {
+      const currentSignals = pack.signals.filter((signal) => signal.operationId === rule.operationId && signal.resultName === rule.resultName);
+      if (currentSignals.length !== 1) {
+        throw new TypeError("Capability pack ".concat(pack.packId, " numeric rule must name exactly one declared signal"));
+      }
+      if (rule.comparison === "BASELINE_DELTA") {
+        const comparisonOperationId = rule.comparisonOperationId ?? rule.operationId;
+        const baselineSignals = pack.signals.filter((signal) => signal.operationId === comparisonOperationId && signal.resultName === rule.resultName);
+        if (baselineSignals.length !== 1 || baselineSignals[0].unit !== currentSignals[0].unit) {
+          throw new TypeError("Capability pack ".concat(pack.packId, " baseline rule must compare compatible declared signal units"));
+        }
+      }
+    }
+  }
+}
+var ENVIRONMENT_SCOPE = [
+  { scopeField: "environment", providerField: "environment", required: true },
+  { scopeField: "service", providerField: "service", required: false }
+];
+var GRAFANA_INFRASTRUCTURE_PACK = sealCapabilityPack({
+  schemaVersion: "1.0.0",
+  packId: packId("grafana.infrastructure"),
+  revision: 1,
+  useCase: "INFRASTRUCTURE",
+  requiredOperationIds: [
+    operation("grafana.infrastructure.cpu.usage"),
+    operation("grafana.infrastructure.memory.load"),
+    operation("grafana.infrastructure.disk.free"),
+    operation("grafana.infrastructure.system.load")
+  ],
+  optionalOperationIds: [],
+  supportedSubjectKinds: ["HOST", "FLEET"],
+  scopeMappings: [
+    ...ENVIRONMENT_SCOPE,
+    { scopeField: "subject.ref", providerField: "instance", required: true }
+  ],
+  signals: [
+    { signalId: "cpu_usage", operationId: operation("grafana.infrastructure.cpu.usage"), resultName: "cpu_usage", order: 1, unit: "percent", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", warning: 80, critical: 95 } },
+    { signalId: "memory_load", operationId: operation("grafana.infrastructure.memory.load"), resultName: "memory_load", order: 2, unit: "percent", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", warning: 80, critical: 95 } },
+    { signalId: "disk_free", operationId: operation("grafana.infrastructure.disk.free"), resultName: "disk_free", order: 3, unit: "percent", polarity: "LOW_IS_BAD", thresholds: { comparator: "LTE", warning: 20, critical: 10 } },
+    { signalId: "system_load", operationId: operation("grafana.infrastructure.system.load"), resultName: "system_load", order: 4, unit: "ratio", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", warning: 1, critical: 2 } }
+  ],
+  issueRules: [
+    { ruleId: "cpu_critical", comparison: "THRESHOLD", operationId: operation("grafana.infrastructure.cpu.usage"), resultName: "cpu_usage", comparator: "GTE", threshold: 95, issueKind: "ALERT", severity: "CRITICAL", signedThreshold: true },
+    { ruleId: "memory_critical", comparison: "THRESHOLD", operationId: operation("grafana.infrastructure.memory.load"), resultName: "memory_load", comparator: "GTE", threshold: 95, issueKind: "ALERT", severity: "CRITICAL", signedThreshold: true },
+    { ruleId: "disk_critical", comparison: "THRESHOLD", operationId: operation("grafana.infrastructure.disk.free"), resultName: "disk_free", comparator: "LTE", threshold: 10, issueKind: "ALERT", severity: "CRITICAL", signedThreshold: true },
+    { ruleId: "infrastructure_gap", comparison: "ERROR", operationId: operation("grafana.infrastructure.system.load"), issueKind: "EVIDENCE_GAP", severity: "WARNING", signedThreshold: false }
+  ]
+});
+var GRAFANA_APM_PACK = sealCapabilityPack({
+  schemaVersion: "1.0.0",
+  packId: packId("grafana.apm"),
+  revision: 1,
+  useCase: "APPLICATION_PERFORMANCE",
+  requiredOperationIds: [
+    operation("grafana.apm.request.rate"),
+    operation("grafana.apm.error.codes"),
+    operation("grafana.apm.error.rate"),
+    operation("grafana.apm.latency.p95"),
+    // Tempo is certified as bounded event/table evidence. Keep slow/error traces
+    // required without inventing a numeric threshold until an aggregation contract is reviewed.
+    operation("grafana.apm.traces.slow")
+  ],
+  optionalOperationIds: [],
+  supportedSubjectKinds: [],
+  scopeMappings: [...ENVIRONMENT_SCOPE],
+  signals: [
+    { signalId: "request_rate", operationId: operation("grafana.apm.request.rate"), resultName: "request_rate", order: 1, unit: "requests_per_second", polarity: "NEUTRAL" },
+    { signalId: "error_rate", operationId: operation("grafana.apm.error.rate"), resultName: "error_rate", order: 2, unit: "percent", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", warning: 1, critical: 5 } },
+    { signalId: "latency_p95", operationId: operation("grafana.apm.latency.p95"), resultName: "latency_p95", order: 3, unit: "milliseconds", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", warning: 500, critical: 1e3 } }
+  ],
+  issueRules: [
+    { ruleId: "error_rate_regression", comparison: "BASELINE_DELTA", operationId: operation("grafana.apm.error.rate"), resultName: "error_rate", comparator: "GTE", delta: 2, issueKind: "REGRESSION", severity: "CRITICAL", signedThreshold: true },
+    { ruleId: "latency_regression", comparison: "BASELINE_DELTA", operationId: operation("grafana.apm.latency.p95"), resultName: "latency_p95", comparator: "GTE", delta: 250, issueKind: "REGRESSION", severity: "WARNING", signedThreshold: true },
+    { ruleId: "apm_empty", comparison: "EMPTY", operationId: operation("grafana.apm.request.rate"), issueKind: "EVIDENCE_GAP", severity: "WARNING", signedThreshold: false }
+  ]
+});
+var GRAFANA_LOGS_PACK = sealCapabilityPack({
+  schemaVersion: "1.0.0",
+  packId: packId("grafana.logs"),
+  revision: 1,
+  useCase: "LOG_ANALYTICS",
+  requiredOperationIds: [
+    operation("grafana.logs.events"),
+    operation("grafana.logs.error.rate"),
+    operation("grafana.logs.security.markers")
+  ],
+  optionalOperationIds: [],
+  supportedSubjectKinds: ["HOST", "DEVICE"],
+  scopeMappings: [
+    ...ENVIRONMENT_SCOPE,
+    { scopeField: "subject.ref", providerField: "subject", required: true }
+  ],
+  signals: [
+    { signalId: "log_events", operationId: operation("grafana.logs.events"), resultName: "log_events", order: 1, unit: "events", polarity: "NEUTRAL" },
+    { signalId: "log_error_rate", operationId: operation("grafana.logs.error.rate"), resultName: "log_error_rate", order: 2, unit: "events_per_second", polarity: "HIGH_IS_BAD" },
+    { signalId: "security_markers", operationId: operation("grafana.logs.security.markers"), resultName: "security_markers", order: 3, unit: "events", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", critical: 1 } }
+  ],
+  issueRules: [
+    { ruleId: "error_log_deviation", comparison: "BASELINE_DELTA", operationId: operation("grafana.logs.error.rate"), resultName: "log_error_rate", comparator: "GTE", delta: 1, issueKind: "REGRESSION", severity: "WARNING", signedThreshold: true },
+    { ruleId: "security_marker", comparison: "THRESHOLD", operationId: operation("grafana.logs.security.markers"), resultName: "security_markers", comparator: "GTE", threshold: 1, issueKind: "ANOMALY", severity: "CRITICAL", signedThreshold: true }
+  ]
+});
+var GRAFANA_IOT_EDGE_PACK = sealCapabilityPack({
+  schemaVersion: "1.0.0",
+  packId: packId("grafana.iot-edge"),
+  revision: 1,
+  useCase: "IOT_EDGE",
+  requiredOperationIds: [operation("grafana.iot.telemetry"), operation("grafana.iot.device.freshness")],
+  optionalOperationIds: [],
+  supportedSubjectKinds: ["DEVICE", "FLEET"],
+  scopeMappings: [
+    { scopeField: "environment", providerField: "environment", required: true },
+    { scopeField: "subject.ref", providerField: "device", required: true }
+  ],
+  signals: [
+    { signalId: "telemetry", operationId: operation("grafana.iot.telemetry"), resultName: "telemetry", order: 1, polarity: "NEUTRAL" },
+    { signalId: "device_freshness", operationId: operation("grafana.iot.device.freshness"), resultName: "device_age", order: 2, unit: "seconds", polarity: "HIGH_IS_BAD", thresholds: { comparator: "GTE", warning: 300, critical: 900 } }
+  ],
+  issueRules: [
+    { ruleId: "device_stale", comparison: "THRESHOLD", operationId: operation("grafana.iot.device.freshness"), resultName: "device_age", reducer: "MAX", comparator: "GTE", threshold: 300, issueKind: "ALERT", severity: "WARNING", signedThreshold: true },
+    { ruleId: "telemetry_empty", comparison: "EMPTY", operationId: operation("grafana.iot.telemetry"), issueKind: "EVIDENCE_GAP", severity: "WARNING", signedThreshold: false }
+  ]
+});
+var GRAFANA_BUSINESS_KPI_PACK = sealCapabilityPack({
+  schemaVersion: "1.0.0",
+  packId: packId("grafana.business-kpis"),
+  revision: 1,
+  useCase: "BUSINESS_INTELLIGENCE",
+  requiredOperationIds: [
+    operation("grafana.business.revenue"),
+    operation("grafana.business.conversion"),
+    operation("grafana.business.operational.kpi")
+  ],
+  optionalOperationIds: [],
+  supportedSubjectKinds: ["BUSINESS_UNIT", "KPI_SET"],
+  scopeMappings: [
+    { scopeField: "environment", providerField: "environment", required: true },
+    { scopeField: "subject.ref", providerField: "business_scope", required: true }
+  ],
+  signals: [
+    { signalId: "revenue", operationId: operation("grafana.business.revenue"), resultName: "revenue", order: 1, unit: "currency", polarity: "NEUTRAL" },
+    { signalId: "conversion", operationId: operation("grafana.business.conversion"), resultName: "conversion", order: 2, unit: "percent", polarity: "LOW_IS_BAD" },
+    { signalId: "operational_kpi", operationId: operation("grafana.business.operational.kpi"), resultName: "operational_kpi", order: 3, polarity: "NEUTRAL" }
+  ],
+  issueRules: [
+    { ruleId: "revenue_deviation", comparison: "BASELINE_DELTA", operationId: operation("grafana.business.revenue"), resultName: "revenue", comparator: "LTE", delta: -10, issueKind: "REGRESSION", severity: "WARNING", signedThreshold: true },
+    { ruleId: "business_data_gap", comparison: "ERROR", operationId: operation("grafana.business.operational.kpi"), issueKind: "EVIDENCE_GAP", severity: "WARNING", signedThreshold: false }
+  ]
+});
+var GRAFANA_CAPABILITY_PACKS = Object.freeze([
+  GRAFANA_INFRASTRUCTURE_PACK,
+  GRAFANA_APM_PACK,
+  GRAFANA_LOGS_PACK,
+  GRAFANA_IOT_EDGE_PACK,
+  GRAFANA_BUSINESS_KPI_PACK
+]);
+
+// packages/contracts/schemas/adapter-package.schema.json
+var adapter_package_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:adapter-package:1",
+  title: "Production Monitoring adapter package",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "packageId", "name", "version", "protocolVersion", "publisher", "entrypoint", "domains", "capabilities", "providerCompatibility", "supportedContractVersions", "conformance"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    packageId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/AdapterPackageId" },
+    name: { type: "string", minLength: 1, maxLength: 128 },
+    version: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Semver" },
+    protocolVersion: { const: "1.0" },
+    publisher: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name"],
+      properties: { name: { type: "string", minLength: 1, maxLength: 256 }, keyId: { type: "string", minLength: 1, maxLength: 256 } }
+    },
+    entrypoint: {
+      oneOf: [
+        { type: "object", additionalProperties: false, required: ["kind", "registryKey"], properties: { kind: { const: "BUILTIN" }, registryKey: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" } } },
+        { type: "object", additionalProperties: false, required: ["kind", "protocol", "artifactPath", "artifactSha256", "signature", "signingKeyId"], properties: { kind: { const: "SIGNED_WORKER" }, protocol: { const: "PM_ADAPTER_STDIO_V1" }, artifactPath: { $ref: "urn:production-monitoring:schema:common:1#/$defs/PortableRelativePath" }, artifactSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, signature: { type: "string", minLength: 32, maxLength: 4096 }, signingKeyId: { type: "string", minLength: 1, maxLength: 256 } } }
+      ]
+    },
+    domains: { type: "array", minItems: 1, uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain" } },
+    capabilities: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" } },
+    providerCompatibility: { type: "array", items: { type: "object", additionalProperties: false, required: ["provider", "versions"], properties: { provider: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, versions: { type: "string", minLength: 1, maxLength: 256 } } } },
+    supportedContractVersions: { type: "array", minItems: 1, uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Semver" } },
+    conformance: { type: "array", minItems: 1, uniqueItems: true, contains: { const: "CORE_READ" }, items: { enum: ["CORE_READ", "METRICS", "LOGS", "TRACES", "ALERTS", "RUNTIME", "CHANGES", "RUNBOOKS", "REMOTE_DEPLOYMENT", "ACTION_READY"] } }
+  }
+};
+
+// packages/contracts/schemas/analysis-draft.schema.json
+var analysis_draft_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:analysis-draft:1",
+  title: "Production Monitoring analysis draft",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "observations", "inferences", "hypotheses", "checksPerformed", "missingEvidence", "smallestSafeNextStep", "approvalRequired", "remainingUncertainty", "owners"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    observations: { type: "array", maxItems: 1e3, items: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/observation" } },
+    inferences: { type: "array", maxItems: 1e3, items: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/inference" } },
+    hypotheses: { type: "array", maxItems: 256, items: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/hypothesis" } },
+    checksPerformed: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/stringList" },
+    missingEvidence: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/stringList" },
+    smallestSafeNextStep: { type: "string", minLength: 1, maxLength: 4096 },
+    approvalRequired: { type: "boolean" },
+    remainingUncertainty: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/stringList" },
+    owners: { $ref: "urn:production-monitoring:schema:investigation:1#/$defs/stringList" }
+  }
+};
+
+// packages/contracts/schemas/common.schema.json
+var common_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:common:1",
+  title: "Production Monitoring common definitions",
+  $defs: {
+    Sha256: {
+      type: "string",
+      pattern: "^[a-f0-9]{64}$"
+    },
+    Semver: {
+      type: "string",
+      pattern: "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    Alias: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    ErrorCode: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: "^(?:[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*|[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*)$"
+    },
+    RunId: {
+      type: "string",
+      pattern: "^pmrun_[A-Za-z0-9_-]{20,128}$"
+    },
+    EvidenceId: {
+      type: "string",
+      pattern: "^pmev_[A-Za-z0-9_-]{20,128}$"
+    },
+    ContradictionId: {
+      type: "string",
+      pattern: "^pmcon_[A-Za-z0-9_-]{20,128}$"
+    },
+    BundleId: {
+      type: "string",
+      pattern: "^pmbundle_[A-Za-z0-9_-]{20,128}$"
+    },
+    MonitoringWorkspaceId: {
+      type: "string",
+      pattern: "^pmws_[A-Za-z0-9_-]{20,128}$"
+    },
+    WorkbenchEvidenceRef: {
+      type: "string",
+      pattern: "^pmwsev_[A-Za-z0-9_-]{20,128}$"
+    },
+    WorkbenchLinkRef: {
+      type: "string",
+      pattern: "^pmwslnk_[A-Za-z0-9_-]{20,128}$"
+    },
+    WorkbenchIssueRef: {
+      type: "string",
+      pattern: "^pmwsiss_[A-Za-z0-9_-]{20,128}$"
+    },
+    SubjectRef: {
+      type: "string",
+      pattern: "^pmsub_[A-Za-z0-9_-]{20,128}$"
+    },
+    CapabilityPackId: {
+      type: "string",
+      minLength: 3,
+      maxLength: 128,
+      pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    OperationId: {
+      type: "string",
+      minLength: 3,
+      maxLength: 128,
+      pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    AdapterPackageId: {
+      type: "string",
+      minLength: 3,
+      maxLength: 128,
+      pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)+$"
+    },
+    Workflow: {
+      enum: ["triage", "investigate", "deep", "change-review", "verify"]
+    },
+    Origin: {
+      enum: ["LIVE", "REPLAY", "SIMULATED"]
+    },
+    Authority: {
+      enum: ["AUTHORITATIVE", "CORROBORATING"]
+    },
+    InvestigationStatus: {
+      enum: ["COMPLETE", "PARTIAL", "BLOCKED"]
+    },
+    RecoveryState: {
+      enum: ["NONE", "APPROVAL_REQUIRED", "ACTION_FAILED", "INCOMPLETE", "NOT_RECOVERED", "RECOVERED"]
+    },
+    EvidenceDomain: {
+      enum: ["METRICS", "ALERTS", "LOGS", "TRACES", "RUNTIME", "CHANGES", "RUNBOOKS"]
+    },
+    TimeWindow: {
+      type: "object",
+      additionalProperties: false,
+      required: ["start", "end"],
+      properties: {
+        start: { type: "string", format: "date-time" },
+        end: { type: "string", format: "date-time" }
+      }
+    },
+    Scope: {
+      type: "object",
+      additionalProperties: false,
+      required: ["environment"],
+      properties: {
+        environment: { $ref: "#/$defs/Alias" },
+        service: { $ref: "#/$defs/Alias" },
+        region: { $ref: "#/$defs/Alias" },
+        cohort: { $ref: "#/$defs/Alias" },
+        subject: {
+          type: "object",
+          additionalProperties: false,
+          required: ["kind", "ref"],
+          properties: {
+            kind: { enum: ["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"] },
+            ref: { $ref: "#/$defs/SubjectRef" }
+          }
+        }
+      }
+    },
+    CorrelationIdentity: {
+      type: "object",
+      additionalProperties: false,
+      required: ["environment"],
+      properties: {
+        environment: { $ref: "#/$defs/Alias" },
+        serviceNamespace: { type: "string", minLength: 1, maxLength: 256 },
+        serviceName: { type: "string", minLength: 1, maxLength: 256 },
+        releaseVersion: { type: "string", minLength: 1, maxLength: 256 },
+        deploymentId: { type: "string", minLength: 1, maxLength: 256 },
+        gitCommit: { type: "string", pattern: "^[a-fA-F0-9]{7,64}$" },
+        traceId: { type: "string", pattern: "^[a-fA-F0-9]{16,64}$" }
+      }
+    },
+    Integrity: {
+      type: "object",
+      additionalProperties: false,
+      required: ["hashContractVersion", "algorithm", "canonicalization", "contentSha256"],
+      properties: {
+        hashContractVersion: { const: "sha256-jcs-v1" },
+        algorithm: { const: "sha256" },
+        canonicalization: { const: "RFC8785" },
+        contentSha256: { $ref: "#/$defs/Sha256" }
+      }
+    },
+    RedactionRecord: {
+      type: "object",
+      additionalProperties: false,
+      required: ["ruleId", "path", "action"],
+      properties: {
+        ruleId: { $ref: "#/$defs/Alias" },
+        path: { type: "string", minLength: 1, maxLength: 1024 },
+        action: { enum: ["REMOVED", "MASKED", "HASHED", "GENERALIZED"] }
+      }
+    },
+    SanitizedError: {
+      type: "object",
+      additionalProperties: false,
+      required: ["code", "category", "message", "retryable"],
+      properties: {
+        code: { $ref: "#/$defs/ErrorCode" },
+        category: {
+          enum: [
+            "AUTHORIZATION",
+            "AUTHENTICATION",
+            "UNAVAILABLE",
+            "TIMEOUT",
+            "RATE_LIMIT",
+            "INVALID_RESPONSE",
+            "POLICY",
+            "INTERNAL"
+          ]
+        },
+        message: { type: "string", minLength: 1, maxLength: 1024 },
+        retryable: { type: "boolean" },
+        providerStatus: { type: "integer", minimum: 100, maximum: 599 }
+      }
+    },
+    Pagination: {
+      type: "object",
+      additionalProperties: false,
+      required: ["complete", "pages"],
+      properties: {
+        complete: { type: "boolean" },
+        pages: { type: "integer", minimum: 0, maximum: 1e4 },
+        truncatedReason: {
+          enum: ["BYTE_LIMIT", "ROW_LIMIT", "SERIES_LIMIT", "POINT_LIMIT", "TIME_LIMIT"]
+        }
+      }
+    },
+    Dimensions: {
+      type: "object",
+      maxProperties: 64,
+      propertyNames: {
+        pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+      },
+      additionalProperties: {
+        type: "string",
+        maxLength: 512
+      }
+    },
+    JsonPrimitive: {
+      type: ["null", "boolean", "number", "string"]
+    },
+    ScalarValue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "name", "value", "dimensions"],
+      properties: {
+        kind: { const: "SCALAR" },
+        name: { $ref: "#/$defs/Alias" },
+        value: { $ref: "#/$defs/JsonPrimitive" },
+        unit: { type: "string", minLength: 1, maxLength: 64 },
+        dimensions: { $ref: "#/$defs/Dimensions" },
+        observedAt: { type: "string", format: "date-time" }
+      }
+    },
+    TimeSeriesPoint: {
+      type: "object",
+      additionalProperties: false,
+      required: ["at", "value"],
+      properties: {
+        at: { type: "string", format: "date-time" },
+        value: { type: ["number", "null"] }
+      }
+    },
+    TimeSeriesValue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "name", "dimensions", "points"],
+      properties: {
+        kind: { const: "TIMESERIES" },
+        name: { $ref: "#/$defs/Alias" },
+        unit: { type: "string", minLength: 1, maxLength: 64 },
+        dimensions: { $ref: "#/$defs/Dimensions" },
+        points: {
+          type: "array",
+          minItems: 1,
+          maxItems: 1e4,
+          items: { $ref: "#/$defs/TimeSeriesPoint" }
+        }
+      }
+    },
+    TableColumn: {
+      type: "object",
+      additionalProperties: false,
+      required: ["name", "type"],
+      properties: {
+        name: { $ref: "#/$defs/Alias" },
+        type: { enum: ["STRING", "NUMBER", "BOOLEAN", "DATETIME", "NULL"] }
+      }
+    },
+    TableValue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "name", "columns", "rows"],
+      properties: {
+        kind: { const: "TABLE" },
+        name: { $ref: "#/$defs/Alias" },
+        columns: {
+          type: "array",
+          minItems: 1,
+          maxItems: 128,
+          items: { $ref: "#/$defs/TableColumn" }
+        },
+        rows: {
+          type: "array",
+          maxItems: 1e4,
+          items: {
+            type: "array",
+            maxItems: 128,
+            items: { $ref: "#/$defs/JsonPrimitive" }
+          }
+        }
+      }
+    },
+    EventValue: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "name", "occurredAt", "summary", "attributes"],
+      properties: {
+        kind: { const: "EVENT" },
+        name: { $ref: "#/$defs/Alias" },
+        occurredAt: { type: "string", format: "date-time" },
+        summary: { type: "string", minLength: 1, maxLength: 2048 },
+        attributes: {
+          type: "object",
+          maxProperties: 64,
+          propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$" },
+          additionalProperties: { $ref: "#/$defs/JsonPrimitive" }
+        }
+      }
+    },
+    NormalizedValue: {
+      oneOf: [
+        { $ref: "#/$defs/ScalarValue" },
+        { $ref: "#/$defs/TimeSeriesValue" },
+        { $ref: "#/$defs/TableValue" },
+        { $ref: "#/$defs/EventValue" }
+      ]
+    },
+    OperationLimits: {
+      type: "object",
+      additionalProperties: false,
+      required: ["timeoutMs", "maxAgeMs", "maxBytes", "maxRows", "maxSeries", "maxPoints"],
+      properties: {
+        timeoutMs: { type: "integer", minimum: 1, maximum: 3e5 },
+        maxAgeMs: { type: "integer", minimum: 0, maximum: 31536e6 },
+        maxBytes: { type: "integer", minimum: 1, maximum: 1073741824 },
+        maxRows: { type: "integer", minimum: 0, maximum: 1e6 },
+        maxSeries: { type: "integer", minimum: 0, maximum: 1e5 },
+        maxPoints: { type: "integer", minimum: 0, maximum: 1e7 }
+      }
+    },
+    PortableRelativePath: {
+      type: "string",
+      minLength: 1,
+      maxLength: 1024,
+      pattern: "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)[A-Za-z0-9._/-]+$"
+    }
+  }
+};
+
+// packages/contracts/schemas/contradiction.schema.json
+var contradiction_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:contradiction:1",
+  title: "Cross-source contradiction record",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "contradictionId", "runId", "consistencyState", "kind", "summary", "claimRefs", "resolutionState", "assessedAt", "integrity"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    contradictionId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" },
+    runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    consistencyState: { const: "CONTRADICTORY" },
+    kind: { enum: ["VALUE", "SCOPE", "TIME", "IDENTITY", "AUTHORITY", "SEMANTIC"] },
+    summary: { type: "string", minLength: 1, maxLength: 2048 },
+    claimRefs: { type: "array", minItems: 2, maxItems: 128, items: { type: "object", additionalProperties: false, required: ["evidenceId", "jsonPointer", "claim"], properties: { evidenceId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" }, jsonPointer: { type: "string", pattern: "^(?:/(?:[^~/]|~0|~1)*)*$", maxLength: 1024 }, claim: { type: "string", minLength: 1, maxLength: 2048 } } } },
+    resolutionState: { enum: ["UNRESOLVED", "EXPLAINED", "RESOLVED"] },
+    resolution: { type: "string", minLength: 1, maxLength: 4096 },
+    assessedAt: { type: "string", format: "date-time" },
+    integrity: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  allOf: [{ if: { properties: { resolutionState: { enum: ["EXPLAINED", "RESOLVED"] } }, required: ["resolutionState"] }, then: { properties: { resolution: { type: "string", minLength: 1, maxLength: 4096 } }, required: ["resolution"] } }]
+};
+
+// packages/contracts/schemas/coverage.schema.json
+var coverage_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:coverage:1",
+  title: "Investigation evidence coverage",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "runId", "overall", "entries", "integrity"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    overall: { enum: ["COMPLETE", "PARTIAL", "UNKNOWN"] },
+    entries: { type: "array", maxItems: 1024, items: { type: "object", additionalProperties: false, required: ["domain", "operationId", "requirement", "disposition", "evidenceIds", "contradictionIds", "blocksWorkflow"], properties: { domain: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain" }, operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, requirement: { enum: ["REQUIRED", "OPTIONAL"] }, sourceAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, authority: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Authority" }, disposition: { enum: ["AVAILABLE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR", "UNSUPPORTED", "DEFERRED"] }, evidenceIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } }, contradictionIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" } }, paginationComplete: { type: "boolean" }, blocksWorkflow: { type: "boolean" }, reason: { type: "string", minLength: 1, maxLength: 2048 } } } },
+    integrity: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  }
+};
+
+// packages/contracts/schemas/evidence-envelope.schema.json
+var evidence_envelope_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:evidence-envelope:1",
+  title: "Normalized evidence envelope",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "evidenceId", "runId", "operationId", "operationDefinitionSha256", "trustBundleSha256", "origin", "authority", "source", "scope", "correlation", "evaluatedAt", "collectedAt", "window", "maxAcceptableAgeMs", "collectionState", "freshnessState", "native", "values", "redactions", "limitations", "pagination", "providerWarnings", "integrity"],
+  properties: {
+    schemaVersion: { enum: ["1.0.0", "1.1.0"] },
+    evidenceId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" },
+    runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+    operationDefinitionSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    trustBundleSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    origin: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    authority: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Authority" },
+    source: {
+      type: "object",
+      additionalProperties: false,
+      required: ["provider", "sourceAlias", "adapterPackageId", "adapterVersion"],
+      properties: {
+        provider: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        sourceAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        adapterPackageId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/AdapterPackageId" },
+        adapterVersion: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Semver" },
+        sanitizedReference: { type: "string", minLength: 1, maxLength: 2048 },
+        lineage: {
+          type: "object",
+          additionalProperties: false,
+          required: ["accessPath", "datasourceType", "sourceIdentitySha256"],
+          properties: {
+            accessPath: { enum: ["DIRECT", "GRAFANA"] },
+            datasourceType: { enum: ["prometheus", "loki", "tempo", "postgres"] },
+            sourceIdentitySha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+          }
+        }
+      }
+    },
+    scope: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Scope" },
+    correlation: { $ref: "urn:production-monitoring:schema:common:1#/$defs/CorrelationIdentity" },
+    evaluatedAt: { type: "string", format: "date-time" },
+    collectedAt: { type: "string", format: "date-time" },
+    window: { $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    maxAcceptableAgeMs: { type: "integer", minimum: 0, maximum: 31536e6 },
+    collectionState: { enum: ["COMPLETE", "EMPTY", "ERROR"] },
+    freshnessState: { enum: ["FRESH", "STALE", "NOT_APPLICABLE"] },
+    native: { type: "object", additionalProperties: false, required: ["resultType", "dimensions"], properties: { resultType: { type: "string", minLength: 1, maxLength: 128 }, unit: { type: "string", minLength: 1, maxLength: 64 }, dimensions: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Dimensions" } } },
+    values: { type: "array", maxItems: 1e4, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/NormalizedValue" } },
+    redactions: { type: "array", maxItems: 1e4, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RedactionRecord" } },
+    limitations: { type: "array", maxItems: 256, items: { type: "string", minLength: 1, maxLength: 2048 } },
+    pagination: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Pagination" },
+    providerWarnings: { type: "array", maxItems: 256, items: { type: "string", minLength: 1, maxLength: 2048 } },
+    error: { $ref: "urn:production-monitoring:schema:common:1#/$defs/SanitizedError" },
+    integrity: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  oneOf: [
+    { properties: { collectionState: { const: "COMPLETE" }, freshnessState: { enum: ["FRESH", "STALE"] }, values: { type: "array", minItems: 1 } }, required: ["collectionState", "freshnessState", "values"], not: { properties: { error: true }, required: ["error"] } },
+    { properties: { collectionState: { const: "EMPTY" }, freshnessState: { enum: ["FRESH", "STALE"] }, values: { type: "array", maxItems: 0 } }, required: ["collectionState", "freshnessState", "values"], not: { properties: { error: true }, required: ["error"] } },
+    { properties: { collectionState: { const: "ERROR" }, freshnessState: { const: "NOT_APPLICABLE" }, values: { type: "array", maxItems: 0 }, error: { $ref: "urn:production-monitoring:schema:common:1#/$defs/SanitizedError" } }, required: ["collectionState", "freshnessState", "values", "error"] }
+  ],
+  allOf: [
+    {
+      if: { properties: { schemaVersion: { const: "1.1.0" } }, required: ["schemaVersion"] },
+      then: {
+        properties: {
+          source: {
+            type: "object",
+            properties: { lineage: {} },
+            required: ["lineage"]
+          }
+        }
+      },
+      else: {
+        properties: {
+          source: {
+            type: "object",
+            not: {
+              type: "object",
+              properties: { lineage: {} },
+              required: ["lineage"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  $comment: "Cross-source consistency is not asserted here. Contradictions are separate records; the five-state evidence view is derived."
+};
+
+// packages/contracts/schemas/evidence-link.schema.json
+var evidence_link_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:evidence-link:1",
+  title: "Opaque workbench evidence link",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "workspaceId",
+    "linkRef",
+    "kind",
+    "label",
+    "availability"
+  ],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    workspaceId: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+    },
+    linkRef: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef"
+    },
+    evidenceRef: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+    },
+    kind: {
+      enum: [
+        "GRAFANA_DASHBOARD",
+        "GRAFANA_PANEL",
+        "PROMETHEUS_VIEW",
+        "LOG_VIEW",
+        "TRACE_VIEW",
+        "CODE_REVISION",
+        "CODE_LOCATION"
+      ]
+    },
+    label: { type: "string", minLength: 1, maxLength: 96 },
+    availability: { enum: ["AVAILABLE", "UNAVAILABLE"] },
+    unavailableReason: { type: "string", minLength: 1, maxLength: 256 }
+  },
+  allOf: [
+    {
+      if: {
+        properties: { availability: { const: "UNAVAILABLE" } },
+        required: ["availability"]
+      },
+      then: {
+        required: ["unavailableReason"],
+        properties: {
+          unavailableReason: { type: "string", minLength: 1, maxLength: 256 }
+        }
+      }
+    }
+  ]
+};
+
+// packages/contracts/schemas/investigation.schema.json
+var investigation_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:investigation:1",
+  title: "Evidence-linked investigation",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "runId", "analysisState", "status", "recoveryState", "scope", "requestedWindow", "evaluatedWindow", "observations", "inferences", "hypotheses", "contradictionIds", "checksPerformed", "missingEvidence", "smallestSafeNextStep", "approvalRequired", "remainingUncertainty", "owners", "integrity"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    analysisState: { enum: ["SUBMITTED", "EVIDENCE_ONLY"] },
+    status: { $ref: "urn:production-monitoring:schema:common:1#/$defs/InvestigationStatus" },
+    recoveryState: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RecoveryState" },
+    scope: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Scope" },
+    requestedWindow: { $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    evaluatedWindow: { $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    observations: { type: "array", maxItems: 1e3, items: { $ref: "#/$defs/observation" } },
+    inferences: { type: "array", maxItems: 1e3, items: { $ref: "#/$defs/inference" } },
+    hypotheses: { type: "array", maxItems: 256, items: { $ref: "#/$defs/hypothesis" } },
+    contradictionIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" } },
+    checksPerformed: { $ref: "#/$defs/stringList" },
+    missingEvidence: { $ref: "#/$defs/stringList" },
+    smallestSafeNextStep: { type: "string", minLength: 1, maxLength: 4096 },
+    approvalRequired: { type: "boolean" },
+    verificationContract: { $ref: "#/$defs/verificationContract" },
+    verificationResult: { type: "object", additionalProperties: false, required: ["status", "evidenceIds"], properties: { status: { enum: ["PASSED", "FAILED", "INCOMPLETE"] }, evidenceIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } } } },
+    remainingUncertainty: { $ref: "#/$defs/stringList" },
+    owners: { $ref: "#/$defs/stringList" },
+    integrity: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  $defs: {
+    stringList: { type: "array", maxItems: 256, items: { type: "string", minLength: 1, maxLength: 4096 } },
+    evidenceIds: { type: "array", maxItems: 128, uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } },
+    observation: { type: "object", additionalProperties: false, required: ["observationId", "statement", "evidenceIds"], properties: { observationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, statement: { type: "string", minLength: 1, maxLength: 4096 }, evidenceIds: { type: "array", minItems: 1, maxItems: 128, uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } } } },
+    inference: { type: "object", additionalProperties: false, required: ["inferenceId", "statement", "confidence", "rationale", "supportingEvidenceIds", "contradictingEvidenceIds"], properties: { inferenceId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, statement: { type: "string", minLength: 1, maxLength: 4096 }, confidence: { type: "number", minimum: 0, maximum: 1 }, rationale: { type: "string", minLength: 1, maxLength: 4096 }, supportingEvidenceIds: { $ref: "#/$defs/supportingEvidenceIds" }, contradictingEvidenceIds: { $ref: "#/$defs/evidenceIds" } } },
+    hypothesis: { type: "object", additionalProperties: false, required: ["hypothesisId", "rank", "statement", "status", "rationale", "supportingEvidenceIds", "contradictingEvidenceIds"], properties: { hypothesisId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, rank: { type: "integer", minimum: 1 }, statement: { type: "string", minLength: 1, maxLength: 4096 }, status: { enum: ["OPEN", "SUPPORTED", "WEAKENED", "REJECTED"] }, rationale: { type: "string", minLength: 1, maxLength: 4096 }, supportingEvidenceIds: { $ref: "#/$defs/supportingEvidenceIds" }, contradictingEvidenceIds: { $ref: "#/$defs/evidenceIds" }, nextCheck: { type: "string", minLength: 1, maxLength: 4096 } } },
+    verificationContract: { type: "object", additionalProperties: false, required: ["contractSha256", "policyAlias", "scope", "windowStrategy", "windowDurationSeconds", "requiredSamples", "passCount", "criteria"], properties: { contractSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, policyAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, scope: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Scope" }, cohort: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, windowStrategy: { enum: ["FIXED", "ROLLING", "REPEATED_CHECKS"] }, windowDurationSeconds: { type: "integer", minimum: 1, maximum: 86400 }, requiredSamples: { type: "integer", minimum: 1, maximum: 1e4 }, passCount: { type: "integer", minimum: 1, maximum: 1e4 }, criteria: { type: "array", minItems: 1, maxItems: 128, items: { type: "object", additionalProperties: false, required: ["criterionId", "operationId", "operationDefinitionSha256", "valueSelector", "comparator", "expected", "maxEvidenceAgeMs"], properties: { criterionId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, operationDefinitionSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, valueSelector: { type: "object", additionalProperties: false, required: ["kind", "name", "reducer"], properties: { kind: { enum: ["SCALAR", "TIMESERIES"] }, name: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, reducer: { enum: ["SINGLE", "LATEST", "ALL"] }, dimensions: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Dimensions" } } }, comparator: { enum: ["LT", "LTE", "GT", "GTE", "EQ", "INACTIVE", "ACTIVE"] }, expected: { $ref: "urn:production-monitoring:schema:common:1#/$defs/JsonPrimitive" }, unit: { type: "string", minLength: 1, maxLength: 64 }, maxEvidenceAgeMs: { type: "integer", minimum: 0, maximum: 31536e6 }, requiredDurationSeconds: { type: "integer", minimum: 1, maximum: 86400 } } } } } },
+    supportingEvidenceIds: { type: "array", minItems: 1, maxItems: 128, uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } }
+  },
+  allOf: [{ if: { properties: { recoveryState: { const: "RECOVERED" } }, required: ["recoveryState"] }, then: { required: ["verificationContract", "verificationResult"], properties: { verificationContract: { $ref: "#/$defs/verificationContract" }, verificationResult: { type: "object", properties: { status: { const: "PASSED" } }, required: ["status"] } } } }]
+};
+
+// packages/contracts/schemas/manifest.schema.json
+var manifest_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:manifest:1",
+  title: "Sealed incident bundle manifest",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "bundleId", "runId", "origin", "producer", "createdAt", "sealedAt", "entries", "bundleSha256"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    bundleId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/BundleId" },
+    runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    parentRunId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    origin: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    producer: { type: "object", additionalProperties: false, required: ["pluginVersion", "contractsVersion", "reportProjectionVersion"], properties: { pluginVersion: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Semver" }, contractsVersion: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Semver" }, reportProjectionVersion: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Semver" } } },
+    createdAt: { type: "string", format: "date-time" },
+    sealedAt: { type: "string", format: "date-time" },
+    entries: { type: "array", minItems: 1, maxItems: 1e4, items: { type: "object", additionalProperties: false, required: ["path", "role", "mediaType", "bytes", "sha256"], properties: { path: { allOf: [{ $ref: "urn:production-monitoring:schema:common:1#/$defs/PortableRelativePath" }, { not: { enum: ["manifest.json", "manifest.sha256", "manifest.sig", "report.md"] } }] }, role: { enum: ["RUN", "PROFILE", "OPERATIONS", "EVIDENCE", "CONTRADICTIONS", "COVERAGE", "INVESTIGATION", "RECEIPT"] }, mediaType: { type: "string", pattern: "^[a-z0-9.+-]+/[a-z0-9.+-]+$" }, bytes: { type: "integer", minimum: 0 }, sha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" } } } },
+    bundleSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+  },
+  $comment: "bundleSha256 covers only canonical semantic-file receipts sorted by path. manifest.json, manifest.sha256, manifest.sig, and the derived report.md projection are excluded, avoiding circular or presentation-dependent hashes."
+};
+
+// packages/contracts/schemas/monitoring-evidence-detail.schema.json
+var monitoring_evidence_detail_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:monitoring-evidence-detail:1",
+  title: "Bounded workbench evidence detail",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "workspaceId",
+    "evidenceRef",
+    "title",
+    "domain",
+    "origin",
+    "authority",
+    "state",
+    "source",
+    "evaluatedAt",
+    "collectedAt",
+    "window",
+    "summary",
+    "values",
+    "limitations",
+    "linkRefs"
+  ],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    workspaceId: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+    },
+    evidenceRef: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+    },
+    title: { type: "string", minLength: 1, maxLength: 160 },
+    domain: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain"
+    },
+    origin: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    authority: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/Authority"
+    },
+    state: {
+      enum: ["COMPLETE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR"]
+    },
+    source: {
+      type: "object",
+      additionalProperties: false,
+      required: ["provider", "sourceAlias"],
+      properties: {
+        provider: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[a-z][a-z0-9._-]{0,63}$"
+        },
+        sourceAlias: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias"
+        }
+      }
+    },
+    evaluatedAt: { type: "string", format: "date-time" },
+    collectedAt: { type: "string", format: "date-time" },
+    window: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow"
+    },
+    summary: { type: "string", minLength: 1, maxLength: 1024 },
+    values: {
+      type: "array",
+      maxItems: 24,
+      items: {
+        oneOf: [
+          { $ref: "#/$defs/metric" },
+          { $ref: "#/$defs/fact" },
+          { $ref: "#/$defs/event" }
+        ]
+      }
+    },
+    limitations: {
+      type: "array",
+      maxItems: 12,
+      items: { type: "string", minLength: 1, maxLength: 512 }
+    },
+    linkRefs: {
+      type: "array",
+      maxItems: 8,
+      uniqueItems: true,
+      items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef" }
+    }
+  },
+  $defs: {
+    metric: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "label", "value", "points"],
+      properties: {
+        kind: { const: "METRIC" },
+        label: { type: "string", minLength: 1, maxLength: 96 },
+        value: { type: ["number", "null"] },
+        unit: { type: "string", minLength: 1, maxLength: 32 },
+        points: {
+          type: "array",
+          maxItems: 60,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["at", "value"],
+            properties: {
+              at: { type: "string", format: "date-time" },
+              value: { type: ["number", "null"] }
+            }
+          }
+        }
+      }
+    },
+    fact: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "label", "value"],
+      properties: {
+        kind: { const: "FACT" },
+        label: { type: "string", minLength: 1, maxLength: 96 },
+        value: { type: ["null", "boolean", "number", "string"], maxLength: 256 }
+      }
+    },
+    event: {
+      type: "object",
+      additionalProperties: false,
+      required: ["kind", "at", "summary"],
+      properties: {
+        kind: { const: "EVENT" },
+        at: { type: "string", format: "date-time" },
+        summary: { type: "string", minLength: 1, maxLength: 512 }
+      }
+    }
+  }
+};
+
+// packages/contracts/schemas/monitoring-workspace-snapshot.schema.json
+var monitoring_workspace_snapshot_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:monitoring-workspace-snapshot:1",
+  title: "Production Monitoring workbench snapshot",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "workspaceId",
+    "stateVersion",
+    "asOf",
+    "lifecycle",
+    "phase",
+    "status",
+    "progress",
+    "signals",
+    "hypotheses",
+    "evidence",
+    "activity",
+    "patch",
+    "nextAction",
+    "limitations"
+  ],
+  properties: {
+    schemaVersion: { enum: ["1.0.0", "1.1.0"] },
+    workspaceId: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+    },
+    stateVersion: { type: "integer", minimum: 1, maximum: 9007199254740991 },
+    asOf: { type: "string", format: "date-time" },
+    lifecycle: {
+      enum: ["IDLE", "PREFLIGHT", "RUNNING", "SEALED", "PARTIAL", "BLOCKED", "CANCELLED"]
+    },
+    phase: {
+      enum: [
+        "READINESS",
+        "SCOPING",
+        "BASELINE",
+        "COLLECTING",
+        "COMPARING",
+        "ANALYZING",
+        "FINALIZING",
+        "PATCHING",
+        "VERIFYING"
+      ]
+    },
+    origin: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    scope: {
+      type: "object",
+      additionalProperties: false,
+      required: ["environment"],
+      properties: {
+        service: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        environment: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias"
+        },
+        window: { $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" }
+      }
+    },
+    status: {
+      type: "object",
+      additionalProperties: false,
+      required: ["service", "collection", "causality", "recovery", "audit"],
+      properties: {
+        service: { enum: ["HEALTHY", "DEGRADED", "RECOVERING", "UNKNOWN"] },
+        collection: {
+          enum: ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "PARTIAL", "ERROR"]
+        },
+        causality: { enum: ["NOT_ASSESSED", "OPEN", "SUPPORTED", "INCONCLUSIVE"] },
+        recovery: {
+          enum: [
+            "NOT_ASSESSED",
+            "APPROVAL_REQUIRED",
+            "ACTION_FAILED",
+            "INCOMPLETE",
+            "NOT_RECOVERED",
+            "RECOVERED"
+          ]
+        },
+        audit: { enum: ["INITIALIZING", "HEALTHY", "DEGRADED", "ERROR"] }
+      }
+    },
+    progress: {
+      type: "object",
+      additionalProperties: false,
+      required: ["completedOperations", "requiredOperations", "sourceStates"],
+      properties: {
+        completedOperations: { type: "integer", minimum: 0, maximum: 1024 },
+        requiredOperations: { type: "integer", minimum: 0, maximum: 1024 },
+        sourceStates: {
+          type: "object",
+          maxProperties: 16,
+          propertyNames: { pattern: "^[A-Z][A-Z0-9_]{0,31}$" },
+          additionalProperties: { type: "integer", minimum: 0, maximum: 1024 }
+        }
+      }
+    },
+    signals: {
+      type: "array",
+      maxItems: 3,
+      items: { $ref: "#/$defs/signalCard" }
+    },
+    hypotheses: {
+      type: "array",
+      maxItems: 3,
+      items: { $ref: "#/$defs/hypothesisCard" }
+    },
+    issues: {
+      type: "array",
+      maxItems: 24,
+      items: { $ref: "#/$defs/issueCard" }
+    },
+    evidence: {
+      type: "array",
+      maxItems: 24,
+      items: { $ref: "#/$defs/evidenceCard" }
+    },
+    activity: {
+      type: "array",
+      maxItems: 40,
+      items: { $ref: "#/$defs/activityItem" }
+    },
+    patch: { $ref: "urn:production-monitoring:schema:patch-status:1" },
+    nextAction: { $ref: "#/$defs/actionAvailability" },
+    limitations: {
+      type: "array",
+      maxItems: 16,
+      items: { type: "string", minLength: 1, maxLength: 512 }
+    }
+  },
+  allOf: [
+    {
+      if: { properties: { schemaVersion: { const: "1.1.0" } }, required: ["schemaVersion"] },
+      then: { properties: { issues: {} }, required: ["issues"] },
+      else: { not: { required: ["issues"] } }
+    }
+  ],
+  $defs: {
+    evidenceRefs: {
+      type: "array",
+      maxItems: 8,
+      uniqueItems: true,
+      items: {
+        $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+      }
+    },
+    linkRefs: {
+      type: "array",
+      maxItems: 4,
+      uniqueItems: true,
+      items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef" }
+    },
+    signalCard: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "signalRef",
+        "title",
+        "displayValue",
+        "severity",
+        "direction",
+        "points",
+        "evidenceRefs"
+      ],
+      properties: {
+        signalRef: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        title: { type: "string", minLength: 1, maxLength: 96 },
+        displayValue: { type: "string", minLength: 1, maxLength: 64 },
+        unit: { type: "string", minLength: 1, maxLength: 32 },
+        severity: { enum: ["NEUTRAL", "GOOD", "WARNING", "CRITICAL"] },
+        direction: { enum: ["UP", "DOWN", "FLAT", "UNKNOWN"] },
+        points: {
+          type: "array",
+          maxItems: 30,
+          items: { type: ["number", "null"] }
+        },
+        evidenceRefs: { $ref: "#/$defs/evidenceRefs" }
+      }
+    },
+    hypothesisCard: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "hypothesisRef",
+        "rank",
+        "statement",
+        "status",
+        "rationale",
+        "evidenceRefs"
+      ],
+      properties: {
+        hypothesisRef: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias"
+        },
+        rank: { type: "integer", minimum: 1, maximum: 3 },
+        statement: { type: "string", minLength: 1, maxLength: 512 },
+        status: { enum: ["OPEN", "SUPPORTED", "WEAKENED", "REJECTED"] },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+        rationale: { type: "string", minLength: 1, maxLength: 512 },
+        evidenceRefs: { $ref: "#/$defs/evidenceRefs" }
+      }
+    },
+    issueCard: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "issueRef",
+        "kind",
+        "severity",
+        "status",
+        "classification",
+        "title",
+        "summary",
+        "evidenceRefs",
+        "hypothesisRefs",
+        "patch"
+      ],
+      properties: {
+        issueRef: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchIssueRef"
+        },
+        kind: {
+          enum: ["ALERT", "REGRESSION", "ANOMALY", "CONTRADICTION", "EVIDENCE_GAP"]
+        },
+        severity: { enum: ["INFO", "WARNING", "CRITICAL"] },
+        status: { enum: ["OPEN", "SUPPORTED", "RESOLVED", "BLOCKED"] },
+        classification: { enum: ["SIGNED_RULE", "DEVIATION"] },
+        title: { type: "string", minLength: 1, maxLength: 128 },
+        summary: { type: "string", minLength: 1, maxLength: 512 },
+        evidenceRefs: { $ref: "#/$defs/evidenceRefs" },
+        hypothesisRefs: {
+          type: "array",
+          maxItems: 8,
+          uniqueItems: true,
+          items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }
+        },
+        patch: { $ref: "urn:production-monitoring:schema:patch-status:1" }
+      },
+      allOf: [
+        {
+          if: { properties: { kind: { const: "ANOMALY" } }, required: ["kind"] },
+          then: { properties: { classification: { const: "SIGNED_RULE" } } }
+        }
+      ]
+    },
+    evidenceCard: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "evidenceRef",
+        "title",
+        "domain",
+        "state",
+        "authority",
+        "sourceLabel",
+        "summary",
+        "linkRefs"
+      ],
+      properties: {
+        evidenceRef: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+        },
+        title: { type: "string", minLength: 1, maxLength: 128 },
+        domain: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain"
+        },
+        state: { enum: ["COMPLETE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR"] },
+        authority: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/Authority"
+        },
+        sourceLabel: { type: "string", minLength: 1, maxLength: 96 },
+        summary: { type: "string", minLength: 1, maxLength: 512 },
+        observedAt: { type: "string", format: "date-time" },
+        linkRefs: { $ref: "#/$defs/linkRefs" }
+      }
+    },
+    activityItem: {
+      type: "object",
+      additionalProperties: false,
+      required: ["activityRef", "at", "kind", "state", "title"],
+      properties: {
+        activityRef: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        at: { type: "string", format: "date-time" },
+        kind: {
+          enum: ["READINESS", "SCOPE", "EVIDENCE", "ANALYSIS", "PATCH", "RECOVERY", "SYSTEM"]
+        },
+        state: { enum: ["PENDING", "RUNNING", "COMPLETE", "PARTIAL", "ERROR"] },
+        title: { type: "string", minLength: 1, maxLength: 128 },
+        detail: { type: "string", minLength: 1, maxLength: 512 }
+      }
+    },
+    actionAvailability: {
+      type: "object",
+      additionalProperties: false,
+      required: ["action", "enabled", "label"],
+      properties: {
+        action: {
+          enum: [
+            "NONE",
+            "COLLECT_EVIDENCE",
+            "RETRY_COLLECTION",
+            "GENERATE_PATCH",
+            "REVIEW_PATCH",
+            "VERIFY_RECOVERY"
+          ]
+        },
+        enabled: { type: "boolean" },
+        label: { type: "string", minLength: 1, maxLength: 80 },
+        reason: { type: "string", minLength: 1, maxLength: 256 }
+      }
+    }
+  }
+};
+
+// packages/contracts/schemas/operation-snapshot.schema.json
+var operation_snapshot_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:operation-snapshot:1",
+  title: "Reviewed operation snapshot",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "operationId", "revision", "capturedAt", "definition", "definitionSha256"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+    revision: { type: "integer", minimum: 1 },
+    capturedAt: { type: "string", format: "date-time" },
+    definition: {
+      type: "object",
+      additionalProperties: false,
+      required: ["domain", "sourceAlias", "adapterPackageId", "adapterOperation", "authority", "sanitizedProviderDefinition", "scopeMapping", "allowedDimensions", "requiredProviderScopes", "sensitivity", "limits", "normalization"],
+      properties: {
+        domain: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain" },
+        sourceAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        adapterPackageId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/AdapterPackageId" },
+        adapterOperation: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        authority: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Authority" },
+        sanitizedProviderDefinition: { type: "object" },
+        expectedSourceLineage: {
+          type: "object",
+          additionalProperties: false,
+          required: ["accessPath", "datasourceType", "sourceIdentitySha256"],
+          properties: {
+            accessPath: { enum: ["DIRECT", "GRAFANA"] },
+            datasourceType: { enum: ["prometheus", "loki", "tempo", "postgres"] },
+            sourceIdentitySha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+          }
+        },
+        scopeMapping: { type: "object", additionalProperties: { type: "string", maxLength: 256 } },
+        allowedDimensions: { type: "array", maxItems: 128, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 } },
+        requiredProviderScopes: { type: "array", maxItems: 128, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 256 } },
+        sensitivity: { enum: ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"] },
+        limits: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationLimits" },
+        normalization: {
+          type: "object",
+          additionalProperties: false,
+          required: ["resultKind", "dimensionMappings"],
+          properties: {
+            resultKind: { enum: ["SCALAR", "TIMESERIES", "TABLE", "EVENT"] },
+            targetUnit: { type: "string", minLength: 1, maxLength: 64 },
+            dimensionMappings: { type: "object", additionalProperties: { type: "string", minLength: 1, maxLength: 128 } }
+          }
+        }
+      }
+    },
+    definitionSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+  },
+  $comment: "definitionSha256 covers canonical {operationId, revision, definition}; capturedAt and definitionSha256 are excluded."
+};
+
+// packages/contracts/schemas/patch-status.schema.json
+var patch_status_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:patch-status:1",
+  title: "Workbench patch status projection",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "state",
+    "eligible",
+    "updatedAt",
+    "evidenceRefs",
+    "limitations"
+  ],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    state: {
+      enum: [
+        "NOT_ELIGIBLE",
+        "ELIGIBLE",
+        "REQUESTED",
+        "HANDOFF_COMPLETE",
+        "BLOCKED",
+        "STALE"
+      ]
+    },
+    eligible: { type: "boolean" },
+    updatedAt: { type: "string", format: "date-time" },
+    title: { type: "string", minLength: 1, maxLength: 160 },
+    reason: { type: "string", minLength: 1, maxLength: 512 },
+    evidenceRefs: {
+      type: "array",
+      maxItems: 16,
+      uniqueItems: true,
+      items: {
+        $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+      }
+    },
+    limitations: {
+      type: "array",
+      maxItems: 12,
+      items: { type: "string", minLength: 1, maxLength: 512 }
+    }
+  }
+};
+
+// packages/contracts/schemas/provider-capability-pack.schema.json
+var provider_capability_pack_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:provider-capability-pack:1",
+  title: "Reviewed provider capability pack",
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schemaVersion",
+    "packId",
+    "revision",
+    "useCase",
+    "requiredOperationIds",
+    "optionalOperationIds",
+    "supportedSubjectKinds",
+    "scopeMappings",
+    "signals",
+    "issueRules",
+    "definitionSha256"
+  ],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    packId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/CapabilityPackId" },
+    revision: { type: "integer", minimum: 1, maximum: 2147483647 },
+    useCase: {
+      enum: [
+        "INFRASTRUCTURE",
+        "APPLICATION_PERFORMANCE",
+        "LOG_ANALYTICS",
+        "IOT_EDGE",
+        "BUSINESS_INTELLIGENCE"
+      ]
+    },
+    requiredOperationIds: {
+      type: "array",
+      minItems: 1,
+      maxItems: 128,
+      uniqueItems: true,
+      items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" }
+    },
+    optionalOperationIds: {
+      type: "array",
+      maxItems: 128,
+      uniqueItems: true,
+      items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" }
+    },
+    supportedSubjectKinds: {
+      type: "array",
+      maxItems: 5,
+      uniqueItems: true,
+      items: { enum: ["HOST", "DEVICE", "FLEET", "BUSINESS_UNIT", "KPI_SET"] }
+    },
+    scopeMappings: {
+      type: "array",
+      minItems: 1,
+      maxItems: 16,
+      items: { $ref: "#/$defs/scopeMapping" }
+    },
+    signals: {
+      type: "array",
+      minItems: 1,
+      maxItems: 64,
+      items: { $ref: "#/$defs/signal" }
+    },
+    issueRules: {
+      type: "array",
+      maxItems: 64,
+      items: { $ref: "#/$defs/issueRule" }
+    },
+    definitionSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+  },
+  $defs: {
+    scopeMapping: {
+      type: "object",
+      additionalProperties: false,
+      required: ["scopeField", "providerField", "required"],
+      properties: {
+        scopeField: { enum: ["environment", "service", "region", "cohort", "subject.ref"] },
+        providerField: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          pattern: "^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+        },
+        required: { type: "boolean" }
+      }
+    },
+    threshold: {
+      type: "object",
+      additionalProperties: false,
+      required: ["comparator"],
+      properties: {
+        comparator: { enum: ["LT", "LTE", "GT", "GTE", "EQ"] },
+        warning: { type: "number" },
+        critical: { type: "number" }
+      }
+    },
+    signal: {
+      type: "object",
+      additionalProperties: false,
+      required: ["signalId", "operationId", "resultName", "order", "polarity"],
+      properties: {
+        signalId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+        resultName: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        order: { type: "integer", minimum: 1, maximum: 1024 },
+        unit: { type: "string", minLength: 1, maxLength: 64 },
+        polarity: { enum: ["HIGH_IS_BAD", "LOW_IS_BAD", "NEUTRAL"] },
+        thresholds: { $ref: "#/$defs/threshold" }
+      }
+    },
+    issueRule: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "ruleId",
+        "comparison",
+        "operationId",
+        "issueKind",
+        "severity",
+        "signedThreshold"
+      ],
+      properties: {
+        ruleId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        comparison: {
+          enum: ["THRESHOLD", "BASELINE_DELTA", "STALE", "EMPTY", "ERROR", "CONTRADICTION"]
+        },
+        operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+        comparisonOperationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+        resultName: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        reducer: { enum: ["SINGLE", "MAX", "MIN"] },
+        comparator: { enum: ["LT", "LTE", "GT", "GTE", "EQ"] },
+        threshold: { type: "number" },
+        delta: { type: "number" },
+        maxAgeMs: { type: "integer", minimum: 0, maximum: 31536e6 },
+        issueKind: {
+          enum: ["ALERT", "REGRESSION", "ANOMALY", "CONTRADICTION", "EVIDENCE_GAP"]
+        },
+        severity: { enum: ["INFO", "WARNING", "CRITICAL"] },
+        signedThreshold: { type: "boolean" }
+      },
+      allOf: [
+        {
+          if: { properties: { comparison: { const: "THRESHOLD" } }, required: ["comparison"] },
+          then: {
+            properties: { resultName: {}, comparator: {}, threshold: {} },
+            required: ["resultName", "comparator", "threshold"]
+          }
+        },
+        {
+          if: { properties: { comparison: { const: "BASELINE_DELTA" } }, required: ["comparison"] },
+          then: {
+            properties: { resultName: {}, comparator: {}, delta: {} },
+            required: ["resultName", "comparator", "delta"]
+          }
+        },
+        {
+          if: { properties: { comparison: { const: "STALE" } }, required: ["comparison"] },
+          then: { properties: { maxAgeMs: {} }, required: ["maxAgeMs"] }
+        },
+        {
+          if: { properties: { issueKind: { const: "ANOMALY" } }, required: ["issueKind"] },
+          then: { properties: { signedThreshold: { const: true } } }
+        }
+      ]
+    }
+  },
+  $comment: "definitionSha256 is sha256-jcs-v1 over the complete pack with definitionSha256 omitted."
+};
+
+// packages/contracts/schemas/resolved-evidence-link.schema.json
+var resolved_evidence_link_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:resolved-evidence-link:1",
+  title: "App-only trusted evidence-link target",
+  oneOf: [
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["schemaVersion", "workspaceId", "linkRef", "mode", "label", "url"],
+      properties: {
+        schemaVersion: { const: "1.0.0" },
+        workspaceId: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+        },
+        linkRef: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef"
+        },
+        mode: { const: "OPEN_EXTERNAL" },
+        label: { type: "string", minLength: 1, maxLength: 96 },
+        url: {
+          type: "string",
+          format: "uri",
+          minLength: 9,
+          maxLength: 2048,
+          pattern: "^(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://(?:127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]{1,5})?)(?:[/?#].*)?$"
+        }
+      }
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      required: ["schemaVersion", "workspaceId", "linkRef", "mode", "label", "intent"],
+      properties: {
+        schemaVersion: { const: "1.0.0" },
+        workspaceId: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+        },
+        linkRef: {
+          $ref: "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef"
+        },
+        mode: { const: "CODE_FOLLOW_UP" },
+        label: { type: "string", minLength: 1, maxLength: 96 },
+        intent: { const: "OPEN_CODE_EVIDENCE" }
+      }
+    }
+  ]
+};
+
+// packages/contracts/schemas/run-record.schema.json
+var run_record_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:run-record:1",
+  title: "Authenticated monitoring run record",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "runId", "state", "workflow", "origin", "principal", "handleSha256", "requestSha256", "trustBundleSha256", "profileAlias", "scope", "window", "allowedOperationHashes", "evidenceIds", "contradictionIds", "audit", "createdAt", "expiresAt", "integrity"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    state: { enum: ["OPEN", "FINALIZING", "SEALED", "ABORTED", "EXPIRED"] },
+    workflow: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Workflow" },
+    origin: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    principal: { type: "object", additionalProperties: false, required: ["issuerAlias", "subjectSha256", "tenantSha256", "sessionSha256"], properties: { issuerAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, subjectSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, tenantSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, sessionSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" } } },
+    handleSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    requestSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    trustBundleSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    profileAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    scope: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Scope" },
+    window: { $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    baselineWindow: { $ref: "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    incidentAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    parent: { type: "object", additionalProperties: false, required: ["runId", "verificationContractSha256"], properties: { runId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/RunId" }, verificationContractSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" } } },
+    allowedOperationHashes: { type: "object", propertyNames: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, additionalProperties: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" } },
+    evidenceIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } },
+    contradictionIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" } },
+    audit: { type: "object", additionalProperties: false, required: ["required", "state"], properties: { required: { type: "boolean" }, state: { enum: ["HEALTHY", "DEGRADED", "FAILED"] } } },
+    createdAt: { type: "string", format: "date-time" },
+    expiresAt: { type: "string", format: "date-time" },
+    finalizedAt: { type: "string", format: "date-time" },
+    abortedAt: { type: "string", format: "date-time" },
+    integrity: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  allOf: [
+    { if: { properties: { state: { const: "SEALED" } }, required: ["state"] }, then: { properties: { finalizedAt: { type: "string", format: "date-time" } }, required: ["finalizedAt"] } },
+    { if: { properties: { state: { const: "ABORTED" } }, required: ["state"] }, then: { properties: { abortedAt: { type: "string", format: "date-time" } }, required: ["abortedAt"] } },
+    { if: { properties: { workflow: { const: "verify" } }, required: ["workflow"] }, then: { properties: { parent: { type: "object" } }, required: ["parent"] } }
+  ]
+};
+
+// packages/contracts/schemas/trusted-profile.schema.json
+var trusted_profile_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:trusted-profile:1",
+  title: "Compiled trusted monitoring profile",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "profileAlias", "capabilityProfile", "allowedOrigins", "compiledAt", "configSha256", "endpointRegistrySha256", "catalogSha256", "scopes", "endpointIds", "operationIds", "policy"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    profileAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    capabilityProfile: { enum: ["observe", "investigate", "prepare_patch"] },
+    allowedOrigins: { type: "array", minItems: 1, uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Origin" } },
+    compiledAt: { type: "string", format: "date-time" },
+    configSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    endpointRegistrySha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    catalogSha256: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256" },
+    scopes: { type: "object", minProperties: 1, propertyNames: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, additionalProperties: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Scope" } },
+    endpointIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" } },
+    operationIds: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" } },
+    capabilityPackIds: {
+      type: "array",
+      maxItems: 32,
+      uniqueItems: true,
+      items: { $ref: "urn:production-monitoring:schema:common:1#/$defs/CapabilityPackId" }
+    },
+    capabilityPackCatalogSha256: {
+      $ref: "urn:production-monitoring:schema:common:1#/$defs/Sha256"
+    },
+    defaultVerificationPolicyAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    verificationPolicies: {
+      type: "object",
+      maxProperties: 64,
+      propertyNames: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+      additionalProperties: { $ref: "#/$defs/verificationPolicy" }
+    },
+    policy: {
+      type: "object",
+      additionalProperties: false,
+      required: ["defaultLookback", "maxEvidenceAge", "rawEvidenceRetention", "auditRequired", "limits"],
+      properties: {
+        defaultLookback: { $ref: "#/$defs/operatorSetting" },
+        maxEvidenceAge: { $ref: "#/$defs/operatorSetting" },
+        rawEvidenceRetention: { type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { const: "NONE" } }, $comment: "The current core normalizes provider responses and never persists the opaque provider payload." },
+        auditRequired: { type: "boolean" },
+        limits: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationLimits" }
+      }
+    }
+  },
+  $defs: {
+    operatorSetting: { oneOf: [{ type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { const: "OPERATOR_REQUIRED" } } }, { type: "object", additionalProperties: false, required: ["mode", "durationSeconds"], properties: { mode: { const: "FIXED" }, durationSeconds: { type: "integer", minimum: 1, maximum: 31536e3 } } }] },
+    valueSelector: { type: "object", additionalProperties: false, required: ["kind", "name", "reducer"], properties: { kind: { enum: ["SCALAR", "TIMESERIES"] }, name: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, reducer: { enum: ["SINGLE", "LATEST", "ALL"] }, dimensions: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Dimensions" } } },
+    verificationCriterion: { type: "object", additionalProperties: false, required: ["criterionId", "operationId", "valueSelector", "comparator", "expected", "maxEvidenceAgeMs"], properties: { criterionId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, operationId: { $ref: "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, valueSelector: { $ref: "#/$defs/valueSelector" }, comparator: { enum: ["LT", "LTE", "GT", "GTE", "EQ", "INACTIVE", "ACTIVE"] }, expected: { $ref: "urn:production-monitoring:schema:common:1#/$defs/JsonPrimitive" }, unit: { type: "string", minLength: 1, maxLength: 64 }, maxEvidenceAgeMs: { type: "integer", minimum: 0, maximum: 31536e6 }, requiredDurationSeconds: { type: "integer", minimum: 1, maximum: 86400 } } },
+    verificationPolicy: { type: "object", additionalProperties: false, required: ["policyAlias", "windowStrategy", "windowDurationSeconds", "requiredSamples", "passCount", "criteria"], properties: { policyAlias: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Alias" }, windowStrategy: { enum: ["FIXED", "ROLLING", "REPEATED_CHECKS"] }, windowDurationSeconds: { type: "integer", minimum: 1, maximum: 86400 }, requiredSamples: { type: "integer", minimum: 1, maximum: 1e4 }, passCount: { type: "integer", minimum: 1, maximum: 1e4 }, criteria: { type: "array", minItems: 1, maxItems: 128, items: { $ref: "#/$defs/verificationCriterion" } } } }
+  }
+};
+
+// packages/contracts/schemas/trust-bundle.schema.json
+var trust_bundle_schema_default = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "urn:production-monitoring:schema:trust-bundle:1",
+  title: "Pinned trust bundle",
+  type: "object",
+  additionalProperties: false,
+  required: ["schemaVersion", "createdAt", "profile", "endpoints", "operations", "adapters", "integrity"],
+  properties: {
+    schemaVersion: { const: "1.0.0" },
+    createdAt: { type: "string", format: "date-time" },
+    profile: { $ref: "urn:production-monitoring:schema:trusted-profile:1" },
+    endpoints: { type: "array", uniqueItems: true, items: { $ref: "#/$defs/endpoint" } },
+    operations: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:operation-snapshot:1" } },
+    capabilityPacks: {
+      type: "array",
+      maxItems: 32,
+      uniqueItems: true,
+      items: { $ref: "urn:production-monitoring:schema:provider-capability-pack:1" }
+    },
+    adapters: { type: "array", uniqueItems: true, items: { $ref: "urn:production-monitoring:schema:adapter-package:1" } },
+    integrity: { $ref: "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  $defs: {
+    credential: { type: "object", additionalProperties: false, required: ["kind", "key"], properties: { kind: { enum: ["env", "workload_identity", "broker"] }, key: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_.:-]{0,255}$" } } },
+    authentication: {
+      oneOf: [
+        { type: "object", additionalProperties: false, required: ["mode"], properties: { mode: { const: "NONE" } } },
+        { type: "object", additionalProperties: false, required: ["mode", "tokenRef"], properties: { mode: { const: "BEARER" }, tokenRef: { $ref: "#/$defs/credential" } } },
+        { type: "object", additionalProperties: false, required: ["mode", "usernameRef", "passwordRef"], properties: { mode: { const:

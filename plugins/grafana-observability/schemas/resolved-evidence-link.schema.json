@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:resolved-evidence-link:1",
+  "title": "App-only trusted evidence-link target",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "workspaceId", "linkRef", "mode", "label", "url"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "workspaceId": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+        },
+        "linkRef": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef"
+        },
+        "mode": { "const": "OPEN_EXTERNAL" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 9,
+          "maxLength": 2048,
+          "pattern": "^(?:https://[A-Za-z0-9.-]+(?::[0-9]{1,5})?|http://(?:127\\.0\\.0\\.1|localhost|\\[::1\\])(?::[0-9]{1,5})?)(?:[/?#].*)?$"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "workspaceId", "linkRef", "mode", "label", "intent"],
+      "properties": {
+        "schemaVersion": { "const": "1.0.0" },
+        "workspaceId": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+        },
+        "linkRef": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef"
+        },
+        "mode": { "const": "CODE_FOLLOW_UP" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "intent": { "const": "OPEN_CODE_EVIDENCE" }
+      }
+    }
+  ]
+}

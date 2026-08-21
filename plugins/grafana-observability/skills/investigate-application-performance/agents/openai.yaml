@@ -1,0 +1,5 @@
+interface:
+  display_name: "Investigate Application Performance"
+  short_description: "Compare request, error, and latency evidence"
+  brand_color: "#7058E8"
+  default_prompt: "Use $investigate-application-performance to compare this application's request rate, errors, and p95 latency with a reviewed baseline."

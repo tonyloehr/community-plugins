@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "grafana-observability": {
+      "command": "node",
+      "args": [
+        "./mcp/server.mjs",
+        "--stdio"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "PRODUCTION_MONITORING_MODE",
+        "PRODUCTION_MONITORING_TRUST_ROOT",
+        "PRODUCTION_MONITORING_ACTIVATION_RECEIPT",
+        "PRODUCTION_MONITORING_ARTIFACT_ROOT",
+        "PRODUCTION_MONITORING_STATE_ROOT"
+      ],
+      "tool_timeout_sec": 3600
+    }
+  }
+}

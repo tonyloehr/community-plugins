@@ -1,0 +1,20 @@
+{
+  "name": "community-plugins",
+  "interface": {
+    "displayName": "Community Plugins"
+  },
+  "plugins": [
+    {
+      "name": "grafana-observability",
+      "source": {
+        "source": "local",
+        "path": "./plugins/grafana-observability"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

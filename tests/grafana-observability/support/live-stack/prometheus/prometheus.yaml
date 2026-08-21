@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  - job_name: simulated-observability-seed
+    # The synthetic exporter intentionally owns the reviewed `instance` label.
+    # Without this, Prometheus renames host-alpha to exported_instance and the
+    # frozen infrastructure selectors return no samples.
+    honor_labels: true
+    static_configs:
+      - targets: [telemetry-seed:8080]
+        labels:
+          origin: SIMULATED
+
+storage:
+  tsdb:
+    out_of_order_time_window: 0s

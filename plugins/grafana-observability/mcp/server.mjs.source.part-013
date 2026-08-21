@@ -1,0 +1,946 @@
+ema(tool.inputSchema);
+            return obj ? toJsonSchemaCompat(obj, {
+              strictUnions: true,
+              pipeStrategy: "input"
+            }) : EMPTY_OBJECT_JSON_SCHEMA;
+          })(),
+          annotations: tool.annotations,
+          execution: tool.execution,
+          _meta: tool._meta
+        };
+        if (tool.outputSchema) {
+          const obj = normalizeObjectSchema(tool.outputSchema);
+          if (obj) {
+            toolDefinition.outputSchema = toJsonSchemaCompat(obj, {
+              strictUnions: true,
+              pipeStrategy: "output"
+            });
+          }
+        }
+        return toolDefinition;
+      })
+    }));
+    this.server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+      try {
+        const tool = this._registeredTools[request.params.name];
+        if (!tool) {
+          throw new McpError(ErrorCode.InvalidParams, "Tool ".concat(request.params.name, " not found"));
+        }
+        if (!tool.enabled) {
+          throw new McpError(ErrorCode.InvalidParams, "Tool ".concat(request.params.name, " disabled"));
+        }
+        const isTaskRequest = !!request.params.task;
+        const taskSupport = tool.execution?.taskSupport;
+        const isTaskHandler = "createTask" in tool.handler;
+        if ((taskSupport === "required" || taskSupport === "optional") && !isTaskHandler) {
+          throw new McpError(ErrorCode.InternalError, "Tool ".concat(request.params.name, " has taskSupport '").concat(taskSupport, "' but was not registered with registerToolTask"));
+        }
+        if (taskSupport === "required" && !isTaskRequest) {
+          throw new McpError(ErrorCode.MethodNotFound, "Tool ".concat(request.params.name, " requires task augmentation (taskSupport: 'required')"));
+        }
+        if (taskSupport === "optional" && !isTaskRequest && isTaskHandler) {
+          return await this.handleAutomaticTaskPolling(tool, request, extra);
+        }
+        const args = await this.validateToolInput(tool, request.params.arguments, request.params.name);
+        const result = await this.executeToolHandler(tool, args, extra);
+        if (isTaskRequest) {
+          return result;
+        }
+        await this.validateToolOutput(tool, result, request.params.name);
+        return result;
+      } catch (error2) {
+        if (error2 instanceof McpError) {
+          if (error2.code === ErrorCode.UrlElicitationRequired) {
+            throw error2;
+          }
+        }
+        return this.createToolError(error2 instanceof Error ? error2.message : String(error2));
+      }
+    });
+    this._toolHandlersInitialized = true;
+  }
+  /**
+   * Creates a tool error result.
+   *
+   * @param errorMessage - The error message.
+   * @returns The tool error result.
+   */
+  createToolError(errorMessage) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: errorMessage
+        }
+      ],
+      isError: true
+    };
+  }
+  /**
+   * Validates tool input arguments against the tool's input schema.
+   */
+  async validateToolInput(tool, args, toolName) {
+    if (!tool.inputSchema) {
+      return void 0;
+    }
+    const inputObj = normalizeObjectSchema(tool.inputSchema);
+    const schemaToParse = inputObj ?? tool.inputSchema;
+    const parseResult = await safeParseAsync3(schemaToParse, args);
+    if (!parseResult.success) {
+      const error2 = "error" in parseResult ? parseResult.error : "Unknown error";
+      const errorMessage = getParseErrorMessage(error2);
+      throw new McpError(ErrorCode.InvalidParams, "Input validation error: Invalid arguments for tool ".concat(toolName, ": ").concat(errorMessage));
+    }
+    return parseResult.data;
+  }
+  /**
+   * Validates tool output against the tool's output schema.
+   */
+  async validateToolOutput(tool, result, toolName) {
+    if (!tool.outputSchema) {
+      return;
+    }
+    if (!("content" in result)) {
+      return;
+    }
+    if (result.isError) {
+      return;
+    }
+    if (!result.structuredContent) {
+      throw new McpError(ErrorCode.InvalidParams, "Output validation error: Tool ".concat(toolName, " has an output schema but no structured content was provided"));
+    }
+    const outputObj = normalizeObjectSchema(tool.outputSchema);
+    const parseResult = await safeParseAsync3(outputObj, result.structuredContent);
+    if (!parseResult.success) {
+      const error2 = "error" in parseResult ? parseResult.error : "Unknown error";
+      const errorMessage = getParseErrorMessage(error2);
+      throw new McpError(ErrorCode.InvalidParams, "Output validation error: Invalid structured content for tool ".concat(toolName, ": ").concat(errorMessage));
+    }
+  }
+  /**
+   * Executes a tool handler (either regular or task-based).
+   */
+  async executeToolHandler(tool, args, extra) {
+    const handler = tool.handler;
+    const isTaskHandler = "createTask" in handler;
+    if (isTaskHandler) {
+      if (!extra.taskStore) {
+        throw new Error("No task store provided.");
+      }
+      const taskExtra = { ...extra, taskStore: extra.taskStore };
+      if (tool.inputSchema) {
+        const typedHandler = handler;
+        return await Promise.resolve(typedHandler.createTask(args, taskExtra));
+      } else {
+        const typedHandler = handler;
+        return await Promise.resolve(typedHandler.createTask(taskExtra));
+      }
+    }
+    if (tool.inputSchema) {
+      const typedHandler = handler;
+      return await Promise.resolve(typedHandler(args, extra));
+    } else {
+      const typedHandler = handler;
+      return await Promise.resolve(typedHandler(extra));
+    }
+  }
+  /**
+   * Handles automatic task polling for tools with taskSupport 'optional'.
+   */
+  async handleAutomaticTaskPolling(tool, request, extra) {
+    if (!extra.taskStore) {
+      throw new Error("No task store provided for task-capable tool.");
+    }
+    const args = await this.validateToolInput(tool, request.params.arguments, request.params.name);
+    const handler = tool.handler;
+    const taskExtra = { ...extra, taskStore: extra.taskStore };
+    const createTaskResult = args ? await Promise.resolve(handler.createTask(args, taskExtra)) : (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await Promise.resolve(handler.createTask(taskExtra))
+    );
+    const taskId = createTaskResult.task.taskId;
+    let task = createTaskResult.task;
+    const pollInterval = task.pollInterval ?? 5e3;
+    while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
+      await new Promise((resolve6) => setTimeout(resolve6, pollInterval));
+      const updatedTask = await extra.taskStore.getTask(taskId);
+      if (!updatedTask) {
+        throw new McpError(ErrorCode.InternalError, "Task ".concat(taskId, " not found during polling"));
+      }
+      task = updatedTask;
+    }
+    return await extra.taskStore.getTaskResult(taskId);
+  }
+  setCompletionRequestHandler() {
+    if (this._completionHandlerInitialized) {
+      return;
+    }
+    this.server.assertCanSetRequestHandler(getMethodValue(CompleteRequestSchema));
+    this.server.registerCapabilities({
+      completions: {}
+    });
+    this.server.setRequestHandler(CompleteRequestSchema, async (request) => {
+      switch (request.params.ref.type) {
+        case "ref/prompt":
+          assertCompleteRequestPrompt(request);
+          return this.handlePromptCompletion(request, request.params.ref);
+        case "ref/resource":
+          assertCompleteRequestResourceTemplate(request);
+          return this.handleResourceCompletion(request, request.params.ref);
+        default:
+          throw new McpError(ErrorCode.InvalidParams, "Invalid completion reference: ".concat(request.params.ref));
+      }
+    });
+    this._completionHandlerInitialized = true;
+  }
+  async handlePromptCompletion(request, ref) {
+    const prompt = this._registeredPrompts[ref.name];
+    if (!prompt) {
+      throw new McpError(ErrorCode.InvalidParams, "Prompt ".concat(ref.name, " not found"));
+    }
+    if (!prompt.enabled) {
+      throw new McpError(ErrorCode.InvalidParams, "Prompt ".concat(ref.name, " disabled"));
+    }
+    if (!prompt.argsSchema) {
+      return EMPTY_COMPLETION_RESULT;
+    }
+    const promptShape = getObjectShape(prompt.argsSchema);
+    const field = promptShape?.[request.params.argument.name];
+    if (!isCompletable(field)) {
+      return EMPTY_COMPLETION_RESULT;
+    }
+    const completer = getCompleter(field);
+    if (!completer) {
+      return EMPTY_COMPLETION_RESULT;
+    }
+    const suggestions = await completer(request.params.argument.value, request.params.context);
+    return createCompletionResult(suggestions);
+  }
+  async handleResourceCompletion(request, ref) {
+    const template = Object.values(this._registeredResourceTemplates).find((t) => t.resourceTemplate.uriTemplate.toString() === ref.uri);
+    if (!template) {
+      if (this._registeredResources[ref.uri]) {
+        return EMPTY_COMPLETION_RESULT;
+      }
+      throw new McpError(ErrorCode.InvalidParams, "Resource template ".concat(request.params.ref.uri, " not found"));
+    }
+    const completer = template.resourceTemplate.completeCallback(request.params.argument.name);
+    if (!completer) {
+      return EMPTY_COMPLETION_RESULT;
+    }
+    const suggestions = await completer(request.params.argument.value, request.params.context);
+    return createCompletionResult(suggestions);
+  }
+  setResourceRequestHandlers() {
+    if (this._resourceHandlersInitialized) {
+      return;
+    }
+    this.server.assertCanSetRequestHandler(getMethodValue(ListResourcesRequestSchema));
+    this.server.assertCanSetRequestHandler(getMethodValue(ListResourceTemplatesRequestSchema));
+    this.server.assertCanSetRequestHandler(getMethodValue(ReadResourceRequestSchema));
+    this.server.registerCapabilities({
+      resources: {
+        listChanged: true
+      }
+    });
+    this.server.setRequestHandler(ListResourcesRequestSchema, async (request, extra) => {
+      const resources = Object.entries(this._registeredResources).filter(([_, resource]) => resource.enabled).map(([uri, resource]) => ({
+        uri,
+        name: resource.name,
+        ...resource.metadata
+      }));
+      const templateResources = [];
+      for (const template of Object.values(this._registeredResourceTemplates)) {
+        if (!template.resourceTemplate.listCallback) {
+          continue;
+        }
+        const result = await template.resourceTemplate.listCallback(extra);
+        for (const resource of result.resources) {
+          templateResources.push({
+            ...template.metadata,
+            // the defined resource metadata should override the template metadata if present
+            ...resource
+          });
+        }
+      }
+      return { resources: [...resources, ...templateResources] };
+    });
+    this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
+      const resourceTemplates = Object.entries(this._registeredResourceTemplates).map(([name, template]) => ({
+        name,
+        uriTemplate: template.resourceTemplate.uriTemplate.toString(),
+        ...template.metadata
+      }));
+      return { resourceTemplates };
+    });
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request, extra) => {
+      const uri = new URL(request.params.uri);
+      const resource = this._registeredResources[uri.toString()];
+      if (resource) {
+        if (!resource.enabled) {
+          throw new McpError(ErrorCode.InvalidParams, "Resource ".concat(uri, " disabled"));
+        }
+        return resource.readCallback(uri, extra);
+      }
+      for (const template of Object.values(this._registeredResourceTemplates)) {
+        const variables = template.resourceTemplate.uriTemplate.match(uri.toString());
+        if (variables) {
+          return template.readCallback(uri, variables, extra);
+        }
+      }
+      throw new McpError(ErrorCode.InvalidParams, "Resource ".concat(uri, " not found"));
+    });
+    this._resourceHandlersInitialized = true;
+  }
+  setPromptRequestHandlers() {
+    if (this._promptHandlersInitialized) {
+      return;
+    }
+    this.server.assertCanSetRequestHandler(getMethodValue(ListPromptsRequestSchema));
+    this.server.assertCanSetRequestHandler(getMethodValue(GetPromptRequestSchema));
+    this.server.registerCapabilities({
+      prompts: {
+        listChanged: true
+      }
+    });
+    this.server.setRequestHandler(ListPromptsRequestSchema, () => ({
+      prompts: Object.entries(this._registeredPrompts).filter(([, prompt]) => prompt.enabled).map(([name, prompt]) => {
+        return {
+          name,
+          title: prompt.title,
+          description: prompt.description,
+          arguments: prompt.argsSchema ? promptArgumentsFromSchema(prompt.argsSchema) : void 0
+        };
+      })
+    }));
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request, extra) => {
+      const prompt = this._registeredPrompts[request.params.name];
+      if (!prompt) {
+        throw new McpError(ErrorCode.InvalidParams, "Prompt ".concat(request.params.name, " not found"));
+      }
+      if (!prompt.enabled) {
+        throw new McpError(ErrorCode.InvalidParams, "Prompt ".concat(request.params.name, " disabled"));
+      }
+      if (prompt.argsSchema) {
+        const argsObj = normalizeObjectSchema(prompt.argsSchema);
+        const parseResult = await safeParseAsync3(argsObj, request.params.arguments);
+        if (!parseResult.success) {
+          const error2 = "error" in parseResult ? parseResult.error : "Unknown error";
+          const errorMessage = getParseErrorMessage(error2);
+          throw new McpError(ErrorCode.InvalidParams, "Invalid arguments for prompt ".concat(request.params.name, ": ").concat(errorMessage));
+        }
+        const args = parseResult.data;
+        const cb = prompt.callback;
+        return await Promise.resolve(cb(args, extra));
+      } else {
+        const cb = prompt.callback;
+        return await Promise.resolve(cb(extra));
+      }
+    });
+    this._promptHandlersInitialized = true;
+  }
+  resource(name, uriOrTemplate, ...rest) {
+    let metadata;
+    if (typeof rest[0] === "object") {
+      metadata = rest.shift();
+    }
+    const readCallback = rest[0];
+    if (typeof uriOrTemplate === "string") {
+      if (this._registeredResources[uriOrTemplate]) {
+        throw new Error("Resource ".concat(uriOrTemplate, " is already registered"));
+      }
+      const registeredResource = this._createRegisteredResource(name, void 0, uriOrTemplate, metadata, readCallback);
+      this.setResourceRequestHandlers();
+      this.sendResourceListChanged();
+      return registeredResource;
+    } else {
+      if (this._registeredResourceTemplates[name]) {
+        throw new Error("Resource template ".concat(name, " is already registered"));
+      }
+      const registeredResourceTemplate = this._createRegisteredResourceTemplate(name, void 0, uriOrTemplate, metadata, readCallback);
+      this.setResourceRequestHandlers();
+      this.sendResourceListChanged();
+      return registeredResourceTemplate;
+    }
+  }
+  registerResource(name, uriOrTemplate, config2, readCallback) {
+    if (typeof uriOrTemplate === "string") {
+      if (this._registeredResources[uriOrTemplate]) {
+        throw new Error("Resource ".concat(uriOrTemplate, " is already registered"));
+      }
+      const registeredResource = this._createRegisteredResource(name, config2.title, uriOrTemplate, config2, readCallback);
+      this.setResourceRequestHandlers();
+      this.sendResourceListChanged();
+      return registeredResource;
+    } else {
+      if (this._registeredResourceTemplates[name]) {
+        throw new Error("Resource template ".concat(name, " is already registered"));
+      }
+      const registeredResourceTemplate = this._createRegisteredResourceTemplate(name, config2.title, uriOrTemplate, config2, readCallback);
+      this.setResourceRequestHandlers();
+      this.sendResourceListChanged();
+      return registeredResourceTemplate;
+    }
+  }
+  _createRegisteredResource(name, title, uri, metadata, readCallback) {
+    const registeredResource = {
+      name,
+      title,
+      metadata,
+      readCallback,
+      enabled: true,
+      disable: () => registeredResource.update({ enabled: false }),
+      enable: () => registeredResource.update({ enabled: true }),
+      remove: () => registeredResource.update({ uri: null }),
+      update: (updates) => {
+        if (typeof updates.uri !== "undefined" && updates.uri !== uri) {
+          delete this._registeredResources[uri];
+          if (updates.uri)
+            this._registeredResources[updates.uri] = registeredResource;
+        }
+        if (typeof updates.name !== "undefined")
+          registeredResource.name = updates.name;
+        if (typeof updates.title !== "undefined")
+          registeredResource.title = updates.title;
+        if (typeof updates.metadata !== "undefined")
+          registeredResource.metadata = updates.metadata;
+        if (typeof updates.callback !== "undefined")
+          registeredResource.readCallback = updates.callback;
+        if (typeof updates.enabled !== "undefined")
+          registeredResource.enabled = updates.enabled;
+        this.sendResourceListChanged();
+      }
+    };
+    this._registeredResources[uri] = registeredResource;
+    return registeredResource;
+  }
+  _createRegisteredResourceTemplate(name, title, template, metadata, readCallback) {
+    const registeredResourceTemplate = {
+      resourceTemplate: template,
+      title,
+      metadata,
+      readCallback,
+      enabled: true,
+      disable: () => registeredResourceTemplate.update({ enabled: false }),
+      enable: () => registeredResourceTemplate.update({ enabled: true }),
+      remove: () => registeredResourceTemplate.update({ name: null }),
+      update: (updates) => {
+        if (typeof updates.name !== "undefined" && updates.name !== name) {
+          delete this._registeredResourceTemplates[name];
+          if (updates.name)
+            this._registeredResourceTemplates[updates.name] = registeredResourceTemplate;
+        }
+        if (typeof updates.title !== "undefined")
+          registeredResourceTemplate.title = updates.title;
+        if (typeof updates.template !== "undefined")
+          registeredResourceTemplate.resourceTemplate = updates.template;
+        if (typeof updates.metadata !== "undefined")
+          registeredResourceTemplate.metadata = updates.metadata;
+        if (typeof updates.callback !== "undefined")
+          registeredResourceTemplate.readCallback = updates.callback;
+        if (typeof updates.enabled !== "undefined")
+          registeredResourceTemplate.enabled = updates.enabled;
+        this.sendResourceListChanged();
+      }
+    };
+    this._registeredResourceTemplates[name] = registeredResourceTemplate;
+    const variableNames = template.uriTemplate.variableNames;
+    const hasCompleter = Array.isArray(variableNames) && variableNames.some((v) => !!template.completeCallback(v));
+    if (hasCompleter) {
+      this.setCompletionRequestHandler();
+    }
+    return registeredResourceTemplate;
+  }
+  _createRegisteredPrompt(name, title, description, argsSchema, callback) {
+    const registeredPrompt = {
+      title,
+      description,
+      argsSchema: argsSchema === void 0 ? void 0 : objectFromShape(argsSchema),
+      callback,
+      enabled: true,
+      disable: () => registeredPrompt.update({ enabled: false }),
+      enable: () => registeredPrompt.update({ enabled: true }),
+      remove: () => registeredPrompt.update({ name: null }),
+      update: (updates) => {
+        if (typeof updates.name !== "undefined" && updates.name !== name) {
+          delete this._registeredPrompts[name];
+          if (updates.name)
+            this._registeredPrompts[updates.name] = registeredPrompt;
+        }
+        if (typeof updates.title !== "undefined")
+          registeredPrompt.title = updates.title;
+        if (typeof updates.description !== "undefined")
+          registeredPrompt.description = updates.description;
+        if (typeof updates.argsSchema !== "undefined")
+          registeredPrompt.argsSchema = objectFromShape(updates.argsSchema);
+        if (typeof updates.callback !== "undefined")
+          registeredPrompt.callback = updates.callback;
+        if (typeof updates.enabled !== "undefined")
+          registeredPrompt.enabled = updates.enabled;
+        this.sendPromptListChanged();
+      }
+    };
+    this._registeredPrompts[name] = registeredPrompt;
+    if (argsSchema) {
+      const hasCompletable = Object.values(argsSchema).some((field) => {
+        const inner = field instanceof ZodOptional ? field._def?.innerType : field;
+        return isCompletable(inner);
+      });
+      if (hasCompletable) {
+        this.setCompletionRequestHandler();
+      }
+    }
+    return registeredPrompt;
+  }
+  _createRegisteredTool(name, title, description, inputSchema, outputSchema, annotations2, execution, _meta, handler) {
+    validateAndWarnToolName(name);
+    const registeredTool = {
+      title,
+      description,
+      inputSchema: getZodSchemaObject(inputSchema),
+      outputSchema: getZodSchemaObject(outputSchema),
+      annotations: annotations2,
+      execution,
+      _meta,
+      handler,
+      enabled: true,
+      disable: () => registeredTool.update({ enabled: false }),
+      enable: () => registeredTool.update({ enabled: true }),
+      remove: () => registeredTool.update({ name: null }),
+      update: (updates) => {
+        if (typeof updates.name !== "undefined" && updates.name !== name) {
+          if (typeof updates.name === "string") {
+            validateAndWarnToolName(updates.name);
+          }
+          delete this._registeredTools[name];
+          if (updates.name)
+            this._registeredTools[updates.name] = registeredTool;
+        }
+        if (typeof updates.title !== "undefined")
+          registeredTool.title = updates.title;
+        if (typeof updates.description !== "undefined")
+          registeredTool.description = updates.description;
+        if (typeof updates.paramsSchema !== "undefined")
+          registeredTool.inputSchema = objectFromShape(updates.paramsSchema);
+        if (typeof updates.outputSchema !== "undefined")
+          registeredTool.outputSchema = objectFromShape(updates.outputSchema);
+        if (typeof updates.callback !== "undefined")
+          registeredTool.handler = updates.callback;
+        if (typeof updates.annotations !== "undefined")
+          registeredTool.annotations = updates.annotations;
+        if (typeof updates._meta !== "undefined")
+          registeredTool._meta = updates._meta;
+        if (typeof updates.enabled !== "undefined")
+          registeredTool.enabled = updates.enabled;
+        this.sendToolListChanged();
+      }
+    };
+    this._registeredTools[name] = registeredTool;
+    this.setToolRequestHandlers();
+    this.sendToolListChanged();
+    return registeredTool;
+  }
+  /**
+   * tool() implementation. Parses arguments passed to overrides defined above.
+   */
+  tool(name, ...rest) {
+    if (this._registeredTools[name]) {
+      throw new Error("Tool ".concat(name, " is already registered"));
+    }
+    let description;
+    let inputSchema;
+    let outputSchema;
+    let annotations2;
+    if (typeof rest[0] === "string") {
+      description = rest.shift();
+    }
+    if (rest.length > 1) {
+      const firstArg = rest[0];
+      if (isZodRawShapeCompat(firstArg)) {
+        inputSchema = rest.shift();
+        if (rest.length > 1 && typeof rest[0] === "object" && rest[0] !== null && !isZodRawShapeCompat(rest[0])) {
+          annotations2 = rest.shift();
+        }
+      } else if (typeof firstArg === "object" && firstArg !== null) {
+        if (Object.values(firstArg).some((v) => typeof v === "object" && v !== null)) {
+          throw new Error("Tool ".concat(name, " expected a Zod schema or ToolAnnotations, but received an unrecognized object"));
+        }
+        annotations2 = rest.shift();
+      }
+    }
+    const callback = rest[0];
+    return this._createRegisteredTool(name, void 0, description, inputSchema, outputSchema, annotations2, { taskSupport: "forbidden" }, void 0, callback);
+  }
+  /**
+   * Registers a tool with a config object and callback.
+   */
+  registerTool(name, config2, cb) {
+    if (this._registeredTools[name]) {
+      throw new Error("Tool ".concat(name, " is already registered"));
+    }
+    const { title, description, inputSchema, outputSchema, annotations: annotations2, _meta } = config2;
+    return this._createRegisteredTool(name, title, description, inputSchema, outputSchema, annotations2, { taskSupport: "forbidden" }, _meta, cb);
+  }
+  prompt(name, ...rest) {
+    if (this._registeredPrompts[name]) {
+      throw new Error("Prompt ".concat(name, " is already registered"));
+    }
+    let description;
+    if (typeof rest[0] === "string") {
+      description = rest.shift();
+    }
+    let argsSchema;
+    if (rest.length > 1) {
+      argsSchema = rest.shift();
+    }
+    const cb = rest[0];
+    const registeredPrompt = this._createRegisteredPrompt(name, void 0, description, argsSchema, cb);
+    this.setPromptRequestHandlers();
+    this.sendPromptListChanged();
+    return registeredPrompt;
+  }
+  /**
+   * Registers a prompt with a config object and callback.
+   */
+  registerPrompt(name, config2, cb) {
+    if (this._registeredPrompts[name]) {
+      throw new Error("Prompt ".concat(name, " is already registered"));
+    }
+    const { title, description, argsSchema } = config2;
+    const registeredPrompt = this._createRegisteredPrompt(name, title, description, argsSchema, cb);
+    this.setPromptRequestHandlers();
+    this.sendPromptListChanged();
+    return registeredPrompt;
+  }
+  /**
+   * Checks if the server is connected to a transport.
+   * @returns True if the server is connected
+   */
+  isConnected() {
+    return this.server.transport !== void 0;
+  }
+  /**
+   * Sends a logging message to the client, if connected.
+   * Note: You only need to send the parameters object, not the entire JSON RPC message
+   * @see LoggingMessageNotification
+   * @param params
+   * @param sessionId optional for stateless and backward compatibility
+   */
+  async sendLoggingMessage(params, sessionId) {
+    return this.server.sendLoggingMessage(params, sessionId);
+  }
+  /**
+   * Sends a resource list changed event to the client, if connected.
+   */
+  sendResourceListChanged() {
+    if (this.isConnected()) {
+      this.server.sendResourceListChanged();
+    }
+  }
+  /**
+   * Sends a tool list changed event to the client, if connected.
+   */
+  sendToolListChanged() {
+    if (this.isConnected()) {
+      this.server.sendToolListChanged();
+    }
+  }
+  /**
+   * Sends a prompt list changed event to the client, if connected.
+   */
+  sendPromptListChanged() {
+    if (this.isConnected()) {
+      this.server.sendPromptListChanged();
+    }
+  }
+};
+var EMPTY_OBJECT_JSON_SCHEMA = {
+  type: "object",
+  properties: {}
+};
+function isZodTypeLike(value) {
+  return value !== null && typeof value === "object" && "parse" in value && typeof value.parse === "function" && "safeParse" in value && typeof value.safeParse === "function";
+}
+function isZodSchemaInstance(obj) {
+  return "_def" in obj || "_zod" in obj || isZodTypeLike(obj);
+}
+function isZodRawShapeCompat(obj) {
+  if (typeof obj !== "object" || obj === null) {
+    return false;
+  }
+  if (isZodSchemaInstance(obj)) {
+    return false;
+  }
+  if (Object.keys(obj).length === 0) {
+    return true;
+  }
+  return Object.values(obj).some(isZodTypeLike);
+}
+function getZodSchemaObject(schema) {
+  if (!schema) {
+    return void 0;
+  }
+  if (isZodRawShapeCompat(schema)) {
+    return objectFromShape(schema);
+  }
+  if (!isZodSchemaInstance(schema)) {
+    throw new Error("inputSchema must be a Zod schema or raw shape, received an unrecognized object");
+  }
+  return schema;
+}
+function promptArgumentsFromSchema(schema) {
+  const shape = getObjectShape(schema);
+  if (!shape)
+    return [];
+  return Object.entries(shape).map(([name, field]) => {
+    const description = getSchemaDescription(field);
+    const isOptional = isSchemaOptional(field);
+    return {
+      name,
+      description,
+      required: !isOptional
+    };
+  });
+}
+function getMethodValue(schema) {
+  const shape = getObjectShape(schema);
+  const methodSchema = shape?.method;
+  if (!methodSchema) {
+    throw new Error("Schema is missing a method literal");
+  }
+  const value = getLiteralValue(methodSchema);
+  if (typeof value === "string") {
+    return value;
+  }
+  throw new Error("Schema method literal must be a string");
+}
+function createCompletionResult(suggestions) {
+  return {
+    completion: {
+      values: suggestions.slice(0, 100),
+      total: suggestions.length,
+      hasMore: suggestions.length > 100
+    }
+  };
+}
+var EMPTY_COMPLETION_RESULT = {
+  completion: {
+    values: [],
+    hasMore: false
+  }
+};
+
+// packages/grafana-mcp-server/src/server.ts
+var GRAFANA_OBSERVABILITY_MCP_VERSION = "0.1.0";
+function annotations(readOnly, openWorld) {
+  return Object.freeze({
+    readOnlyHint: readOnly,
+    openWorldHint: openWorld,
+    destructiveHint: false,
+    idempotentHint: true
+  });
+}
+var GRAFANA_OBSERVABILITY_TOOL_ANNOTATIONS = Object.freeze({
+  grafana_profile_status: annotations(true, true),
+  grafana_list_packs: annotations(true, false),
+  grafana_run_pack: annotations(false, true),
+  grafana_get_evidence: annotations(true, false),
+  grafana_resolve_link: annotations(true, false)
+});
+var alias = string2().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u);
+var packId2 = _enum(GRAFANA_OBSERVABILITY_PACK_IDS);
+var reportRef2 = string2().regex(/^gfrpt_[A-Za-z0-9_-]{20,128}$/u);
+var evidenceRef3 = string2().regex(/^gfev_[A-Za-z0-9_-]{20,128}$/u);
+var linkRef3 = string2().regex(/^gflnk_[A-Za-z0-9_-]{20,128}$/u);
+var MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1e3;
+var timeWindow = strictObject({
+  start: iso_exports.datetime({ offset: true }),
+  end: iso_exports.datetime({ offset: true })
+}).superRefine((window, context) => {
+  const start = Date.parse(window.start);
+  const end = Date.parse(window.end);
+  if (end <= start) {
+    context.addIssue({ code: "custom", message: "window end must follow start", path: ["end"] });
+  } else if (end - start > MAX_WINDOW_MS) {
+    context.addIssue({ code: "custom", message: "window exceeds the seven-day bound", path: ["end"] });
+  }
+});
+var runPackInput = strictObject({
+  idempotencyKey: alias,
+  profileAlias: alias,
+  packId: packId2,
+  scopeAlias: alias,
+  origin: _enum(["LIVE", "REPLAY", "SIMULATED"]),
+  window: timeWindow,
+  baselineWindow: timeWindow.optional()
+}).superRefine((input, context) => {
+  if (input.baselineWindow !== void 0 && Date.parse(input.baselineWindow.end) > Date.parse(input.window.start)) {
+    context.addIssue({
+      code: "custom",
+      message: "baseline window must end before the current window starts",
+      path: ["baselineWindow", "end"]
+    });
+  }
+  if (input.baselineWindow !== void 0) {
+    const currentDuration = Date.parse(input.window.end) - Date.parse(input.window.start);
+    const baselineDuration = Date.parse(input.baselineWindow.end) - Date.parse(input.baselineWindow.start);
+    if (currentDuration !== baselineDuration) {
+      context.addIssue({
+        code: "custom",
+        message: "baseline and current windows must have equal durations",
+        path: ["baselineWindow"]
+      });
+    }
+  }
+});
+function jsonResult(value) {
+  const safe = JSON.parse(JSON.stringify(value));
+  return {
+    content: [{ type: "text", text: JSON.stringify(safe) }],
+    structuredContent: safe
+  };
+}
+function errorCode(error2) {
+  const candidate = error2;
+  if (typeof candidate.code === "string" && /^[A-Z][A-Z0-9_]{0,127}$/u.test(candidate.code)) {
+    return candidate.code;
+  }
+  if (typeof candidate.name === "string") {
+    const normalized = candidate.name.replaceAll(/[^A-Za-z0-9]+/gu, "_").toUpperCase();
+    if (/^[A-Z][A-Z0-9_]{0,127}$/u.test(normalized)) return normalized;
+  }
+  return "GRAFANA_OBSERVABILITY_ERROR";
+}
+function sanitizedError2(error2) {
+  const safe = {
+    schemaVersion: "1.0.0",
+    status: "ERROR",
+    error: {
+      code: errorCode(error2),
+      message: "The Grafana observability request was rejected"
+    }
+  };
+  return {
+    isError: true,
+    content: [{ type: "text", text: JSON.stringify(safe) }],
+    structuredContent: safe
+  };
+}
+function guarded(callback) {
+  return Promise.resolve().then(callback).then(jsonResult, sanitizedError2);
+}
+function createGrafanaObservabilityMcpServer(runtime) {
+  const server = new McpServer({
+    name: "grafana-observability",
+    version: GRAFANA_OBSERVABILITY_MCP_VERSION
+  });
+  server.registerTool("grafana_profile_status", {
+    title: "Check Grafana Observability Profile",
+    description: "Check one active Grafana profile without returning its origin URL, credential, datasource identity, or query catalog.",
+    inputSchema: strictObject({ profileAlias: alias }),
+    annotations: GRAFANA_OBSERVABILITY_TOOL_ANNOTATIONS.grafana_profile_status
+  }, ({ profileAlias }) => guarded(() => runtime.profileStatus(profileAlias)));
+  server.registerTool("grafana_list_packs", {
+    title: "List Grafana Observability Packs",
+    description: "List activated reviewed Grafana capability packs; frozen datasource targets and queries remain server-side.",
+    inputSchema: strictObject({ profileAlias: alias }),
+    annotations: GRAFANA_OBSERVABILITY_TOOL_ANNOTATIONS.grafana_list_packs
+  }, ({ profileAlias }) => guarded(() => runtime.listPacks(profileAlias)));
+  server.registerTool("grafana_run_pack", {
+    title: "Run Grafana Observability Pack",
+    description: "Collect one activated provider-read-only Grafana pack and write only plugin-owned local run, audit, checkpoint, and sealed evidence artifact state.",
+    inputSchema: runPackInput,
+    annotations: GRAFANA_OBSERVABILITY_TOOL_ANNOTATIONS.grafana_run_pack
+  }, (input, extra) => guarded(() => runtime.runPack(input, extra.signal)));
+  server.registerTool("grafana_get_evidence", {
+    title: "Read Grafana Observability Evidence",
+    description: "Read bounded normalized evidence owned by one opaque report; provider configuration is never returned.",
+    inputSchema: strictObject({ reportRef: reportRef2, evidenceRef: evidenceRef3 }),
+    annotations: GRAFANA_OBSERVABILITY_TOOL_ANNOTATIONS.grafana_get_evidence
+  }, ({ reportRef: report, evidenceRef: evidence }) => guarded(
+    () => runtime.getEvidence(report, evidence)
+  ));
+  server.registerTool("grafana_resolve_link", {
+    title: "Resolve Grafana Observability Link",
+    description: "Resolve one ownership-checked opaque report link; URLs are never accepted as tool input.",
+    inputSchema: strictObject({ reportRef: reportRef2, linkRef: linkRef3 }),
+    annotations: GRAFANA_OBSERVABILITY_TOOL_ANNOTATIONS.grafana_resolve_link
+  }, ({ reportRef: report, linkRef: link }) => guarded(
+    () => runtime.resolveLink(report, link)
+  ));
+  return server;
+}
+
+// packages/grafana-mcp-server/src/entrypoint.ts
+function createGrafanaStdioShutdown(server, runtime) {
+  let shutdownPromise;
+  return () => {
+    shutdownPromise ??= Promise.resolve().then(async () => {
+      try {
+        await server.close();
+      } finally {
+        await runtime.close();
+      }
+    });
+    return shutdownPromise;
+  };
+}
+async function connectGrafanaStdio(connect, shutdown) {
+  try {
+    await connect();
+  } catch (connectError) {
+    try {
+      await shutdown();
+    } catch (shutdownError) {
+      throw new AggregateError(
+        [connectError, shutdownError],
+        "Grafana observability stdio connection and shutdown both failed"
+      );
+    }
+    throw connectError;
+  }
+}
+function reportFailure(prefix, error2) {
+  const candidate = error2;
+  const name = typeof candidate.name === "string" ? candidate.name.replaceAll(/[^A-Za-z0-9]+/gu, "_").slice(0, 64) : "Error";
+  const code = typeof candidate.code === "string" && /^[A-Z][A-Z0-9_]{0,127}$/u.test(candidate.code) ? candidate.code : "NO_CODE";
+  console.error("".concat(prefix, ": ").concat(name, ":").concat(code));
+}
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.length !== 1 || args[0] !== "--stdio") {
+    throw new Error("Usage: server.mjs --stdio");
+  }
+  const runtime = createGrafanaObservabilityRuntimeFromEnvironment();
+  const server = createGrafanaObservabilityMcpServer(runtime);
+  const transport = new StdioServerTransport();
+  const shutdown = createGrafanaStdioShutdown(server, runtime);
+  let terminalExitPromise;
+  const requestTerminalExit = () => {
+    terminalExitPromise ??= shutdown().then(
+      () => {
+        process.exitCode = 0;
+      },
+      (error2) => {
+        reportFailure("Grafana observability server shutdown failed", error2);
+        process.exitCode = 1;
+      }
+    );
+    void terminalExitPromise;
+  };
+  process.once("SIGINT", requestTerminalExit);
+  process.once("SIGTERM", requestTerminalExit);
+  process.stdin.once("end", requestTerminalExit);
+  await connectGrafanaStdio(() => server.connect(transport), shutdown);
+}
+if (require("node:url").pathToFileURL(__filename).href === "file://".concat(process.argv[1])) {
+  main().catch((error2) => {
+    reportFailure("Grafana observability server failed to start", error2);
+    process.exitCode = 1;
+  });
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  connectGrafanaStdio,
+  createGrafanaStdioShutdown
+});

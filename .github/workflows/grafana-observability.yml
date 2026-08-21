@@ -1,0 +1,87 @@
+name: Grafana Observability
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/grafana-observability.yml"
+      - ".agents/plugins/marketplace.json"
+      - "package.json"
+      - "README.md"
+      - "docs/**"
+      - "plugins/grafana-observability/**"
+      - "scripts/*grafana*"
+      - "scripts/validate-marketplace.mjs"
+      - "tests/grafana-observability/**"
+      - "vendor/grafana-observability-source/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/grafana-observability.yml"
+      - ".agents/plugins/marketplace.json"
+      - "package.json"
+      - "README.md"
+      - "docs/**"
+      - "plugins/grafana-observability/**"
+      - "scripts/*grafana*"
+      - "scripts/validate-marketplace.mjs"
+      - "tests/grafana-observability/**"
+      - "vendor/grafana-observability-source/**"
+  workflow_dispatch:
+    inputs:
+      grafana_major:
+        description: Pinned Grafana major for the real Docker integration
+        type: choice
+        options: ["12", "all", "10", "11", "13"]
+        default: "12"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grafana-observability-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Packaged tests / Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.19.0", "24", "26"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - run: npm run validate
+      - run: npm run verify:grafana:source
+      - run: npm run test:grafana
+
+  grafana-live:
+    name: Real Grafana / Docker
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+          package-manager-cache: false
+      - if: inputs.grafana_major != 'all'
+        run: npm run test:grafana:live
+        env:
+          GRAFANA_E2E_MAJOR: ${{ inputs.grafana_major || '12' }}
+      - if: inputs.grafana_major == 'all'
+        run: npm run test:grafana:matrix
+      - name: Read-only credential admission and revocation
+        run: npm run test:grafana:auth
+      - name: Actual Codex installation and MCP launch
+        run: npm run test:grafana:installed

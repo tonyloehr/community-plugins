@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:workflow-request:1",
+  "title": "Production Monitoring workflow request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "idempotencyKey",
+    "workflow",
+    "profileAlias",
+    "scopeAlias",
+    "origin",
+    "window",
+    "artifactPolicy",
+    "failOn"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "idempotencyKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "workflow": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Workflow" },
+    "profileAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    "scopeAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    "window": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    "baselineWindow": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" },
+    "incidentAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    "parentRunId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+    "verificationPolicyAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+    "artifactPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "enum": ["required", "best_effort"] }
+      }
+    },
+    "failOn": { "enum": ["none", "partial", "error"] },
+    "requiredOperations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" }
+    },
+    "requiredCapabilityPacks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/CapabilityPackId" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "workflow": { "const": "verify" } }, "required": ["workflow"] },
+      "then": {
+        "properties": {
+          "parentRunId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" },
+          "verificationPolicyAlias": false
+        },
+        "required": ["parentRunId"]
+      }
+    },
+    {
+      "if": { "properties": { "workflow": { "const": "deep" } }, "required": ["workflow"] },
+      "then": {
+        "anyOf": [
+          {
+            "properties": { "requiredOperations": {} },
+            "required": ["requiredOperations"]
+          },
+          {
+            "properties": { "requiredCapabilityPacks": {} },
+            "required": ["requiredCapabilityPacks"]
+          }
+        ]
+      }
+    }
+  ]
+}

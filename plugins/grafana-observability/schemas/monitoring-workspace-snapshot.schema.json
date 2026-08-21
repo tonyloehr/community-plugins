@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:monitoring-workspace-snapshot:1",
+  "title": "Production Monitoring workbench snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "workspaceId",
+    "stateVersion",
+    "asOf",
+    "lifecycle",
+    "phase",
+    "status",
+    "progress",
+    "signals",
+    "hypotheses",
+    "evidence",
+    "activity",
+    "patch",
+    "nextAction",
+    "limitations"
+  ],
+  "properties": {
+    "schemaVersion": { "enum": ["1.0.0", "1.1.0"] },
+    "workspaceId": {
+      "$ref": "urn:production-monitoring:schema:common:1#/$defs/MonitoringWorkspaceId"
+    },
+    "stateVersion": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "asOf": { "type": "string", "format": "date-time" },
+    "lifecycle": {
+      "enum": ["IDLE", "PREFLIGHT", "RUNNING", "SEALED", "PARTIAL", "BLOCKED", "CANCELLED"]
+    },
+    "phase": {
+      "enum": [
+        "READINESS",
+        "SCOPING",
+        "BASELINE",
+        "COLLECTING",
+        "COMPARING",
+        "ANALYZING",
+        "FINALIZING",
+        "PATCHING",
+        "VERIFYING"
+      ]
+    },
+    "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["environment"],
+      "properties": {
+        "service": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "environment": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias"
+        },
+        "window": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["service", "collection", "causality", "recovery", "audit"],
+      "properties": {
+        "service": { "enum": ["HEALTHY", "DEGRADED", "RECOVERING", "UNKNOWN"] },
+        "collection": {
+          "enum": ["NOT_STARTED", "IN_PROGRESS", "COMPLETE", "PARTIAL", "ERROR"]
+        },
+        "causality": { "enum": ["NOT_ASSESSED", "OPEN", "SUPPORTED", "INCONCLUSIVE"] },
+        "recovery": {
+          "enum": [
+            "NOT_ASSESSED",
+            "APPROVAL_REQUIRED",
+            "ACTION_FAILED",
+            "INCOMPLETE",
+            "NOT_RECOVERED",
+            "RECOVERED"
+          ]
+        },
+        "audit": { "enum": ["INITIALIZING", "HEALTHY", "DEGRADED", "ERROR"] }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["completedOperations", "requiredOperations", "sourceStates"],
+      "properties": {
+        "completedOperations": { "type": "integer", "minimum": 0, "maximum": 1024 },
+        "requiredOperations": { "type": "integer", "minimum": 0, "maximum": 1024 },
+        "sourceStates": {
+          "type": "object",
+          "maxProperties": 16,
+          "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]{0,31}$" },
+          "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 1024 }
+        }
+      }
+    },
+    "signals": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/signalCard" }
+    },
+    "hypotheses": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/hypothesisCard" }
+    },
+    "issues": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "$ref": "#/$defs/issueCard" }
+    },
+    "evidence": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "$ref": "#/$defs/evidenceCard" }
+    },
+    "activity": {
+      "type": "array",
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/activityItem" }
+    },
+    "patch": { "$ref": "urn:production-monitoring:schema:patch-status:1" },
+    "nextAction": { "$ref": "#/$defs/actionAvailability" },
+    "limitations": {
+      "type": "array",
+      "maxItems": 16,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": "1.1.0" } }, "required": ["schemaVersion"] },
+      "then": { "properties": { "issues": {} }, "required": ["issues"] },
+      "else": { "not": { "required": ["issues"] } }
+    }
+  ],
+  "$defs": {
+    "evidenceRefs": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+      }
+    },
+    "linkRefs": {
+      "type": "array",
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchLinkRef" }
+    },
+    "signalCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signalRef",
+        "title",
+        "displayValue",
+        "severity",
+        "direction",
+        "points",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "signalRef": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "displayValue": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "severity": { "enum": ["NEUTRAL", "GOOD", "WARNING", "CRITICAL"] },
+        "direction": { "enum": ["UP", "DOWN", "FLAT", "UNKNOWN"] },
+        "points": {
+          "type": "array",
+          "maxItems": 30,
+          "items": { "type": ["number", "null"] }
+        },
+        "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+      }
+    },
+    "hypothesisCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hypothesisRef",
+        "rank",
+        "statement",
+        "status",
+        "rationale",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "hypothesisRef": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias"
+        },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "statement": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "status": { "enum": ["OPEN", "SUPPORTED", "WEAKENED", "REJECTED"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rationale": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" }
+      }
+    },
+    "issueCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issueRef",
+        "kind",
+        "severity",
+        "status",
+        "classification",
+        "title",
+        "summary",
+        "evidenceRefs",
+        "hypothesisRefs",
+        "patch"
+      ],
+      "properties": {
+        "issueRef": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchIssueRef"
+        },
+        "kind": {
+          "enum": ["ALERT", "REGRESSION", "ANOMALY", "CONTRADICTION", "EVIDENCE_GAP"]
+        },
+        "severity": { "enum": ["INFO", "WARNING", "CRITICAL"] },
+        "status": { "enum": ["OPEN", "SUPPORTED", "RESOLVED", "BLOCKED"] },
+        "classification": { "enum": ["SIGNED_RULE", "DEVIATION"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "evidenceRefs": { "$ref": "#/$defs/evidenceRefs" },
+        "hypothesisRefs": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" }
+        },
+        "patch": { "$ref": "urn:production-monitoring:schema:patch-status:1" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "ANOMALY" } }, "required": ["kind"] },
+          "then": { "properties": { "classification": { "const": "SIGNED_RULE" } } }
+        }
+      ]
+    },
+    "evidenceCard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidenceRef",
+        "title",
+        "domain",
+        "state",
+        "authority",
+        "sourceLabel",
+        "summary",
+        "linkRefs"
+      ],
+      "properties": {
+        "evidenceRef": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/WorkbenchEvidenceRef"
+        },
+        "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "domain": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain"
+        },
+        "state": { "enum": ["COMPLETE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR"] },
+        "authority": {
+          "$ref": "urn:production-monitoring:schema:common:1#/$defs/Authority"
+        },
+        "sourceLabel": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "linkRefs": { "$ref": "#/$defs/linkRefs" }
+      }
+    },
+    "activityItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["activityRef", "at", "kind", "state", "title"],
+      "properties": {
+        "activityRef": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "at": { "type": "string", "format": "date-time" },
+        "kind": {
+          "enum": ["READINESS", "SCOPE", "EVIDENCE", "ANALYSIS", "PATCH", "RECOVERY", "SYSTEM"]
+        },
+        "state": { "enum": ["PENDING", "RUNNING", "COMPLETE", "PARTIAL", "ERROR"] },
+        "title": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "actionAvailability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "enabled", "label"],
+      "properties": {
+        "action": {
+          "enum": [
+            "NONE",
+            "COLLECT_EVIDENCE",
+            "RETRY_COLLECTION",
+            "GENERATE_PATCH",
+            "REVIEW_PATCH",
+            "VERIFY_RECOVERY"
+          ]
+        },
+        "enabled": { "type": "boolean" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Monitor IoT and Edge"
+  short_description: "Review bounded device and fleet telemetry"
+  brand_color: "#7058E8"
+  default_prompt: "Use $monitor-iot-edge to review telemetry and freshness for this enrolled device or fleet scope without sending device commands."

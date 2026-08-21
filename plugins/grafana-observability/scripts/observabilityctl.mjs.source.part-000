@@ -1,0 +1,2910 @@
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+// packages/observability-cli/src/entrypoint.ts
+var entrypoint_exports = {};
+__export(entrypoint_exports, {
+  BUNDLED_MACOS_KEYCHAIN_ASSETS: () => BUNDLED_MACOS_KEYCHAIN_ASSETS,
+  createBundledMacOsKeychainLoader: () => createBundledMacOsKeychainLoader,
+  runObservabilityCliEntrypoint: () => runObservabilityCliEntrypoint
+});
+module.exports = __toCommonJS(entrypoint_exports);
+var import_node_url2 = require("node:url");
+
+// packages/grafana-credential-profile/src/profile.ts
+var import_node_net = require("node:net");
+var PROFILE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+var CREDENTIAL_REFERENCE = /^grafana:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}):bearer(?::v([1-9][0-9]{0,15}))?$/u;
+var SECRET_LIKE_PROFILE_NAME = /(?:\bBearer\s+[A-Za-z0-9._~+/=-]{8,}|\bglsa_[A-Za-z0-9_-]{8,}|\b(?:password|passwd|secret|token|api[_ -]?key)\s*[:=])/iu;
+var MAX_PROFILES = 64;
+var GrafanaProfileError = class extends Error {
+  code;
+  constructor(code) {
+    super("Shared Grafana profile data is invalid or unavailable");
+    this.name = "GrafanaProfileError";
+    this.code = code;
+  }
+};
+function object(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return value;
+}
+function exact(value, keys, code) {
+  const expected = new Set(keys);
+  if (Object.keys(value).length !== expected.size || Object.keys(value).some((key) => !expected.has(key))) {
+    throw new GrafanaProfileError(code);
+  }
+}
+function unwrappedHost(hostname) {
+  return hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1).toLowerCase() : hostname.toLowerCase();
+}
+function privateIpv4(hostname) {
+  const octets = hostname.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  return octets[0] === 10 || octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31 || octets[0] === 192 && octets[1] === 168;
+}
+function classifyGrafanaOriginHost(hostname) {
+  const host = unwrappedHost(hostname);
+  if (host === "localhost" || host === "::1" || host.startsWith("127.")) return "loopback";
+  if ((0, import_node_net.isIP)(host) === 4) return privateIpv4(host) ? "private" : "public";
+  if ((0, import_node_net.isIP)(host) === 6) {
+    const first = Number.parseInt(host.split(":", 1)[0] ?? "", 16);
+    return Number.isFinite(first) && (first & 65024) === 64512 ? "private" : "public";
+  }
+  return "public";
+}
+function normalizeGrafanaOrigin(value) {
+  if (value.length === 0 || value.length > 2048 || value.trim() !== value) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:" || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "" || url.pathname !== "/") {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  const networkClass = classifyGrafanaOriginHost(url.hostname);
+  if (url.protocol === "http:" && networkClass !== "loopback") {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return { grafanaOrigin: url.origin, networkClass };
+}
+function normalizeGrafanaProfileName(value) {
+  const normalized = value.trim();
+  if (normalized !== value || normalized.length < 1 || normalized.length > 80 || SECRET_LIKE_PROFILE_NAME.test(normalized) || [...normalized].some((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint < 32 || codePoint === 127;
+  })) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return normalized;
+}
+function grafanaCredentialReference(profileId, slot = 1) {
+  if (!PROFILE_ID.test(profileId) || !Number.isSafeInteger(slot) || slot < 1) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return Object.freeze({ kind: "broker", key: "grafana:".concat(profileId, ":bearer:v").concat(String(slot)) });
+}
+function legacyGrafanaCredentialReference(profileId) {
+  if (!PROFILE_ID.test(profileId)) throw new GrafanaProfileError("INVALID_PROFILE");
+  return Object.freeze({ kind: "broker", key: "grafana:".concat(profileId, ":bearer") });
+}
+function parseGrafanaCredentialReference(reference) {
+  if (reference.kind !== "broker") return void 0;
+  const match = CREDENTIAL_REFERENCE.exec(reference.key);
+  if (match === null) return void 0;
+  const profileId = match[1];
+  if (match[2] === void 0) {
+    return { profileId, slot: null, reference: legacyGrafanaCredentialReference(profileId) };
+  }
+  const slot = Number(match[2]);
+  if (!Number.isSafeInteger(slot) || slot < 1) return void 0;
+  return { profileId, slot, reference: grafanaCredentialReference(profileId, slot) };
+}
+function grafanaKeyringAccount(reference) {
+  const parsed = parseGrafanaCredentialReference(reference);
+  return parsed === void 0 ? void 0 : parsed.slot === null ? "profile/".concat(parsed.profileId, "/bearer") : "profile/".concat(parsed.profileId, "/bearer/v").concat(String(parsed.slot));
+}
+function createSharedGrafanaProfile(input) {
+  if (!PROFILE_ID.test(input.profileId)) throw new GrafanaProfileError("INVALID_PROFILE");
+  const profileName = normalizeGrafanaProfileName(input.profileName);
+  const origin = normalizeGrafanaOrigin(input.grafanaOrigin);
+  return {
+    schemaVersion: "1.0.0",
+    profileId: input.profileId,
+    profileName,
+    ...origin,
+    credentialRef: grafanaCredentialReference(input.profileId),
+    revision: 1
+  };
+}
+function parseSharedGrafanaProfile(value) {
+  const profile = object(value);
+  exact(profile, [
+    "schemaVersion",
+    "profileId",
+    "profileName",
+    "grafanaOrigin",
+    "networkClass",
+    "credentialRef",
+    "revision"
+  ], "INVALID_PROFILE");
+  if (profile.schemaVersion !== "1.0.0" || typeof profile.profileId !== "string" || !PROFILE_ID.test(profile.profileId)) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  if (typeof profile.profileName !== "string") throw new GrafanaProfileError("INVALID_PROFILE");
+  const profileName = normalizeGrafanaProfileName(profile.profileName);
+  if (typeof profile.grafanaOrigin !== "string") throw new GrafanaProfileError("INVALID_PROFILE");
+  const origin = normalizeGrafanaOrigin(profile.grafanaOrigin);
+  if (profile.networkClass !== origin.networkClass || profile.grafanaOrigin !== origin.grafanaOrigin) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  if (!Number.isSafeInteger(profile.revision) || profile.revision < 1) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  const revision = profile.revision;
+  const credentialRef = object(profile.credentialRef);
+  exact(credentialRef, ["kind", "key"], "INVALID_PROFILE");
+  if (typeof credentialRef.kind !== "string" || typeof credentialRef.key !== "string") {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  const parsedReference = parseGrafanaCredentialReference({
+    kind: credentialRef.kind,
+    key: credentialRef.key
+  });
+  if (parsedReference === void 0 || parsedReference.profileId !== profile.profileId || parsedReference.slot !== null && parsedReference.slot > revision) {
+    throw new GrafanaProfileError("INVALID_PROFILE");
+  }
+  return {
+    schemaVersion: "1.0.0",
+    profileId: profile.profileId,
+    profileName,
+    ...origin,
+    credentialRef: parsedReference.reference,
+    revision
+  };
+}
+function emptySharedGrafanaProfileRegistry() {
+  return { schemaVersion: "1.0.0", activeProfileId: null, profiles: [] };
+}
+function parseSharedGrafanaProfileRegistry(value) {
+  let registry;
+  try {
+    registry = object(value);
+    exact(registry, ["schemaVersion", "activeProfileId", "profiles"], "INVALID_REGISTRY");
+  } catch {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  if (registry.schemaVersion !== "1.0.0" || !Array.isArray(registry.profiles) || registry.profiles.length > MAX_PROFILES) {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  let profiles;
+  try {
+    profiles = registry.profiles.map(parseSharedGrafanaProfile);
+  } catch {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  const ids = new Set(profiles.map((profile) => profile.profileId));
+  const names = new Set(profiles.map((profile) => profile.profileName.toLowerCase()));
+  if (ids.size !== profiles.length || names.size !== profiles.length) {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  const activeProfileId = registry.activeProfileId;
+  if (activeProfileId !== null && (typeof activeProfileId !== "string" || !ids.has(activeProfileId))) {
+    throw new GrafanaProfileError("INVALID_REGISTRY");
+  }
+  return { schemaVersion: "1.0.0", activeProfileId, profiles };
+}
+function findSharedGrafanaProfile(registry, profileName) {
+  const profile = profileName === void 0 ? registry.profiles.find((candidate) => candidate.profileId === registry.activeProfileId) : registry.profiles.find((candidate) => candidate.profileName.toLowerCase() === profileName.toLowerCase());
+  if (profile === void 0) throw new GrafanaProfileError("PROFILE_NOT_FOUND");
+  return parseSharedGrafanaProfile(profile);
+}
+function addSharedGrafanaProfile(registry, profile) {
+  const current = parseSharedGrafanaProfileRegistry(registry);
+  const parsed = parseSharedGrafanaProfile(profile);
+  if (current.profiles.some(
+    (candidate) => candidate.profileId === parsed.profileId || candidate.profileName.toLowerCase() === parsed.profileName.toLowerCase()
+  )) {
+    throw new GrafanaProfileError("PROFILE_ALREADY_EXISTS");
+  }
+  return parseSharedGrafanaProfileRegistry({
+    schemaVersion: "1.0.0",
+    activeProfileId: parsed.profileId,
+    profiles: [...current.profiles, parsed]
+  });
+}
+function replaceSharedGrafanaProfile(registry, profile) {
+  const current = parseSharedGrafanaProfileRegistry(registry);
+  const parsed = parseSharedGrafanaProfile(profile);
+  if (!current.profiles.some((candidate) => candidate.profileId === parsed.profileId)) {
+    throw new GrafanaProfileError("PROFILE_NOT_FOUND");
+  }
+  return parseSharedGrafanaProfileRegistry({
+    ...current,
+    profiles: current.profiles.map((candidate) => candidate.profileId === parsed.profileId ? parsed : candidate)
+  });
+}
+function removeSharedGrafanaProfile(registry, profileId) {
+  const current = parseSharedGrafanaProfileRegistry(registry);
+  if (!current.profiles.some((candidate) => candidate.profileId === profileId)) {
+    throw new GrafanaProfileError("PROFILE_NOT_FOUND");
+  }
+  const profiles = current.profiles.filter((candidate) => candidate.profileId !== profileId);
+  return parseSharedGrafanaProfileRegistry({
+    schemaVersion: "1.0.0",
+    activeProfileId: current.activeProfileId === profileId ? profiles[0]?.profileId ?? null : current.activeProfileId,
+    profiles
+  });
+}
+
+// packages/grafana-credential-profile/src/lifecycle-journal.ts
+function invalidJournal() {
+  throw new Error("Grafana credential lifecycle journal is invalid");
+}
+function exactObject(value, keys) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) invalidJournal();
+  const record2 = value;
+  const expected = new Set(keys);
+  if (Object.keys(record2).length !== expected.size || Object.keys(record2).some((key) => !expected.has(key))) {
+    invalidJournal();
+  }
+  return record2;
+}
+function nullableRevision(value) {
+  if (value === null) return null;
+  if (!Number.isSafeInteger(value) || value < 1) invalidJournal();
+  return value;
+}
+function nullableReference(value, profileId, revision) {
+  if (value === null) {
+    if (revision !== null) invalidJournal();
+    return null;
+  }
+  if (revision === null) invalidJournal();
+  const record2 = exactObject(value, ["kind", "key"]);
+  if (typeof record2.kind !== "string" || typeof record2.key !== "string") invalidJournal();
+  const parsed = parseGrafanaCredentialReference({ kind: record2.kind, key: record2.key });
+  if (parsed === void 0 || parsed.profileId !== profileId || parsed.slot !== null && parsed.slot > revision) {
+    invalidJournal();
+  }
+  return parsed.reference;
+}
+function parseGrafanaCredentialLifecycleJournal(value) {
+  const journal = exactObject(value, [
+    "schemaVersion",
+    "operation",
+    "phase",
+    "profileId",
+    "previousRevision",
+    "previousCredentialRef",
+    "nextRevision",
+    "nextCredentialRef"
+  ]);
+  if (journal.schemaVersion !== "1.0.0" || journal.operation !== "CONNECT" && journal.operation !== "ROTATE" && journal.operation !== "DELETE" || journal.phase !== "PREPARED" && journal.phase !== "COMMITTED" || typeof journal.profileId !== "string") {
+    invalidJournal();
+  }
+  const profileId = journal.profileId;
+  const previousRevision = nullableRevision(journal.previousRevision);
+  const nextRevision = nullableRevision(journal.nextRevision);
+  const previousCredentialRef = nullableReference(
+    journal.previousCredentialRef,
+    profileId,
+    previousRevision
+  );
+  const nextCredentialRef = nullableReference(
+    journal.nextCredentialRef,
+    profileId,
+    nextRevision
+  );
+  const nextSlot = nextCredentialRef === null ? null : parseGrafanaCredentialReference(nextCredentialRef)?.slot ?? null;
+  if (journal.operation === "CONNECT" && (previousRevision !== null || previousCredentialRef !== null || nextRevision !== 1 || nextCredentialRef === null || nextSlot !== nextRevision) || journal.operation === "ROTATE" && (previousRevision === null || previousCredentialRef === null || nextRevision === null || nextCredentialRef === null || nextRevision !== previousRevision + 1 || nextSlot !== nextRevision || nextCredentialRef.key === previousCredentialRef.key) || journal.operation === "DELETE" && (previousRevision === null || previousCredentialRef === null || nextRevision !== null || nextCredentialRef !== null)) {
+    invalidJournal();
+  }
+  return {
+    schemaVersion: "1.0.0",
+    operation: journal.operation,
+    phase: journal.phase,
+    profileId,
+    previousRevision,
+    previousCredentialRef,
+    nextRevision,
+    nextCredentialRef
+  };
+}
+function committedGrafanaCredentialLifecycleJournal(journal) {
+  return parseGrafanaCredentialLifecycleJournal({ ...journal, phase: "COMMITTED" });
+}
+function sameCredentialReference(left, right) {
+  return left.kind === right.kind && left.key === right.key;
+}
+function grafanaCredentialLifecycleAuthority(registry, journal) {
+  const parsedRegistry = parseSharedGrafanaProfileRegistry(registry);
+  const parsedJournal = parseGrafanaCredentialLifecycleJournal(journal);
+  const profile = parsedRegistry.profiles.find(
+    (candidate) => candidate.profileId === parsedJournal.profileId
+  );
+  const matches = (revision, reference) => revision !== null && reference !== null && profile !== void 0 && profile.revision === revision && sameCredentialReference(profile.credentialRef, reference);
+  if (parsedJournal.operation === "CONNECT") {
+    if (profile === void 0) return "PREVIOUS";
+    return matches(parsedJournal.nextRevision, parsedJournal.nextCredentialRef) ? "NEXT" : "INVALID";
+  }
+  if (parsedJournal.operation === "ROTATE") {
+    if (matches(parsedJournal.previousRevision, parsedJournal.previousCredentialRef)) return "PREVIOUS";
+    return matches(parsedJournal.nextRevision, parsedJournal.nextCredentialRef) ? "NEXT" : "INVALID";
+  }
+  if (matches(parsedJournal.previousRevision, parsedJournal.previousCredentialRef)) return "PREVIOUS";
+  return profile === void 0 ? "NEXT" : "INVALID";
+}
+
+// packages/grafana-credential-profile/src/keyring.ts
+var GRAFANA_KEYRING_SERVICE = "com.openai.codex.observability.grafana";
+var MAX_GRAFANA_BEARER_BYTES = 16384;
+var GrafanaKeyringError = class extends Error {
+  code;
+  constructor(code) {
+    super("The shared Grafana credential is unavailable");
+    this.name = "GrafanaKeyringError";
+    this.code = code;
+  }
+};
+function validBearerSecret(secret) {
+  if (secret.byteLength < 1 || secret.byteLength > MAX_GRAFANA_BEARER_BYTES) return false;
+  for (const byte of secret) {
+    if (byte < 33 || byte > 126) return false;
+  }
+  return true;
+}
+var BufferSecretLease = class {
+  bytes;
+  #disposed = false;
+  constructor(secret) {
+    this.bytes = Uint8Array.from(secret);
+  }
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.bytes.fill(0);
+  }
+};
+var GrafanaCredentialKeyring = class {
+  #backend;
+  constructor(backend) {
+    this.#backend = backend;
+  }
+  async acquire(reference) {
+    const account = grafanaKeyringAccount(reference);
+    if (account === void 0) return void 0;
+    let backendSecret;
+    try {
+      backendSecret = await this.#backend.getSecret(GRAFANA_KEYRING_SERVICE, account);
+      if (backendSecret === void 0 || !validBearerSecret(backendSecret)) return void 0;
+      return new BufferSecretLease(backendSecret);
+    } catch {
+      return void 0;
+    } finally {
+      backendSecret?.fill(0);
+    }
+  }
+  async set(reference, secret) {
+    const account = grafanaKeyringAccount(reference);
+    if (account === void 0) throw new GrafanaKeyringError("INVALID_REFERENCE");
+    if (!validBearerSecret(secret)) throw new GrafanaKeyringError("INVALID_SECRET");
+    const copy = Uint8Array.from(secret);
+    try {
+      await this.#backend.setSecret(GRAFANA_KEYRING_SERVICE, account, copy);
+    } catch {
+      throw new GrafanaKeyringError("KEYRING_UNAVAILABLE");
+    } finally {
+      copy.fill(0);
+    }
+  }
+  async status(reference) {
+    const lease = await this.acquire(reference);
+    if (lease === void 0) return "MISSING_OR_UNAVAILABLE";
+    lease.dispose();
+    return "AVAILABLE";
+  }
+  async delete(reference) {
+    const account = grafanaKeyringAccount(reference);
+    if (account === void 0) throw new GrafanaKeyringError("INVALID_REFERENCE");
+    try {
+      return await this.#backend.deleteSecret(GRAFANA_KEYRING_SERVICE, account);
+    } catch {
+      throw new GrafanaKeyringError("KEYRING_UNAVAILABLE");
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/macos-keychain-loader.ts
+var import_node_crypto = require("node:crypto");
+var import_node_fs = require("node:fs");
+var import_promises = require("node:fs/promises");
+var import_node_os = require("node:os");
+var import_node_path = require("node:path");
+var import_node_url = require("node:url");
+
+// packages/grafana-credential-profile/src/native-keyring.ts
+var NativeKeyringUnavailableError = class extends Error {
+  constructor() {
+    super("The native OS keyring backend is unavailable");
+    this.name = "NativeKeyringUnavailableError";
+  }
+};
+var NativeGrafanaKeyringBackend = class {
+  #platform;
+  #loader;
+  #loaded;
+  constructor(options) {
+    const platform = options.platform ?? process.platform;
+    if (platform !== "darwin" && platform !== "linux") throw new NativeKeyringUnavailableError();
+    this.#platform = platform;
+    this.#loader = options.loader;
+  }
+  async #module() {
+    if (this.#platform === "linux") throw new NativeKeyringUnavailableError();
+    this.#loaded ??= this.#loader.load().then((module2) => {
+      if (module2.backendKind !== "MACOS_KEYCHAIN" || typeof module2.createEntry !== "function") {
+        throw new NativeKeyringUnavailableError();
+      }
+      return module2;
+    }).catch(() => {
+      this.#loaded = void 0;
+      throw new NativeKeyringUnavailableError();
+    });
+    return this.#loaded;
+  }
+  async #entry(service, account) {
+    if (service.length === 0 || service.length > 256 || account.length === 0 || account.length > 256) {
+      throw new NativeKeyringUnavailableError();
+    }
+    try {
+      return (await this.#module()).createEntry(service, account);
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    }
+  }
+  async getSecret(service, account) {
+    let secret;
+    try {
+      secret = await (await this.#entry(service, account)).getSecret();
+      return secret === void 0 ? void 0 : Uint8Array.from(secret);
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    } finally {
+      secret?.fill(0);
+    }
+  }
+  async setSecret(service, account, secret) {
+    const copy = Uint8Array.from(secret);
+    try {
+      await (await this.#entry(service, account)).setSecret(copy);
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    } finally {
+      copy.fill(0);
+    }
+  }
+  async deleteSecret(service, account) {
+    try {
+      return await (await this.#entry(service, account)).deleteCredential();
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/macos-keychain-loader.ts
+var SHA256 = /^[a-f0-9]{64}$/u;
+var MAX_NATIVE_ASSET_BYTES = 64 * 1024 * 1024;
+var MAX_NATIVE_SECRET_BYTES = 16384;
+function defaultNativeAddonImporter(absolutePath) {
+  const nativeModule = { exports: {} };
+  process.dlopen(nativeModule, absolutePath);
+  return nativeModule.exports;
+}
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function copyNativeSecret(value) {
+  if (value === void 0 || value === null) return void 0;
+  if (value instanceof Uint8Array) {
+    if (value.byteLength < 1 || value.byteLength > MAX_NATIVE_SECRET_BYTES) throw new NativeKeyringUnavailableError();
+    return Uint8Array.from(value);
+  }
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_NATIVE_SECRET_BYTES || Object.getOwnPropertyNames(value).length !== value.length + 1 || Object.getOwnPropertySymbols(value).length !== 0) {
+    throw new NativeKeyringUnavailableError();
+  }
+  const bytes = new Uint8Array(value.length);
+  try {
+    for (let index = 0; index < value.length; index += 1) {
+      const property = Object.getOwnPropertyDescriptor(value, String(index));
+      if (property === void 0 || !("value" in property) || property.writable !== true || typeof property.value !== "number" || !Number.isInteger(property.value) || property.value < 0 || property.value > 255) {
+        throw new NativeKeyringUnavailableError();
+      }
+      bytes[index] = property.value;
+    }
+    return bytes;
+  } catch (error) {
+    bytes.fill(0);
+    throw error;
+  }
+}
+function eraseNativeSecret(value) {
+  try {
+    if (value instanceof Uint8Array) {
+      Uint8Array.prototype.fill.call(value, 0);
+    } else if (Array.isArray(value)) {
+      for (const name of Object.getOwnPropertyNames(value)) {
+        if (!/^(?:0|[1-9][0-9]*)$/u.test(name) || Number(name) >= value.length) continue;
+        const property = Object.getOwnPropertyDescriptor(value, name);
+        if (property !== void 0 && "value" in property && property.writable === true) {
+          Object.defineProperty(value, name, { ...property, value: 0 });
+        }
+      }
+    }
+  } catch {
+  }
+}
+function adaptMacOsKeychainAddon(value) {
+  const AsyncEntry = record(value)?.AsyncEntry;
+  if (typeof AsyncEntry !== "function") throw new NativeKeyringUnavailableError();
+  const Entry = AsyncEntry;
+  return Object.freeze({
+    backendKind: "MACOS_KEYCHAIN",
+    createEntry(service, account) {
+      const entry = new Entry(service, account);
+      if (typeof entry.getSecret !== "function" || typeof entry.setSecret !== "function" || typeof entry.deleteCredential !== "function") {
+        throw new NativeKeyringUnavailableError();
+      }
+      return {
+        async getSecret(signal) {
+          let nativeSecret;
+          try {
+            nativeSecret = await entry.getSecret(signal);
+            return copyNativeSecret(nativeSecret);
+          } finally {
+            eraseNativeSecret(nativeSecret);
+          }
+        },
+        async setSecret(secret, signal) {
+          await entry.setSecret(secret, signal);
+        },
+        async deleteCredential(signal) {
+          const deleted = await entry.deleteCredential(signal);
+          if (typeof deleted !== "boolean") throw new NativeKeyringUnavailableError();
+          return deleted;
+        }
+      };
+    }
+  });
+}
+async function readAll(handle, contents) {
+  let offset = 0;
+  while (offset < contents.byteLength) {
+    const { bytesRead } = await handle.read(contents, offset, contents.byteLength - offset, offset);
+    if (bytesRead === 0) throw new NativeKeyringUnavailableError();
+    offset += bytesRead;
+  }
+}
+async function writeAll(handle, contents) {
+  let offset = 0;
+  while (offset < contents.byteLength) {
+    const { bytesWritten } = await handle.write(contents, offset, contents.byteLength - offset, offset);
+    if (bytesWritten === 0) throw new NativeKeyringUnavailableError();
+    offset += bytesWritten;
+  }
+}
+async function readVerifiedAsset(absolutePath, expectedBytes, expectedSha256) {
+  let contents;
+  let handle;
+  try {
+    handle = await (0, import_promises.open)(absolutePath, import_node_fs.constants.O_RDONLY | import_node_fs.constants.O_NOFOLLOW);
+    const before = await handle.stat();
+    if (!before.isFile() || before.nlink !== 1 || before.size !== expectedBytes) {
+      throw new NativeKeyringUnavailableError();
+    }
+    contents = Buffer.alloc(expectedBytes);
+    await readAll(handle, contents);
+    const trailing = Buffer.alloc(1);
+    const [{ bytesRead }, after] = await Promise.all([
+      handle.read(trailing, 0, 1, expectedBytes),
+      handle.stat()
+    ]);
+    if (bytesRead !== 0 || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || (0, import_node_crypto.createHash)("sha256").update(contents).digest("hex") !== expectedSha256) {
+      throw new NativeKeyringUnavailableError();
+    }
+    return contents;
+  } catch {
+    contents?.fill(0);
+    throw new NativeKeyringUnavailableError();
+  } finally {
+    await handle?.close().catch(() => void 0);
+  }
+}
+async function importPrivateVerifiedCopy(source, filename, expectedSha256, importer) {
+  let directory;
+  let stagedPath;
+  let handle;
+  try {
+    directory = await (0, import_promises.mkdtemp)((0, import_node_path.join)((0, import_node_os.tmpdir)(), "codex-observability-keyring-"));
+    await (0, import_promises.chmod)(directory, 448);
+    const directoryStat = await (0, import_promises.lstat)(directory);
+    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || (directoryStat.mode & 63) !== 0 || typeof process.getuid === "function" && directoryStat.uid !== process.getuid()) {
+      throw new NativeKeyringUnavailableError();
+    }
+    stagedPath = (0, import_node_path.join)(directory, filename);
+    handle = await (0, import_promises.open)(
+      stagedPath,
+      import_node_fs.constants.O_CREAT | import_node_fs.constants.O_EXCL | import_node_fs.constants.O_RDWR | import_node_fs.constants.O_NOFOLLOW,
+      256
+    );
+    await writeAll(handle, source);
+    await handle.sync();
+    await handle.chmod(256);
+    const before = await handle.stat();
+    if (!before.isFile() || before.nlink !== 1 || before.size !== source.byteLength) {
+      throw new NativeKeyringUnavailableError();
+    }
+    const verified = Buffer.alloc(source.byteLength);
+    try {
+      await readAll(handle, verified);
+      const after = await handle.stat();
+      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || (0, import_node_crypto.createHash)("sha256").update(verified).digest("hex") !== expectedSha256) {
+        throw new NativeKeyringUnavailableError();
+      }
+    } finally {
+      verified.fill(0);
+    }
+    return await importer("/dev/fd/".concat(String(handle.fd)));
+  } catch {
+    throw new NativeKeyringUnavailableError();
+  } finally {
+    await handle?.close().catch(() => void 0);
+    if (stagedPath !== void 0) await (0, import_promises.unlink)(stagedPath).catch(() => void 0);
+    if (directory !== void 0) await (0, import_promises.rmdir)(directory).catch(() => void 0);
+  }
+}
+var HashPinnedMacOsKeychainLoader = class {
+  #absolutePath;
+  #filename;
+  #bytes;
+  #sha256;
+  #importer;
+  #platform;
+  #architecture;
+  #loaded;
+  constructor(options) {
+    this.#platform = options.platform ?? process.platform;
+    this.#architecture = options.architecture ?? process.arch;
+    try {
+      this.#absolutePath = (0, import_node_url.fileURLToPath)(new import_node_url.URL(options.asset.fileUrl.href));
+    } catch {
+      throw new NativeKeyringUnavailableError();
+    }
+    this.#filename = (0, import_node_path.basename)(this.#absolutePath);
+    this.#bytes = options.asset.bytes;
+    this.#sha256 = options.asset.sha256;
+    this.#importer = options.importer ?? defaultNativeAddonImporter;
+    const expectedFilenames = /* @__PURE__ */ new Set([
+      "keyring.darwin-universal.node",
+      "keyring.darwin-".concat(this.#architecture, ".node")
+    ]);
+    if (this.#platform !== "darwin" || this.#architecture !== "arm64" && this.#architecture !== "x64" || !(0, import_node_path.isAbsolute)(this.#absolutePath) || !expectedFilenames.has(this.#filename) || !Number.isSafeInteger(this.#bytes) || this.#bytes < 1 || this.#bytes > MAX_NATIVE_ASSET_BYTES || !SHA256.test(this.#sha256)) {
+      throw new NativeKeyringUnavailableError();
+    }
+  }
+  async load() {
+    this.#loaded ??= this.#load().catch(() => {
+      this.#loaded = void 0;
+      throw new NativeKeyringUnavailableError();
+    });
+    return this.#loaded;
+  }
+  async #load() {
+    const source = await readVerifiedAsset(this.#absolutePath, this.#bytes, this.#sha256);
+    try {
+      const addon = await importPrivateVerifiedCopy(
+        source,
+        this.#filename,
+        this.#sha256,
+        this.#importer
+      );
+      return adaptMacOsKeychainAddon(addon);
+    } finally {
+      source.fill(0);
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/profile-store.ts
+var import_node_fs3 = require("node:fs");
+var import_promises2 = require("node:fs/promises");
+var import_node_os2 = require("node:os");
+var import_node_path3 = require("node:path");
+
+// packages/contracts/src/canonical-json.ts
+var import_node_crypto2 = require("node:crypto");
+var HEX_64 = /^[a-f0-9]{64}$/u;
+var HASH_CONTRACT_VERSION = "sha256-jcs-v1";
+var JCS_CANONICALIZATION = "RFC8785";
+function assertValidUnicode(value, path) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 55296 && code <= 56319) {
+      const next = value.charCodeAt(index + 1);
+      if (!Number.isInteger(next) || next < 56320 || next > 57343) {
+        throw new TypeError("Unpaired high surrogate at ".concat(path));
+      }
+      index += 1;
+    } else if (code >= 56320 && code <= 57343) {
+      throw new TypeError("Unpaired low surrogate at ".concat(path));
+    }
+  }
+}
+function assertJsonDataProperties(value, path) {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key === "symbol") throw new TypeError("Symbol-keyed member at ".concat(path));
+    if (Array.isArray(value) && key === "length") continue;
+    const descriptor = descriptors[key];
+    if (descriptor === void 0 || descriptor.get !== void 0 || descriptor.set !== void 0) {
+      throw new TypeError("Accessor member at ".concat(path, ".").concat(key));
+    }
+    if (!descriptor.enumerable) throw new TypeError("Non-enumerable member at ".concat(path, ".").concat(key));
+    if (Array.isArray(value) && !/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+      throw new TypeError("Non-index array member at ".concat(path, ".").concat(key));
+    }
+  }
+}
+function canonicalize(value, path, ancestors) {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string") {
+    assertValidUnicode(value, path);
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new TypeError("Non-finite number at ".concat(path));
+    return JSON.stringify(value);
+  }
+  if (typeof value !== "object") {
+    throw new TypeError("Non-JSON value at ".concat(path));
+  }
+  if (ancestors.has(value)) throw new TypeError("Circular reference at ".concat(path));
+  assertJsonDataProperties(value, path);
+  ancestors.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const items = [];
+      for (let index = 0; index < value.length; index += 1) {
+        if (!Object.hasOwn(value, index)) {
+          throw new TypeError("Sparse array at ".concat(path, "[").concat(index, "]"));
+        }
+        items.push(canonicalize(value[index], "".concat(path, "[").concat(index, "]"), ancestors));
+      }
+      return "[".concat(items.join(","), "]");
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("Non-plain object at ".concat(path));
+    }
+    const object3 = value;
+    const keys = Object.keys(object3).sort();
+    const properties = [];
+    for (const key of keys) {
+      assertValidUnicode(key, "".concat(path, " key"));
+      const member = object3[key];
+      if (member === void 0) throw new TypeError("Undefined member at ".concat(path, ".").concat(key));
+      properties.push("".concat(JSON.stringify(key), ":").concat(canonicalize(member, "".concat(path, ".").concat(key), ancestors)));
+    }
+    return "{".concat(properties.join(","), "}");
+  } finally {
+    ancestors.delete(value);
+  }
+}
+function canonicalJson(value) {
+  return canonicalize(value, "$", /* @__PURE__ */ new Set());
+}
+function sha256Bytes(value) {
+  return (0, import_node_crypto2.createHash)("sha256").update(value).digest("hex");
+}
+function sha256Canonical(value) {
+  return sha256Bytes(canonicalJson(value));
+}
+function withoutTopLevelIntegrity(value) {
+  const copy = { ...value };
+  delete copy.integrity;
+  return copy;
+}
+function computeIntegrity(value) {
+  return {
+    hashContractVersion: HASH_CONTRACT_VERSION,
+    algorithm: "sha256",
+    canonicalization: JCS_CANONICALIZATION,
+    contentSha256: sha256Canonical(withoutTopLevelIntegrity(value))
+  };
+}
+function verifyIntegrity(value) {
+  return value.integrity.hashContractVersion === HASH_CONTRACT_VERSION && value.integrity.algorithm === "sha256" && value.integrity.canonicalization === JCS_CANONICALIZATION && HEX_64.test(value.integrity.contentSha256) && computeIntegrity(value).contentSha256 === value.integrity.contentSha256;
+}
+
+// packages/run-store/src/secure-state.ts
+var import_node_fs2 = require("node:fs");
+var import_node_crypto3 = require("node:crypto");
+var import_node_path2 = require("node:path");
+
+// packages/run-store/src/store.ts
+var RunStoreError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "RunStoreError";
+    this.code = code;
+  }
+};
+var DEFAULT_MAXIMUM_TTL_MS = 24 * 60 * 60 * 1e3;
+var DEFAULT_MAXIMUM_LEASE_MS = (5 * 60 + 30) * 1e3;
+
+// packages/run-store/src/secure-state.ts
+var DEFAULT_MAXIMUM_STATE_BYTES = 32 * 1024 * 1024;
+var SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/u;
+var LOCK_MAXIMUM_BYTES = 1024;
+var GUARD_RETRY_ATTEMPTS = 50;
+var GUARD_RETRY_MS = 2;
+var GUARD_WAIT = new Int32Array(new SharedArrayBuffer(4));
+function currentUid() {
+  return typeof process.getuid === "function" ? process.getuid() : void 0;
+}
+function assertOwner(stat, label) {
+  const uid = currentUid();
+  if (uid !== void 0 && stat.uid !== uid) {
+    throw new RunStoreError("STATE_OWNER_INVALID", "".concat(label, " is not owned by the current user"));
+  }
+  if ((stat.mode & 63) !== 0) {
+    throw new RunStoreError("STATE_PERMISSIONS_INVALID", "".concat(label, " grants group or other access"));
+  }
+}
+function assertRoot(path) {
+  const stat = (0, import_node_fs2.lstatSync)(path);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new RunStoreError("STATE_ROOT_INVALID", "State root must be a real directory");
+  }
+  assertOwner(stat, "State root");
+}
+function assertRegularFile(path, label, maximumBytes = DEFAULT_MAXIMUM_STATE_BYTES) {
+  const stat = (0, import_node_fs2.lstatSync)(path);
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
+    throw new RunStoreError("STATE_FILE_INVALID", "".concat(label, " must be one regular non-linked file"));
+  }
+  assertOwner(stat, label);
+  if (stat.size > maximumBytes) {
+    throw new RunStoreError("STATE_TOO_LARGE", "".concat(label, " exceeds the state size limit"));
+  }
+  return stat;
+}
+function parseEnvelope(text, kind) {
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new RunStoreError("STATE_CORRUPT", "State is not valid JSON");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new RunStoreError("STATE_CORRUPT", "State envelope is invalid");
+  }
+  const record2 = value;
+  const keys = Object.keys(record2).sort();
+  if (canonicalJson(keys) !== canonicalJson(["generation", "integrity", "kind", "payload", "schemaVersion"])) {
+    throw new RunStoreError("STATE_CORRUPT", "State envelope has unexpected fields");
+  }
+  if (record2.schemaVersion !== "1.0.0" || record2.kind !== kind || !Number.isSafeInteger(record2.generation) || record2.generation < 1 || !verifyIntegrity(value)) {
+    throw new RunStoreError("STATE_CORRUPT", "State integrity verification failed");
+  }
+  return value;
+}
+var AtomicStateFile = class {
+  root;
+  path;
+  #lockPath;
+  #reclaimPath;
+  #kind;
+  #maximumBytes;
+  #filename;
+  #temporaryPath;
+  constructor(options) {
+    if (!(0, import_node_path2.isAbsolute)(options.stateRoot)) {
+      throw new RunStoreError("STATE_ROOT_INVALID", "State root must be absolute");
+    }
+    if (!SAFE_FILENAME.test(options.filename)) {
+      throw new RunStoreError("STATE_FILE_INVALID", "State filename is invalid");
+    }
+    const maximumBytes = options.maximumBytes ?? DEFAULT_MAXIMUM_STATE_BYTES;
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > DEFAULT_MAXIMUM_STATE_BYTES) {
+      throw new RunStoreError("STATE_FILE_INVALID", "State size limit is invalid");
+    }
+    this.root = (0, import_node_path2.resolve)(options.stateRoot);
+    this.path = (0, import_node_path2.resolve)(this.root, options.filename);
+    this.#lockPath = (0, import_node_path2.resolve)(this.root, "".concat(options.filename, ".lock"));
+    this.#reclaimPath = (0, import_node_path2.resolve)(this.root, "".concat(options.filename, ".lock.reclaim"));
+    this.#kind = options.kind;
+    this.#maximumBytes = maximumBytes;
+    this.#filename = options.filename;
+    this.#temporaryPath = (0, import_node_path2.resolve)(this.root, ".state-".concat(options.filename, ".tmp"));
+    if (!(0, import_node_fs2.existsSync)(this.root)) (0, import_node_fs2.mkdirSync)(this.root, { mode: 448, recursive: false });
+    assertRoot(this.root);
+    if (import_node_fs2.realpathSync.native(this.root) !== this.root) {
+      throw new RunStoreError("STATE_ROOT_INVALID", "State root cannot use symlinked ancestor aliases");
+    }
+    if ((0, import_node_fs2.existsSync)(this.path)) this.#readEnvelope();
+  }
+  read() {
+    assertRoot(this.root);
+    return (0, import_node_fs2.existsSync)(this.path) ? structuredClone(this.#readEnvelope().payload) : void 0;
+  }
+  write(payload) {
+    this.transact(() => ({ payload, result: void 0 }));
+  }
+  /** Read and evaluate under the same exclusion lock without rewriting state. */
+  inspect(callback) {
+    assertRoot(this.root);
+    const acquired = this.#acquireLock();
+    try {
+      this.#removeOwnedTemporaryFile();
+      const previous = (0, import_node_fs2.existsSync)(this.path) ? this.#readEnvelope() : void 0;
+      return callback(previous === void 0 ? void 0 : structuredClone(previous.payload));
+    } finally {
+      (0, import_node_fs2.closeSync)(acquired.descriptor);
+      this.#withReclaimGuard(() => {
+        this.#unlinkExact(this.#lockPath, acquired.stat, acquired.nonce, "State lock release");
+      });
+    }
+  }
+  /** Read and evaluate asynchronously while retaining the same exclusion lock. */
+  async inspectAsync(callback) {
+    assertRoot(this.root);
+    const acquired = this.#acquireLock();
+    try {
+      this.#removeOwnedTemporaryFile();
+      const previous = (0, import_node_fs2.existsSync)(this.path) ? this.#readEnvelope() : void 0;
+      return await callback(previous === void 0 ? void 0 : structuredClone(previous.payload));
+    } finally {
+      (0, import_node_fs2.closeSync)(acquired.descriptor);
+      this.#withReclaimGuard(() => {
+        this.#unlinkExact(this.#lockPath, acquired.stat, acquired.nonce, "State lock release");
+      });
+    }
+  }
+  /** Recover only receipts provably abandoned by a dead process. */
+  recoverAbandonedArtifacts() {
+    assertRoot(this.root);
+    this.#withReclaimGuard(() => {
+      this.#recoverExactArtifactsUnderGuard();
+      this.#removeLegacyOwnedTemporaryFiles();
+    });
+  }
+  /** Recover only the deterministic lock/temp names without scanning the root. */
+  recoverAbandonedExactArtifacts() {
+    assertRoot(this.root);
+    this.#withReclaimGuard(() => this.#recoverExactArtifactsUnderGuard());
+  }
+  /**
+   * Explicit operator recovery for a dead reclaim guard. Call only after
+   * quiescing this authority and reviewing the owner-only receipt.
+   */
+  recoverAbandonedReclaimGuard() {
+    assertRoot(this.root);
+    if (!(0, import_node_fs2.existsSync)(this.#reclaimPath)) return;
+    const stat = assertRegularFile(this.#reclaimPath, "State lock reclaim mutex", LOCK_MAXIMUM_BYTES);
+    const lock = this.#parseLock(this.#reclaimPath);
+    try {
+      process.kill(lock.pid, 0);
+      throw new RunStoreError("STATE_LOCKED", "State lock guard belongs to a live process");
+    } catch (error) {
+      if (error instanceof RunStoreError) throw error;
+      if (error.code !== "ESRCH") {
+        throw new RunStoreError("STATE_LOCKED", "State lock guard liveness is uncertain");
+      }
+    }
+    this.#unlinkExact(this.#reclaimPath, stat, lock.nonce, "Abandoned state lock reclaim mutex");
+  }
+  transact(callback) {
+    assertRoot(this.root);
+    const acquired = this.#acquireLock();
+    try {
+      this.#removeOwnedTemporaryFile();
+      const previous = (0, import_node_fs2.existsSync)(this.path) ? this.#readEnvelope() : void 0;
+      const transaction = callback(previous === void 0 ? void 0 : structuredClone(previous.payload));
+      this.#assertSupportedPayload(previous?.payload, transaction.payload);
+      const withoutIntegrity = {
+        schemaVersion: "1.0.0",
+        kind: this.#kind,
+        generation: (previous?.generation ?? 0) + 1,
+        payload: transaction.payload
+      };
+      const envelope = {
+        ...withoutIntegrity,
+        integrity: computeIntegrity(withoutIntegrity)
+      };
+      this.#atomicWrite("".concat(canonicalJson(envelope), "\n"));
+      return transaction.result;
+    } finally {
+      (0, import_node_fs2.closeSync)(acquired.descriptor);
+      this.#withReclaimGuard(() => {
+        this.#unlinkExact(this.#lockPath, acquired.stat, acquired.nonce, "State lock release");
+      });
+    }
+  }
+  #assertSupportedPayload(previous, next) {
+    if (previous === void 0 || previous === null || next === null || typeof previous !== "object" || typeof next !== "object") return;
+    const previousVersion = previous.schemaVersion;
+    const nextVersion = next.schemaVersion;
+    if (previousVersion === "2.0.0" && nextVersion === "1.0.0") {
+      throw new RunStoreError("STATE_CORRUPT", "State format cannot be downgraded after migration");
+    }
+  }
+  #acquireLock() {
+    return this.#withReclaimGuard(() => {
+      let descriptor;
+      try {
+        descriptor = (0, import_node_fs2.openSync)(
+          this.#lockPath,
+          import_node_fs2.constants.O_CREAT | import_node_fs2.constants.O_EXCL | import_node_fs2.constants.O_WRONLY | import_node_fs2.constants.O_NOFOLLOW,
+          384
+        );
+      } catch (error) {
+        if (error.code !== "EEXIST" || !this.#removeProvablyAbandonedLockUnderGuard()) {
+          throw new RunStoreError("STATE_LOCKED", "State is being updated by another process");
+        }
+        descriptor = (0, import_node_fs2.openSync)(
+          this.#lockPath,
+          import_node_fs2.constants.O_CREAT | import_node_fs2.constants.O_EXCL | import_node_fs2.constants.O_WRONLY | import_node_fs2.constants.O_NOFOLLOW,
+          384
+        );
+      }
+      const stat = (0, import_node_fs2.fstatSync)(descriptor);
+      const nonce = (0, import_node_crypto3.randomUUID)();
+      assertOwner(stat, "State lock");
+      (0, import_node_fs2.writeFileSync)(descriptor, canonicalJson({
+        schemaVersion: "1.0.0",
+        pid: process.pid,
+        createdAtMs: Date.now(),
+        nonce
+      }), { encoding: "utf8" });
+      (0, import_node_fs2.fsyncSync)(descriptor);
+      return { descriptor, stat, nonce };
+    });
+  }
+  #removeProvablyAbandonedLockUnderGuard() {
+    const stat = assertRegularFile(this.#lockPath, "State lock", LOCK_MAXIMUM_BYTES);
+    const lock = this.#parseLock(this.#lockPath);
+    try {
+      process.kill(lock.pid, 0);
+      return false;
+    } catch (error) {
+      if (error.code !== "ESRCH") return false;
+    }
+    this.#unlinkExact(this.#lockPath, stat, lock.nonce, "Abandoned state lock");
+    return true;
+  }
+  #withReclaimGuard(callback) {
+    const descriptor = this.#acquireReclaimMutex();
+    const stat = (0, import_node_fs2.fstatSync)(descriptor);
+    const nonce = (0, import_node_crypto3.randomUUID)();
+    try {
+      assertOwner(stat, "State lock reclaim mutex");
+      (0, import_node_fs2.writeFileSync)(descriptor, canonicalJson({
+        schemaVersion: "1.0.0",
+        pid: process.pid,
+        createdAtMs: Date.now(),
+        nonce
+      }), { encoding: "utf8" });
+      (0, import_node_fs2.fsyncSync)(descriptor);
+      return callback();
+    } finally {
+      (0, import_node_fs2.closeSync)(descriptor);
+      this.#unlinkExact(this.#reclaimPath, stat, nonce, "State lock reclaim mutex release");
+    }
+  }
+  #acquireReclaimMutex() {
+    for (let attempt = 0; attempt < GUARD_RETRY_ATTEMPTS; attempt += 1) {
+      try {
+        return (0, import_node_fs2.openSync)(
+          this.#reclaimPath,
+          import_node_fs2.constants.O_CREAT | import_node_fs2.constants.O_EXCL | import_node_fs2.constants.O_WRONLY | import_node_fs2.constants.O_NOFOLLOW,
+          384
+        );
+      } catch (error) {
+        if (error.code !== "EEXIST") {
+          throw new RunStoreError("STATE_LOCKED", "State lock guard could not be acquired");
+        }
+      }
+      let lock;
+      try {
+        assertRegularFile(this.#reclaimPath, "State lock reclaim mutex", LOCK_MAXIMUM_BYTES);
+        lock = this.#parseLock(this.#reclaimPath);
+      } catch (error) {
+        if (attempt === GUARD_RETRY_ATTEMPTS - 1) throw error;
+      }
+      if (lock !== void 0) {
+        try {
+          process.kill(lock.pid, 0);
+        } catch (error) {
+          if (error.code === "ESRCH") {
+            throw new RunStoreError(
+              "STATE_LOCKED",
+              "State lock guard was abandoned; operator review is required"
+            );
+          }
+        }
+      }
+      Atomics.wait(GUARD_WAIT, 0, 0, GUARD_RETRY_MS);
+    }
+    throw new RunStoreError("STATE_LOCKED", "State lock guard is held by another process");
+  }
+  #parseLock(path) {
+    let lock;
+    try {
+      lock = JSON.parse((0, import_node_fs2.readFileSync)(path, "utf8"));
+    } catch {
+      throw new RunStoreError("STATE_LOCK_INVALID", "State lock is malformed");
+    }
+    if (lock === null || typeof lock !== "object" || Array.isArray(lock) || lock.schemaVersion !== "1.0.0" || !Number.isSafeInteger(lock.pid) || lock.pid <= 0 || !Number.isSafeInteger(lock.createdAtMs) || typeof lock.nonce !== "string" || !/^[a-f0-9-]{36}$/u.test(lock.nonce)) {
+      throw new RunStoreError("STATE_LOCK_INVALID", "State lock is malformed");
+    }
+    return { pid: lock.pid, nonce: lock.nonce };
+  }
+  #unlinkExact(path, expected, nonce, label) {
+    const current = assertRegularFile(path, label, LOCK_MAXIMUM_BYTES);
+    const receipt = this.#parseLock(path);
+    if (current.dev !== expected.dev || current.ino !== expected.ino || receipt.nonce !== nonce) {
+      throw new RunStoreError("STATE_LOCK_INVALID", "".concat(label, " no longer names the exact acquired lock"));
+    }
+    (0, import_node_fs2.unlinkSync)(path);
+  }
+  #removeOwnedTemporaryFile() {
+    if (!(0, import_node_fs2.existsSync)(this.#temporaryPath)) return;
+    assertRegularFile(this.#temporaryPath, "Abandoned temporary state file", this.#maximumBytes);
+    (0, import_node_fs2.unlinkSync)(this.#temporaryPath);
+  }
+  #recoverExactArtifactsUnderGuard() {
+    if ((0, import_node_fs2.existsSync)(this.#lockPath) && !this.#removeProvablyAbandonedLockUnderGuard()) {
+      throw new RunStoreError("STATE_LOCKED", "State is being updated by another process");
+    }
+    this.#removeOwnedTemporaryFile();
+  }
+  #removeLegacyOwnedTemporaryFiles() {
+    const prefix = ".state-".concat(this.#filename, "-");
+    for (const name of (0, import_node_fs2.readdirSync)(this.root)) {
+      if (/^\.state-[a-f0-9-]{36}\.tmp$/u.test(name)) {
+        throw new RunStoreError("STATE_FILE_INVALID", "Legacy unowned state temporary file requires operator review");
+      }
+      if (!name.startsWith(prefix)) continue;
+      if (!new RegExp("^".concat(prefix.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "[a-f0-9-]{36}\\.tmp$"), "u").test(name)) {
+        throw new RunStoreError("STATE_FILE_INVALID", "State temporary filename is invalid");
+      }
+      const temporary = (0, import_node_path2.resolve)(this.root, name);
+      assertRegularFile(temporary, "Abandoned temporary state file", this.#maximumBytes);
+      (0, import_node_fs2.unlinkSync)(temporary);
+    }
+  }
+  #readEnvelope() {
+    assertRegularFile(this.path, "State file", this.#maximumBytes);
+    return parseEnvelope((0, import_node_fs2.readFileSync)(this.path, "utf8"), this.#kind);
+  }
+  #atomicWrite(content) {
+    const temporary = this.#temporaryPath;
+    let descriptor;
+    try {
+      descriptor = (0, import_node_fs2.openSync)(
+        temporary,
+        import_node_fs2.constants.O_CREAT | import_node_fs2.constants.O_EXCL | import_node_fs2.constants.O_WRONLY | import_node_fs2.constants.O_NOFOLLOW,
+        384
+      );
+      (0, import_node_fs2.writeFileSync)(descriptor, content, { encoding: "utf8" });
+      (0, import_node_fs2.fsyncSync)(descriptor);
+      (0, import_node_fs2.closeSync)(descriptor);
+      descriptor = void 0;
+      assertRegularFile(temporary, "Temporary state file", this.#maximumBytes);
+      if ((0, import_node_fs2.existsSync)(this.path)) assertRegularFile(this.path, "State file", this.#maximumBytes);
+      (0, import_node_fs2.renameSync)(temporary, this.path);
+      const directoryDescriptor = (0, import_node_fs2.openSync)(this.root, import_node_fs2.constants.O_RDONLY | import_node_fs2.constants.O_DIRECTORY);
+      try {
+        (0, import_node_fs2.fsyncSync)(directoryDescriptor);
+      } finally {
+        (0, import_node_fs2.closeSync)(directoryDescriptor);
+      }
+    } finally {
+      if (descriptor !== void 0) (0, import_node_fs2.closeSync)(descriptor);
+      if ((0, import_node_fs2.existsSync)(temporary)) (0, import_node_fs2.unlinkSync)(temporary);
+    }
+  }
+};
+
+// packages/grafana-credential-profile/src/profile-store.ts
+var REGISTRY_FILENAME = "grafana-profiles-v1.json";
+var REGISTRY_TEMPORARY_FILENAME = ".".concat(REGISTRY_FILENAME, ".tmp");
+var LIFECYCLE_COORDINATOR_FILENAME = "grafana-profile-lifecycle-v1";
+var LIFECYCLE_COORDINATOR_KIND = "grafana-profile-lifecycle-coordinator-v1";
+var LIFECYCLE_JOURNAL_FILENAME = "grafana-credential-lifecycle-journal-v1.json";
+var LIFECYCLE_JOURNAL_KIND = "grafana-credential-lifecycle-journal-v1";
+var MAX_REGISTRY_BYTES = 262144;
+var MAX_JOURNAL_BYTES = 16384;
+var GrafanaProfileStoreError = class extends Error {
+  code;
+  constructor(code) {
+    super("Shared Grafana profile state is unavailable");
+    this.name = "GrafanaProfileStoreError";
+    this.code = code;
+  }
+};
+function sharedGrafanaProfileStateRoot(options = {}) {
+  const platform = options.platform ?? process.platform;
+  const environment = options.environment ?? process.env;
+  const homeDirectory = options.homeDirectory ?? (0, import_node_os2.homedir)();
+  if (!(0, import_node_path3.isAbsolute)(homeDirectory)) throw new GrafanaProfileStoreError("UNSAFE_STATE");
+  if (platform === "darwin") {
+    return (0, import_node_path3.join)(homeDirectory, "Library", "Application Support", "OpenAI", "Codex Observability");
+  }
+  if (platform === "linux") {
+    const stateHome = environment.XDG_STATE_HOME;
+    if (stateHome !== void 0 && !(0, import_node_path3.isAbsolute)(stateHome)) {
+      throw new GrafanaProfileStoreError("UNSAFE_STATE");
+    }
+    return (0, import_node_path3.join)(stateHome ?? (0, import_node_path3.join)(homeDirectory, ".local", "state"), "openai", "codex-observability");
+  }
+  throw new GrafanaProfileStoreError("UNSUPPORTED_PLATFORM");
+}
+function assertOwner2(metadata, kind) {
+  const expectedKind = kind === "file" ? metadata.isFile() : metadata.isDirectory();
+  if (!expectedKind || metadata.isSymbolicLink() || (metadata.mode & 63) !== 0) {
+    throw new GrafanaProfileStoreError("UNSAFE_STATE");
+  }
+  if (typeof process.getuid === "function" && metadata.uid !== process.getuid()) {
+    throw new GrafanaProfileStoreError("UNSAFE_STATE");
+  }
+  if (kind === "file" && metadata.nlink !== 1) throw new GrafanaProfileStoreError("UNSAFE_STATE");
+}
+async function writeAll2(handle, contents) {
+  let offset = 0;
+  while (offset < contents.byteLength) {
+    const { bytesWritten } = await handle.write(contents, offset, contents.byteLength - offset, offset);
+    if (bytesWritten === 0) throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+    offset += bytesWritten;
+  }
+}
+var SharedGrafanaProfileStore = class {
+  #rootPath;
+  #registryPath;
+  #registryTemporaryPath;
+  constructor(options = {}) {
+    const platform = options.platform ?? process.platform;
+    if (platform !== "darwin" && platform !== "linux") {
+      throw new GrafanaProfileStoreError("UNSUPPORTED_PLATFORM");
+    }
+    this.#rootPath = options.rootPath ?? sharedGrafanaProfileStateRoot(options);
+    if (!(0, import_node_path3.isAbsolute)(this.#rootPath)) throw new GrafanaProfileStoreError("UNSAFE_STATE");
+    this.#registryPath = (0, import_node_path3.join)(this.#rootPath, REGISTRY_FILENAME);
+    this.#registryTemporaryPath = (0, import_node_path3.join)(this.#rootPath, REGISTRY_TEMPORARY_FILENAME);
+  }
+  async #ensureRoot() {
+    try {
+      await (0, import_promises2.mkdir)(this.#rootPath, { recursive: true, mode: 448 });
+      assertOwner2(await (0, import_promises2.lstat)(this.#rootPath), "directory");
+    } catch (error) {
+      if (error instanceof GrafanaProfileStoreError) throw error;
+      throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+    }
+  }
+  async #readUnlocked() {
+    await this.#ensureRoot();
+    let handle;
+    try {
+      handle = await (0, import_promises2.open)(this.#registryPath, import_node_fs3.constants.O_RDONLY | import_node_fs3.constants.O_NOFOLLOW);
+    } catch (error) {
+      if (error.code === "ENOENT") return emptySharedGrafanaProfileRegistry();
+      throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+    }
+    try {
+      const before = await handle.stat();
+      assertOwner2(before, "file");
+      if (before.size < 2 || before.size > MAX_REGISTRY_BYTES) {
+        throw new GrafanaProfileStoreError("UNSAFE_STATE");
+      }
+      const contents = Buffer.alloc(before.size);
+      let offset = 0;
+      while (offset < contents.byteLength) {
+        const { bytesRead: bytesRead2 } = await handle.read(contents, offset, contents.byteLength - offset, offset);
+        if (bytesRead2 === 0) throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+        offset += bytesRead2;
+      }
+      const trailing = Buffer.alloc(1);
+      const [{ bytesRead }, after] = await Promise.all([
+        handle.read(trailing, 0, 1, contents.byteLength),
+        handle.stat()
+      ]);
+      if (bytesRead !== 0 || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size) {
+        throw new GrafanaProfileStoreError("UNSAFE_STATE");
+      }
+      try {
+        return parseSharedGrafanaProfileRegistry(JSON.parse(contents.toString("utf8")));
+      } catch {
+        throw new GrafanaProfileStoreError("UNSAFE_STATE");
+      } finally {
+        contents.fill(0);
+      }
+    } finally {
+      await handle.close().catch(() => void 0);
+    }
+  }
+  async #syncRoot() {
+    const directory = await (0, import_promises2.open)(
+      this.#rootPath,
+      import_node_fs3.constants.O_RDONLY | import_node_fs3.constants.O_DIRECTORY | import_node_fs3.constants.O_NOFOLLOW
+    );
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close().catch(() => void 0);
+    }
+  }
+  async #recoverAbandonedRegistryTemporary() {
+    let metadata;
+    try {
+      metadata = await (0, import_promises2.lstat)(this.#registryTemporaryPath);
+    } catch (error) {
+      if (error.code === "ENOENT") return;
+      throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+    }
+    assertOwner2(metadata, "file");
+    await (0, import_promises2.unlink)(this.#registryTemporaryPath);
+    await this.#syncRoot();
+  }
+  async #writeUnlocked(registry) {
+    const parsed = parseSharedGrafanaProfileRegistry(registry);
+    const contents = Buffer.from("".concat(JSON.stringify(parsed, null, 2), "\n"), "utf8");
+    if (contents.byteLength > MAX_REGISTRY_BYTES) throw new GrafanaProfileStoreError("UNSAFE_STATE");
+    const temporaryPath = this.#registryTemporaryPath;
+    let created = false;
+    try {
+      const handle = await (0, import_promises2.open)(
+        temporaryPath,
+        import_node_fs3.constants.O_CREAT | import_node_fs3.constants.O_EXCL | import_node_fs3.constants.O_WRONLY | import_node_fs3.constants.O_NOFOLLOW,
+        384
+      );
+      created = true;
+      try {
+        await writeAll2(handle, contents);
+        await handle.sync();
+      } finally {
+        await handle.close().catch(() => void 0);
+      }
+      await (0, import_promises2.chmod)(temporaryPath, 384);
+      assertOwner2(await (0, import_promises2.lstat)(temporaryPath), "file");
+      await (0, import_promises2.rename)(temporaryPath, this.#registryPath);
+      created = false;
+      await this.#syncRoot();
+    } catch (error) {
+      if (error instanceof GrafanaProfileStoreError) throw error;
+      throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+    } finally {
+      contents.fill(0);
+      if (created) await (0, import_promises2.unlink)(temporaryPath).catch(() => void 0);
+    }
+  }
+  async read() {
+    return this.#readUnlocked();
+  }
+  async update(mutation) {
+    return this.withExclusiveLifecycle((transaction) => transaction.update(mutation));
+  }
+  async withExclusiveLifecycle(operation) {
+    await this.#ensureRoot();
+    let coordinator;
+    try {
+      coordinator = new AtomicStateFile({
+        stateRoot: await (0, import_promises2.realpath)(this.#rootPath),
+        filename: LIFECYCLE_COORDINATOR_FILENAME,
+        kind: LIFECYCLE_COORDINATOR_KIND,
+        maximumBytes: MAX_REGISTRY_BYTES
+      });
+    } catch (error) {
+      if (error instanceof RunStoreError) {
+        throw new GrafanaProfileStoreError(error.code === "STATE_LOCKED" ? "STATE_BUSY" : "UNSAFE_STATE");
+      }
+      throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+    }
+    try {
+      return await coordinator.inspectAsync(async () => {
+        await this.#recoverAbandonedRegistryTemporary();
+        const journalState = new AtomicStateFile({
+          stateRoot: coordinator.root,
+          filename: LIFECYCLE_JOURNAL_FILENAME,
+          kind: LIFECYCLE_JOURNAL_KIND,
+          maximumBytes: MAX_JOURNAL_BYTES
+        });
+        journalState.recoverAbandonedExactArtifacts();
+        let current = await this.#readUnlocked();
+        let currentReliable = true;
+        const readCurrent = () => {
+          if (!currentReliable) throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+          return parseSharedGrafanaProfileRegistry(current);
+        };
+        const persistedJournal = journalState.read();
+        let currentJournal;
+        if (persistedJournal !== void 0 && persistedJournal !== null) {
+          try {
+            currentJournal = parseGrafanaCredentialLifecycleJournal(persistedJournal);
+          } catch {
+            throw new GrafanaProfileStoreError("UNSAFE_STATE");
+          }
+        }
+        const transaction = Object.freeze({
+          read: readCurrent,
+          readCredentialLifecycleJournal: () => currentJournal === void 0 ? void 0 : parseGrafanaCredentialLifecycleJournal(currentJournal),
+          writeCredentialLifecycleJournal: async (journal) => {
+            let parsed;
+            try {
+              parsed = parseGrafanaCredentialLifecycleJournal(journal);
+            } catch {
+              throw new GrafanaProfileStoreError("UNSAFE_STATE");
+            }
+            const validTransition = currentJournal === void 0 ? parsed.phase === "PREPARED" : currentJournal.phase === "PREPARED" && parsed.phase === "COMMITTED" && JSON.stringify(parsed) === JSON.stringify(
+              committedGrafanaCredentialLifecycleJournal(currentJournal)
+            );
+            if (!validTransition) throw new GrafanaProfileStoreError("UNSAFE_STATE");
+            journalState.write(parsed);
+            currentJournal = parsed;
+          },
+          clearCredentialLifecycleJournal: async () => {
+            journalState.write(null);
+            currentJournal = void 0;
+          },
+          update: async (mutation) => {
+            let next;
+            try {
+              next = parseSharedGrafanaProfileRegistry(
+                mutation(readCurrent())
+              );
+            } catch (error) {
+              if (error instanceof GrafanaProfileError) throw error;
+              throw new GrafanaProfileStoreError("STATE_UNAVAILABLE");
+            }
+            try {
+              await this.#writeUnlocked(next);
+            } catch (error) {
+              try {
+                current = await this.#readUnlocked();
+                currentReliable = true;
+              } catch {
+                currentReliable = false;
+              }
+              throw error;
+            }
+            current = next;
+            currentReliable = true;
+            return readCurrent();
+          }
+        });
+        return operation(transaction);
+      });
+    } catch (error) {
+      if (error instanceof RunStoreError) {
+        throw new GrafanaProfileStoreError(error.code === "STATE_LOCKED" ? "STATE_BUSY" : "UNSAFE_STATE");
+      }
+      throw error;
+    }
+  }
+};
+
+// packages/observability-cli/src/main.ts
+var import_node_crypto4 = require("node:crypto");
+
+// packages/provider-runtime/src/http-transport.ts
+var import_promises3 = require("node:dns/promises");
+var import_node_http = require("node:http");
+var import_node_https = require("node:https");
+var import_node_net2 = require("node:net");
+var MAX_JSON_REQUEST_BYTES = 262144;
+var RuntimeTransportError = class extends Error {
+  code;
+  kind;
+  constructor(code, kind) {
+    super("Trusted provider transport failed (".concat(code, ")"));
+    this.name = "RuntimeTransportError";
+    this.code = code;
+    this.kind = kind;
+  }
+};
+var defaultResolver = {
+  async lookup(hostname) {
+    const literal = normalizeAddress(hostname);
+    const family = (0, import_node_net2.isIP)(literal);
+    if (family === 4 || family === 6) return [{ address: literal, family }];
+    const results = await (0, import_promises3.lookup)(hostname, { all: true, verbatim: true });
+    return results.filter((entry) => entry.family === 4 || entry.family === 6).map((entry) => ({ address: normalizeAddress(entry.address), family: entry.family }));
+  }
+};
+var loopbackAddresses = new import_node_net2.BlockList();
+loopbackAddresses.addSubnet("127.0.0.0", 8, "ipv4");
+loopbackAddresses.addAddress("::1", "ipv6");
+var privateAddresses = new import_node_net2.BlockList();
+privateAddresses.addSubnet("10.0.0.0", 8, "ipv4");
+privateAddresses.addSubnet("172.16.0.0", 12, "ipv4");
+privateAddresses.addSubnet("192.168.0.0", 16, "ipv4");
+privateAddresses.addSubnet("fc00::", 7, "ipv6");
+var nonPublicAddresses = new import_node_net2.BlockList();
+for (const [address, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4]
+]) {
+  nonPublicAddresses.addSubnet(address, prefix, "ipv4");
+}
+for (const [address, prefix] of [
+  ["::", 128],
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["ff00::", 8],
+  ["2001:db8::", 32],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48],
+  ["2001::", 32],
+  ["2002::", 16]
+]) {
+  nonPublicAddresses.addSubnet(address, prefix, "ipv6");
+}
+function normalizeAddress(value) {
+  const unwrapped = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  return unwrapped.toLowerCase().startsWith("::ffff:") ? unwrapped.slice(7) : unwrapped.toLowerCase();
+}
+function classifyNetworkAddress(value) {
+  const address = normalizeAddress(value);
+  const family = (0, import_node_net2.isIP)(address);
+  if (family !== 4 && family !== 6) return "forbidden";
+  const type = family === 4 ? "ipv4" : "ipv6";
+  if (loopbackAddresses.check(address, type)) return "loopback";
+  if (privateAddresses.check(address, type)) return "private";
+  if (nonPublicAddresses.check(address, type)) return "forbidden";
+  return "public";
+}
+function normalizeHost(value) {
+  return value.trim().toLowerCase().replace(/\.$/u, "").replace(/^\[(.*)\]$/u, "$1");
+}
+function isLoopback(hostname) {
+  const host = normalizeHost(hostname);
+  if (host === "localhost" || host === "::1") return true;
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/u.exec(host);
+  if (match === null) return false;
+  const octets = match.slice(1).map(Number);
+  return octets.every((octet) => octet >= 0 && octet <= 255) && octets[0] === 127;
+}
+function hasUnsafeHeaderMaterial(value) {
+  return /[\r\n\0]/u.test(value);
+}
+function resolveCredential(reference, options) {
+  let value;
+  if (reference.kind === "env") {
+    value = options.environment[reference.key];
+  } else {
+    if (options.credentialResolver === void 0) {
+      throw new RuntimeTransportError("CREDENTIAL_RESOLVER_NOT_CONFIGURED", "POLICY");
+    }
+    try {
+      value = options.credentialResolver.resolve(reference);
+    } catch {
+      throw new RuntimeTransportError("CREDENTIAL_RESOLUTION_FAILED", "POLICY");
+    }
+  }
+  if (value === void 0 || value.length === 0 || value.length > 1048576 || value.includes("\0")) {
+    throw new RuntimeTransportError("CREDENTIAL_UNAVAILABLE", "POLICY");
+  }
+  return value;
+}
+function responseHeaders(headers) {
+  const output = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (typeof value === "string") output[name.toLowerCase()] = value;
+    else if (Array.isArray(value)) output[name.toLowerCase()] = value.join(", ");
+  }
+  return Object.freeze(output);
+}
+function safePathSegments(pathname) {
+  if (!pathname.startsWith("/") || pathname.startsWith("//") || pathname.includes("\\") || pathname.includes("\0")) {
+    throw new RuntimeTransportError("UNSAFE_PATH", "POLICY");
+  }
+  for (const segment of pathname.split("/")) {
+    let decoded;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      throw new RuntimeTransportError("INVALID_PATH_ENCODING", "POLICY");
+    }
+    if (decoded === "." || decoded === ".." || decoded.includes("/") || decoded.includes("\\")) {
+      throw new RuntimeTransportError("PATH_TRAVERSAL", "POLICY");
+    }
+  }
+}
+async function boundedLookup(resolver, hostname, signal, timeoutMs) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      if ("error" in result) rejectPromise(result.error);
+      else resolvePromise(result.addresses);
+    };
+    const onAbort = () => finish({ error: signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE") });
+    const timer = setTimeout(
+      () => finish({ error: new RuntimeTransportError("DEADLINE_EXCEEDED", "TIMEOUT") }),
+      timeoutMs
+    );
+    timer.unref();
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    void resolver.lookup(hostname).then(
+      (addresses) => finish({ addresses }),
+      () => finish({ error: new RuntimeTransportError("DNS_UNAVAILABLE", "UNAVAILABLE") })
+    );
+  });
+}
+var NodeTrustedHttpClient = class {
+  #endpoint;
+  #base;
+  #headers;
+  #tls;
+  #timeoutMs;
+  #maxResponseBytes;
+  #resolver;
+  constructor(options) {
+    this.#endpoint = options.endpoint;
+    this.#base = new URL(options.endpoint.baseUrl);
+    if (this.#base.username !== "" || this.#base.password !== "" || this.#base.search !== "" || this.#base.hash !== "") {
+      throw new RuntimeTransportError("UNSAFE_ENDPOINT_MATERIAL", "POLICY");
+    }
+    const hostname = normalizeHost(this.#base.hostname);
+    const allowedHosts = options.endpoint.network.allowedHosts.map(normalizeHost);
+    if (!allowedHosts.includes(hostname)) throw new RuntimeTransportError("HOST_NOT_ALLOWED", "POLICY");
+    if (options.endpoint.network.followRedirects !== false) {
+      throw new RuntimeTransportError("REDIRECTS_MUST_BE_DISABLED", "POLICY");
+    }
+    if (options.endpoint.network.routeMode === "application_proxy") {
+      throw new RuntimeTransportError("APPLICATION_PROXY_NOT_IMPLEMENTED", "POLICY");
+    }
+    if (options.endpoint.network.routeMode === "host_vpn" && options.endpoint.network.networkClass !== "private") {
+      throw new RuntimeTransportError("HOST_VPN_REQUIRES_PRIVATE_NETWORK", "POLICY");
+    }
+    if (this.#base.protocol !== "https:") {
+      if (this.#base.protocol !== "http:" || !options.endpoint.network.allowLoopbackHttp || !isLoopback(hostname)) {
+        throw new RuntimeTransportError("INSECURE_ENDPOINT", "POLICY");
+      }
+      if (options.endpoint.authentication.mode === "MTLS" || options.endpoint.tls.caRef !== void 0 || options.endpoint.tls.serverName !== void 0) {
+        throw new RuntimeTransportError("TLS_POLICY_REQUIRES_HTTPS", "POLICY");
+      }
+    }
+    if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 12e4) {
+      throw new RuntimeTransportError("INVALID_TIMEOUT", "POLICY");
+    }
+    if (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > 1073741824) {
+      throw new RuntimeTransportError("INVALID_BYTE_LIMIT", "POLICY");
+    }
+    const headers = { Accept: "application/json" };
+    const authentication = options.endpoint.authentication;
+    if (authentication.mode === "BEARER") {
+      const token = resolveCredential(authentication.tokenRef, options);
+      if (hasUnsafeHeaderMaterial(token)) throw new RuntimeTransportError("CREDENTIAL_UNAVAILABLE", "POLICY");
+      headers.Authorization = "Bearer ".concat(token);
+    } else if (authentication.mode === "BASIC") {
+      const username = resolveCredential(authentication.usernameRef, options);
+      const password = resolveCredential(authentication.passwordRef, options);
+      if (username.includes(":") || hasUnsafeHeaderMaterial(username) || hasUnsafeHeaderMaterial(password)) {
+        throw new RuntimeTransportError("CREDENTIAL_UNAVAILABLE", "POLICY");
+      }
+      headers.Authorization = "Basic ".concat(Buffer.from("".concat(username, ":").concat(password), "utf8").toString("base64"));
+    }
+    if (options.endpoint.tenantBinding !== void 0) {
+      const key = options.endpoint.tenantBinding.valueRef.slice("metadata:".length);
+      const tenantValue = options.metadata[key];
+      if (tenantValue === void 0 || tenantValue.length === 0 || hasUnsafeHeaderMaterial(tenantValue)) {
+        throw new RuntimeTransportError("TENANT_BINDING_UNAVAILABLE", "POLICY");
+      }
+      headers[options.endpoint.tenantBinding.headerName] = tenantValue;
+    }
+    this.#headers = Object.freeze(headers);
+    const ca = options.endpoint.tls.caRef === void 0 ? void 0 : resolveCredential(options.endpoint.tls.caRef, options);
+    const clientIdentity = authentication.mode === "MTLS" ? {
+      certificate: resolveCredential(authentication.certificateRef, options),
+      privateKey: resolveCredential(authentication.privateKeyRef, options)
+    } : {};
+    this.#tls = Object.freeze({
+      minimumVersion: options.endpoint.tls.minimumVersion,
+      ...ca === void 0 ? {} : { ca },
+      ...clientIdentity,
+      ...options.endpoint.tls.serverName === void 0 ? {} : { serverName: options.endpoint.tls.serverName }
+    });
+    this.#timeoutMs = options.timeoutMs;
+    this.#maxResponseBytes = options.maxResponseBytes;
+    this.#resolver = options.resolver ?? defaultResolver;
+  }
+  async get(pathname, query, signal, requestedMaxBytes) {
+    safePathSegments(pathname);
+    const url = new URL(this.#base.toString());
+    const basePath = this.#base.pathname.endsWith("/") ? this.#base.pathname : "".concat(this.#base.pathname, "/");
+    url.pathname = "".concat(basePath).concat(pathname.replace(/^\/+/, ""));
+    url.search = "";
+    const entries = query instanceof URLSearchParams ? query.entries() : Object.entries(query);
+    for (const [name, value] of entries) {
+      if (name.length === 0 || name.length > 128 || hasUnsafeHeaderMaterial(name) || hasUnsafeHeaderMaterial(value)) {
+        throw new RuntimeTransportError("INVALID_QUERY", "POLICY");
+      }
+      url.searchParams.append(name, value);
+    }
+    return this.#request(url, signal, requestedMaxBytes, "GET");
+  }
+  async postJson(pathname, body, signal, requestedMaxBytes) {
+    safePathSegments(pathname);
+    const url = new URL(this.#base.toString());
+    const basePath = this.#base.pathname.endsWith("/") ? this.#base.pathname : "".concat(this.#base.pathname, "/");
+    url.pathname = "".concat(basePath).concat(pathname.replace(/^\/+/, ""));
+    url.search = "";
+    let encoded;
+    try {
+      encoded = Buffer.from(canonicalJson(body), "utf8");
+    } catch {
+      throw new RuntimeTransportError("INVALID_JSON_BODY", "POLICY");
+    }
+    if (encoded.byteLength < 2 || encoded.byteLength > MAX_JSON_REQUEST_BYTES) {
+      throw new RuntimeTransportError("REQUEST_TOO_LARGE", "POLICY");
+    }
+    return this.#request(url, signal, requestedMaxBytes, "POST", encoded);
+  }
+  async getAbsolute(absoluteUrl, signal, requestedMaxBytes) {
+    let url;
+    try {
+      url = new URL(absoluteUrl);
+    } catch {
+      throw new RuntimeTransportError("INVALID_ABSOLUTE_URL", "POLICY");
+    }
+    if (url.origin !== this.#base.origin || url.username !== "" || url.password !== "" || url.hash !== "" || !url.pathname.startsWith(this.#base.pathname)) {
+      throw new RuntimeTransportError("ENDPOINT_ESCAPE", "POLICY");
+    }
+    safePathSegments(url.pathname);
+    for (const [name, value] of url.searchParams.entries()) {
+      if (name.length === 0 || name.length > 128 || hasUnsafeHeaderMaterial(name) || hasUnsafeHeaderMaterial(value)) {
+        throw new RuntimeTransportError("INVALID_QUERY", "POLICY");
+      }
+    }
+    return this.#request(url, signal, requestedMaxBytes, "GET");
+  }
+  async #request(url, signal, requestedMaxBytes, method, body) {
+    if (signal.aborted) throw signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE");
+    if (method === "POST" && body === void 0 || method === "GET" && body !== void 0) {
+      throw new RuntimeTransportError("INVALID_REQUEST_BODY", "POLICY");
+    }
+    const requestHeaders = { ...this.#headers };
+    if (body !== void 0) {
+      requestHeaders["Content-Type"] = "application/json";
+      requestHeaders["Content-Length"] = String(body.byteLength);
+    }
+    const deadline = Date.now() + this.#timeoutMs;
+    const maximum = Math.min(this.#maxResponseBytes, requestedMaxBytes);
+    if (!Number.isSafeInteger(maximum) || maximum < 1) {
+      throw new RuntimeTransportError("INVALID_BYTE_LIMIT", "POLICY");
+    }
+    const hostname = normalizeHost(url.hostname);
+    const allowedHosts = this.#endpoint.network.allowedHosts.map(normalizeHost);
+    if (!allowedHosts.includes(hostname)) throw new RuntimeTransportError("HOST_NOT_ALLOWED", "POLICY");
+    const addresses = await boundedLookup(this.#resolver, hostname, signal, this.#timeoutMs);
+    if (signal.aborted) throw signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE");
+    const candidates = addresses.filter(
+      (entry) => (entry.family === 4 || entry.family === 6) && (0, import_node_net2.isIP)(normalizeAddress(entry.address)) === entry.family
+    );
+    if (candidates.length === 0) throw new RuntimeTransportError("DNS_EMPTY", "UNAVAILABLE");
+    if (candidates.some(
+      (entry) => classifyNetworkAddress(entry.address) !== this.#endpoint.network.networkClass
+    )) {
+      throw new RuntimeTransportError("DNS_NETWORK_CLASS_MISMATCH", "POLICY");
+    }
+    const selected = candidates[0];
+    const selectedAddress = normalizeAddress(selected.address);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs < 1) throw new RuntimeTransportError("DEADLINE_EXCEEDED", "TIMEOUT");
+    return new Promise((resolvePromise, rejectPromise) => {
+      let settled = false;
+      let request;
+      const cleanup = {};
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        if (cleanup.timer !== void 0) clearTimeout(cleanup.timer);
+        if (cleanup.onAbort !== void 0) signal.removeEventListener("abort", cleanup.onAbort);
+        rejectPromise(error instanceof RuntimeTransportError ? error : new RuntimeTransportError("NETWORK_UNAVAILABLE", "UNAVAILABLE"));
+      };
+      const succeed = (response) => {
+        if (settled) return;
+        settled = true;
+        if (cleanup.timer !== void 0) clearTimeout(cleanup.timer);
+        if (cleanup.onAbort !== void 0) signal.removeEventListener("abort", cleanup.onAbort);
+        resolvePromise(response);
+      };
+      const requestOptions = {
+        method,
+        headers: requestHeaders,
+        agent: false,
+        ...url.protocol === "https:" ? {
+          rejectUnauthorized: true,
+          minVersion: this.#tls.minimumVersion,
+          ...this.#tls.ca === void 0 ? {} : { ca: this.#tls.ca },
+          ...this.#tls.certificate === void 0 ? {} : { cert: this.#tls.certificate },
+          ...this.#tls.privateKey === void 0 ? {} : { key: this.#tls.privateKey },
+          ...this.#tls.serverName === void 0 ? (0, import_node_net2.isIP)(hostname) === 0 ? { servername: hostname } : {} : { servername: this.#tls.serverName }
+        } : {},
+        lookup: (_lookupHostname, lookupOptions, callback) => {
+          if (typeof lookupOptions === "object" && lookupOptions.all === true) {
+            callback(
+              null,
+              [{ address: selectedAddress, family: selected.family }]
+            );
+          } else {
+            callback(
+              null,
+              selectedAddress,
+              selected.family
+            );
+          }
+        }
+      };
+      try {
+        request = (url.protocol === "https:" ? import_node_https.request : import_node_http.request)(url, requestOptions, (response) => {
+          const peer = normalizeAddress(response.socket.remoteAddress ?? "");
+          if (peer !== selectedAddress) {
+            response.destroy();
+            fail(new RuntimeTransportError("CONNECTED_PEER_MISMATCH", "POLICY"));
+            return;
+          }
+          if (classifyNetworkAddress(peer) !== this.#endpoint.network.networkClass) {
+            response.destroy();
+            fail(new RuntimeTransportError("CONNECTED_PEER_NETWORK_CLASS_MISMATCH", "POLICY"));
+            return;
+          }
+          const chunks = [];
+          let bytes = 0;
+          response.on("data", (chunk) => {
+            const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += buffer.byteLength;
+            if (bytes > maximum) {
+              response.destroy();
+              fail(new RuntimeTransportError("RESPONSE_TOO_LARGE", "RESPONSE_TOO_LARGE"));
+              return;
+            }
+            chunks.push(buffer);
+          });
+          response.once("end", () => {
+            succeed({
+              status: response.statusCode ?? 0,
+              headers: responseHeaders(response.headers),
+              body: Buffer.concat(chunks, bytes)
+            });
+          });
+          response.once("error", fail);
+        });
+      } catch {
+        fail(new RuntimeTransportError("NETWORK_UNAVAILABLE", "UNAVAILABLE"));
+        return;
+      }
+      cleanup.onAbort = () => {
+        request?.destroy();
+        fail(signal.reason ?? new RuntimeTransportError("CANCELLED", "UNAVAILABLE"));
+      };
+      signal.addEventListener("abort", cleanup.onAbort, { once: true });
+      cleanup.timer = setTimeout(() => {
+        request?.destroy();
+        fail(new RuntimeTransportError("DEADLINE_EXCEEDED", "TIMEOUT"));
+      }, remainingMs);
+      cleanup.timer.unref();
+      request.once("error", fail);
+      if (body !== void 0) request.write(body);
+      request.end();
+    });
+  }
+};
+
+// packages/observability-cli/src/grafana-discovery.ts
+var GrafanaDiscoveryError = class extends Error {
+  code;
+  constructor(code) {
+    super("Grafana connection discovery failed safely");
+    this.name = "GrafanaDiscoveryError";
+    this.code = code;
+  }
+};
+var MAX_RESPONSE_BYTES = 1048576;
+var MAX_DATASOURCES = 128;
+var MAX_DASHBOARDS = 20;
+var MAX_PANELS = 256;
+var MAX_TEXT = 120;
+var MAX_PERMISSION_ACTIONS = 512;
+var MAX_PERMISSION_SCOPES = 2048;
+var MAX_JSON_NODES = 1e5;
+var SAFE_UID = /^[A-Za-z0-9_-]{1,128}$/u;
+var SAFE_PERMISSION_ACTION = /^[a-z0-9*_.:-]{1,160}$/u;
+var SUPPORTED_VERSION = /^(10|11|12|13)\.(?:0|[1-9]\d{0,5})\.(?:0|[1-9]\d{0,5})(?:[-+][0-9A-Za-z.-]{1,64})?$/u;
+var CERTIFIED_TYPES = /* @__PURE__ */ new Set([
+  "prometheus",
+  "loki",
+  "tempo",
+  "postgres",
+  "grafana-postgresql-datasource"
+]);
+var PACK_ORDER = [
+  "grafana.infrastructure",
+  "grafana.apm",
+  "grafana.logs",
+  "grafana.iot-edge",
+  "grafana.business-kpis"
+];
+var DISCOVERY_CREDENTIAL_REFERENCE = Object.freeze({
+  kind: "broker",
+  key: "grafana-discovery:ephemeral:bearer:v1"
+});
+function object2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function safeText(value, fallback) {
+  if (typeof value !== "string") return fallback;
+  const printable = [...value].map((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint < 32 || codePoint === 127 ? " " : character;
+  }).join("");
+  const normalized = printable.replace(/\s+/gu, " ").trim();
+  if (normalized.length === 0) return fallback;
+  return normalized.slice(0, MAX_TEXT);
+}
+function certifiedType(value) {
+  return typeof value === "string" && CERTIFIED_TYPES.has(value) ? value : void 0;
+}
+function canonicalDatasourceType(value) {
+  return value === "grafana-postgresql-datasource" ? "postgres" : value;
+}
+function rejectReflectedSecret(value, secret) {
+  const pending = [value];
+  let visited = 0;
+  while (pending.length > 0) {
+    visited += 1;
+    if (visited > MAX_JSON_NODES) throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+    const candidate = pending.pop();
+    if (typeof candidate === "string") {
+      if (candidate.includes(secret)) throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+      continue;
+    }
+    if (Array.isArray(candidate)) {
+      pending.push(...candidate);
+      continue;
+    }
+    const record2 = object2(candidate);
+    if (record2 === void 0) continue;
+    for (const [key, nested] of Object.entries(record2)) {
+      if (key.includes(secret)) throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+      pending.push(nested);
+    }
+  }
+}
+function assertActivatableGrafanaConnectionPreview(preview, bearerSecret) {
+  let secret;
+  try {
+    secret = new TextDecoder("ascii", { fatal: true }).decode(bearerSecret);
+  } catch {
+    throw new GrafanaDiscoveryError("AUTHENTICATION_REJECTED");
+  }
+  if (secret.length === 0 || preview.permissionState !== "READ_ONLY_CONFIRMED") {
+    throw new GrafanaDiscoveryError("PERMISSION_REJECTED");
+  }
+  rejectReflectedSecret(preview, secret);
+}
+async function readWithAbort(promise, signal) {
+  if (signal.aborted) throw new GrafanaDiscoveryError("UNAVAILABLE");
+  return new Promise((resolve2, reject) => {
+    const aborted = () => reject(new GrafanaDiscoveryError("UNAVAILABLE"));
+    signal.addEventListener("abort", aborted, { once: true });
+    promise.then(resolve2, reject).finally(() => signal.removeEventListener("abort", aborted)).catch(() => void 0);
+  });
+}
+function boundedJson(response, secret) {
+  try {
+    const declared = response.headers["content-length"];
+    if (declared !== void 0 && (!/^\d+$/u.test(declared) || Number(declared) > MAX_RESPONSE_BYTES)) {
+      throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+    }
+    if (response.body.byteLength > MAX_RESPONSE_BYTES) throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+    const parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(response.body));
+    rejectReflectedSecret(parsed, secret);
+    return parsed;
+  } catch {
+    throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+  } finally {
+    response.body.fill(0);
+  }
+}
+var VIEWER_SAFE_NON_READ_ACTIONS = Object.freeze({
+  10: Object.freeze({
+    "plugins.app:access": Object.freeze(["plugins:*"]),
+    "alert.notifications.receivers:list": Object.freeze([""])
+  }),
+  11: Object.freeze({
+    "plugins.app:access": Object.freeze(["plugins:*"]),
+    "alert.notifications.receivers:list": Object.freeze([""])
+  }),
+  12: Object.freeze({
+    "plugins.app:access": Object.freeze(["plugins:*"]),
+    "alert.notifications.receivers:list": Object.freeze([""])
+  }),
+  13: Object.freeze({
+    "plugins.app:access": Object.freeze(["plugins:*"]),
+    "alert.notifications.receivers:list": Object.freeze([""]),
+    "notifications.alerting.grafana.app/configs:get": Object.freeze(["configs:*"])
+  })
+});
+function viewerSafeNonReadAction(action, scopes, major) {
+  const allowedScopes = VIEWER_SAFE_NON_READ_ACTIONS[major]?.[action];
+  return allowedScopes !== void 0 && scopes.length > 0 && scopes.every((scope) => allowedScopes.includes(scope));
+}
+function permissionState(value, major) {
+  const permissions = object2(value);
+  if (permissions === void 0 || Object.keys(permissions).length > MAX_PERMISSION_ACTIONS) {
+    throw new GrafanaDiscoveryError("PERMISSION_REJECTED");
+  }
+  const active = /* @__PURE__ */ new Set();
+  let scopeCount = 0;
+  for (const [action, scopes] of Object.entries(permissions)) {
+    const exactVersionedViewerAction = Object.hasOwn(VIEWER_SAFE_NON_READ_ACTIONS[major] ?? {}, action);
+    if (!SAFE_PERMISSION_ACTION.test(action) && !exactVersionedViewerAction || !Array.isArray(scopes)) {
+      throw new GrafanaDiscoveryError("PERMISSION_REJECTED");
+    }
+    scopeCount += scopes.length;
+    if (scopeCount > MAX_PERMISSION_SCOPES || scopes.some((scope) => typeof scope !== "string" || scope.length > 512)) {
+      throw new GrafanaDiscoveryError("PERMISSION_REJECTED");
+    }
+    if (scopes.length === 0) continue;
+    active.add(action);
+    const readOnlyAction = action.endsWith(":read") || action === "datasources:query" || action === "datasources:explore" || viewerSafeNonReadAction(action, scopes, major);
+    if (!readOnlyAction) throw new GrafanaDiscoveryError("OVER_PRIVILEGED");
+  }
+  if (!active.has("datasources:read") || !active.has("datasources:query")) {
+    throw new GrafanaDiscoveryError("PERMISSION_REJECTED");
+  }
+  return "READ_ONLY_CONFIRMED";
+}
+function proposedPacks(types) {
+  const canonicalTypes = new Set([...types].map(canonicalDatasourceType));
+  const selected = /* @__PURE__ */ new Set();
+  if (canonicalTypes.has("prometheus")) {
+    selected.add("grafana.infrastructure");
+    selected.add("grafana.apm");
+  }
+  if (canonicalTypes.has("loki")) selected.add("grafana.logs");
+  if (canonicalTypes.has("tempo")) selected.add("grafana.apm");
+  if (canonicalTypes.has("postgres")) {
+    selected.add("grafana.iot-edge");
+    selected.add("grafana.business-kpis");
+  }
+  return PACK_ORDER.filter((packId) => selected.has(packId));
+}
+function collectPanels(value, dashboardTitle, output, depth = 0) {
+  if (!Array.isArray(value) || depth > 8 || output.length >= MAX_PANELS) return;
+  for (const candidate of value) {
+    if (output.length >= MAX_PANELS) return;
+    const panel = object2(candidate);
+    if (panel === void 0) continue;
+    collectPanels(panel.panels, dashboardTitle, output, depth + 1);
+    if (!Number.isSafeInteger(panel.id) || panel.id < 1 || !Array.isArray(panel.targets) || panel.targets.length !== 1 || panel.libraryPanel !== void 0 || Array.isArray(panel.transformations) && panel.transformations.length > 0) continue;
+    const target = object2(panel.targets[0]);
+    const datasource = object2(target?.datasource ?? panel.datasource);
+    const type = certifiedType(datasource?.type);
+    if (target === void 0 || target.refId !== "A" || target.hide === true || type === void 0) continue;
+    output.push({
+      dashboardTitle,
+      panelTitle: safeText(panel.title, "Panel ".concat(String(panel.id))),
+      panelId: panel.id,
+      datasourceType: type
+    });
+  }
+}
+var HttpGrafanaConnectionDiscovery = class {
+  #timeoutMs;
+  #resolver;
+  #transportFactory;
+  constructor(options = {}) {
+    this.#timeoutMs = options.timeoutMs ?? 1e4;
+    this.#resolver = options.resolver;
+    this.#transportFactory = options.transportFactory;
+    if (!Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs < 1 || this.#timeoutMs > 3e4) {
+      throw new GrafanaDiscoveryError("UNAVAILABLE");
+    }
+  }
+  async inspect(input) {
+    if (input.bearerSecret.byteLength < 1 || input.bearerSecret.byteLength > 16384) {
+      throw new GrafanaDiscoveryError("AUTHENTICATION_REJECTED");
+    }
+    let token;
+    try {
+      token = new TextDecoder("ascii", { fatal: true }).decode(input.bearerSecret);
+    } catch {
+      throw new GrafanaDiscoveryError("AUTHENTICATION_REJECTED");
+    }
+    if ([...token].some((character) => character.charCodeAt(0) < 33 || character.charCodeAt(0) > 126)) {
+      throw new GrafanaDiscoveryError("AUTHENTICATION_REJECTED");
+    }
+    let grafanaOrigin;
+    let networkClass;
+    let hostname;
+    try {
+      const normalized = normalizeGrafanaOrigin(input.grafanaOrigin);
+      if (normalized.grafanaOrigin !== input.grafanaOrigin) throw new GrafanaDiscoveryError("UNAVAILABLE");
+      grafanaOrigin = normalized.grafanaOrigin;
+      networkClass = normalized.networkClass;
+      hostname = new URL(grafanaOrigin).hostname;
+    } catch {
+      throw new GrafanaDiscoveryError("UNAVAILABLE");
+    }
+    let transport;
+    try {
+      transport = this.#transportFactory === void 0 ? new NodeTrustedHttpClient({
+        endpoint: {
+          endpointId: "grafana-discovery",
+          adapterId: "adapter.grafana.v1",
+          baseUrl: grafanaOrigin,
+          authentication: {
+            mode: "BEARER",
+            tokenRef: DISCOVERY_CREDENTIAL_REFERENCE
+          },
+          tls: { minimumVersion: "TLSv1.2" },
+          network: {
+            followRedirects: false,
+            allowLoopbackHttp: networkClass === "loopback",
+            allowedHosts: [hostname],
+            networkClass,
+            routeMode: "direct"
+          }
+        },
+        metadata: {},
+        // Discovery credentials are supplied only by the interactive caller through
+        // this exact in-memory broker reference. Ambient environment values are ignored.
+        environment: {},
+        credentialResolver: {
+          resolve(reference) {
+            return reference.kind === DISCOVERY_CREDENTIAL_REFERENCE.kind && reference.key === DISCOVERY_CREDENTIAL_REFERENCE.key ? token : void 0;
+          }
+        },
+        timeoutMs: this.#timeoutMs,
+        maxResponseBytes: MAX_RESPONSE_BYTES,
+        ...this.#resolver === void 0 ? {} : { resolver: this.#resolver }
+      }) : this.#transportFactory({ grafanaOrigin, networkClass });
+    } catch {
+      throw new GrafanaDiscoveryError("UNAVAILABLE");
+    }
+    const request = async (path, accessPolicy = "required", query = {}) => {
+      if (!path.startsWith("/api/") || path.includes("?") || path.includes("#")) {
+        throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
+      try {
+        const response = await readWithAbort(
+          transport.get(path, query, controller.signal, MAX_RESPONSE_BYTES),
+          controller.signal
+        );
+        if (response.status === 401) {
+          response.body.fill(0);
+          throw new GrafanaDiscoveryError("AUTHENTICATION_REJECTED");
+        }
+        if (accessPolicy === "optional" && [403, 404, 405].includes(response.status)) {
+          response.body.fill(0);
+          return void 0;
+        }
+        if (response.status === 403 || accessPolicy === "permission-proof" && [404, 405].includes(response.status)) {
+          response.body.fill(0);
+          throw new GrafanaDiscoveryError("PERMISSION_REJECTED");
+        }
+        if (response.status < 200 || response.status >= 300) {
+          response.body.fill(0);
+          throw new GrafanaDiscoveryError("UNAVAILABLE");
+        }
+        return boundedJson(response, token);
+      } catch (error) {
+        if (error instanceof GrafanaDiscoveryError) throw error;
+        throw new GrafanaDiscoveryError("UNAVAILABLE");
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const health = object2(await request("/api/health"));
+    const version = health?.version;
+    if (health?.database !== "ok" || typeof version !== "string" || !SUPPORTED_VERSION.test(version)) {
+      throw new GrafanaDiscoveryError("UNSUPPORTED_VERSION");
+    }
+    const major = Number(version.split(".", 1)[0]);
+    const datasourceResponse = await request("/api/datasources");
+    if (!Array.isArray(datasourceResponse) || datasourceResponse.length > MAX_DATASOURCES) {
+      throw new GrafanaDiscoveryError("INVALID_RESPONSE");
+    }
+    const datasources = datasourceResponse.flatMap((candidate, index) => {
+      const entry = object2(candidate);
+      const type = certifiedType(entry?.type);
+      return type === void 0 ? [] : [{ name: safeText(entry?.name, "Datasource ".concat(index + 1)), type }];
+    });
+    const types = new Set(datasources.map((datasource) => datasource.type));
+    const permissions = await request("/api/access-control/user/permissions", "permission-proof");
+    const access = permissionState(permissions, major);
+    const warnings = [];
+    if (major === 13) warnings.push("Grafana 13 uses the certified legacy /api query path, which is deprecated for a future major.");
+    if ([...types].some((type) => canonicalDatasourceType(type) === "postgres")) {
+      warnings.push("PostgreSQL datasources require an independently restricted SELECT-only database identity.");
+    }
+    const panelCandidates = [];
+    const searchResponse = await request("/api/search", "optional", {
+      type: "dash-db",
+      limit: String(MAX_DASHBOARDS)
+    });
+    if (Array.isArray(searchResponse)) {
+      for (const result of searchResponse.slice(0, MAX_DASHBOARDS)) {
+        const dashboardSummary = object2(result);
+        const uid = dashboardSummary?.uid;
+        if (typeof uid !== "string" || !SAFE_UID.test(uid)) continue;
+        const exported = object2(await request("/api/dashboards/uid/".concat(encodeURIComponent(uid)), "optional"));
+        const dashboard = object2(exported?.dashboard);
+        if (dashboard === void 0) continue;
+        const templating = object2(dashboard.templating);
+        if (Array.isArray(templating?.list) && templating.list.length > 0) continue;
+        collectPanels(
+          dashboard.panels,
+          safeText(dashboard.title ?? dashboardSummary?.title, "Untitled dashboard"),
+          panelCandidates
+        );
+      }
+    }
+    const preview = Object.freeze({
+      schemaVersion: "1.0.0",
+      grafanaVersion: version,
+      permissionState: access,
+      datasources: datasources.sort((left, right) => left.type.localeCompare(right.type) || left.name.localeCompare(right.name)),
+      proposedCapabilityPackIds: proposedPacks(types),
+      panelCandidates: panelCandidates.sort((left, right) => left.dashboardTitle.localeCompare(right.dashboardTitle) || left.panelId - right.panelId).slice(0, MAX_PANELS),
+      warnings
+    });
+    assertActivatableGrafanaConnectionPreview(preview, input.bearerSecret);
+    return preview;
+  }
+};
+
+// packages/observability-cli/src/help.ts
+var OBSERVABILITY_CLI_VERSION = "0.1.0";
+function observabilityCliInformation(argv) {
+  if (argv.length === 1 && argv[0] === "--version") return "".concat(OBSERVABILITY_CLI_VERSION, "\n");
+  if (argv.length === 0 || argv.length === 1 && argv[0] === "--help") return observabilityCliHelp();
+  return void 0;
+}
+function observabilityCliHelp() {
+  return "observabilityctl ".concat(OBSERVABILITY_CLI_VERSION, "\n\nUsage:\n  observabilityctl grafana connect --url <origin> --profile <name> [--json]\n  observabilityctl grafana status [--profile <name>] [--json]\n  observabilityctl grafana rotate [--profile <name>] [--json]\n  observabilityctl grafana delete [--profile <name>] [--json]\n  observabilityctl --version\n\nGrafana bearer tokens are accepted only through the interactive terminal prompt.\nToken flags, environment variables, files, clipboard input, and piped stdin are not supported.\n");
+}
+
+// packages/observability-cli/src/tty-secret.ts
+var TtySecretError = class extends Error {
+  code;
+  constructor(code) {
+    super("Interactive secret entry failed");
+    this.name = "TtySecretError";
+    this.code = code;
+  }
+};
+var MAX_SECRET_BYTES = 16384;
+async function readSecretFromTty(input, output, prompt2 = "Grafana bearer token: ") {
+  if (input.isTTY !== true || output.isTTY !== true || typeof input.setRawMode !== "function") {
+    throw new TtySecretError("TTY_REQUIRED");
+  }
+  output.write(prompt2);
+  const scratch = Buffer.alloc(MAX_SECRET_BYTES);
+  let length = 0;
+  return new Promise((resolve2, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      input.removeListener("data", onData);
+      input.removeListener("error", onError);
+      input.removeListener("end", onEnd);
+      try {
+        input.setRawMode?.(false);
+      } catch {
+      }
+      input.pause();
+      output.write("\n");
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error !== void 0) {
+        scratch.fill(0);
+        reject(error);
+        return;
+      }
+      const result = Uint8Array.from(scratch.subarray(0, length));
+      scratch.fill(0);
+      resolve2(result);
+    };
+    const onError = () => finish(new TtySecretError("TTY_FAILED"));
+    const onEnd = () => finish(new TtySecretError("TTY_FAILED"));
+    const onData = (chunk) => {
+      if (!Buffer.isBuffer(chunk)) {
+        finish(new TtySecretError("TTY_FAILED"));
+        return;
+      }
+      for (const byte of chunk) {
+        if (byte === 3) {
+          finish(new TtySecretError("TTY_CANCELLED"));
+          return;
+        }
+        if (byte === 10 || byte === 13) {
+          finish(length === 0 ? new TtySecretError("INVALID_SECRET") : void 0);
+          return;
+        }
+        if (byte === 8 || byte === 127) {
+          if (length > 0) {
+            length -= 1;
+            scratch[length] = 0;
+          }
+          continue;
+        }
+        if (byte < 33 || byte > 126 || length >= scratch.byteLength) {
+          finish(new TtySecretError("INVALID_SECRET"));
+          return;
+        }
+        scratch[length] = byte;
+        length += 1;
+      }
+    };
+    input.on("data", onData);
+    input.once("error", onError);
+    input.once("end", onEnd);
+    try {
+      input.setRawMode(true);
+      input.resume();
+    } catch {
+      finish(new TtySecretError("TTY_FAILED"));
+    }
+  });
+}
+async function confirmSharedProfileDeletion(input, output) {
+  const confirmation = await readSecretFromTty(
+    input,
+    output,
+    "This credential may be shared by two plugins. Type DELETE to continue: "
+  );
+  try {
+    return Buffer.from(confirmation).toString("ascii") === "DELETE";
+  } finally {
+    confirmation.fill(0);
+  }
+}
+async function confirmSharedProfileActivation(input, output) {
+  const confirmation = await readSecretFromTty(
+    input,
+    output,
+    "Review the non-secret discovery preview above. Type ACTIVATE to connect: "
+  );
+  try {
+    return Buffer.from(confirmation).toString("ascii") === "ACTIVATE";
+  } finally {
+    confirmation.fill(0);
+  }
+}
+
+// packages/observability-cli/src/main.ts
+var CliUsageError = class extends Error {
+  constructor() {
+    super("The command arguments are invalid");
+    this.name = "CliUsageError";
+  }
+};
+function parseOptions(argv, allowed) {
+  const parsed = { json: false };
+  const seen = /* @__PURE__ */ new Set();
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (!flag.startsWith("--") || /token|password|secret|credential/iu.test(flag)) {
+      throw new CliUsageError();
+    }
+    const name = flag.slice(2);
+    if (!allowed.has(name) || seen.has(name) || flag.includes("=")) {
+      throw new CliUsageError();
+    }
+    seen.add(name);
+    if (name === "json") {
+      parsed.json = true;
+      continue;
+    }
+    const value = argv[index + 1];
+    if (value === void 0 || value.length === 0 || value.startsWith("--") || value.length > 2048) {
+      throw new CliUsageError();
+    }
+    index += 1;
+    if (name === "profile") parsed.profile = value;
+    else parsed.url = value;
+  }
+  return parsed;
+}
+function profileProjection(profile) {
+  return {
+    profileId: profile.profileId,
+    profileName: profile.profileName,
+    grafanaOrigin: profile.grafanaOrigin,
+    networkClass: profile.networkClass,
+    revision: profile.revision
+  };
+}
+function writeResult(dependencies, options, result) {
+  if (options.json) {
+    dependencies.io.stdout.write("".concat(JSON.stringify({ schemaVersion: "1.0.0", ...result }), "\n"));
+    return;
+  }
+  const profile = result.profile;
+  const lines = [String(result.message ?? "Grafana credential operation completed.")];
+  if (profile !== void 0) {
+    lines.push("Profile: ".concat(String(profile.profileName)));
+    lines.push("Grafana: ".concat(String(profile.grafanaOrigin)));
+    lines.push("Revision: ".concat(String(profile.revision)));
+  }
+  if (typeof result.credentialStatus === "string") lines.push("Credential: ".concat(result.credentialStatus));
+  if (typeof result.credentialReference === "string") lines.push("Credential reference: ".concat(result.credentialReference));
+  dependencies.io.stdout.write("".concat(lines.join("\n"), "\n"));
+}
+function safeError(error) {
+  if (error instanceof CliUsageError) return { message: "Invalid arguments. Use observabilityctl --help.", exitCode: 2 };
+  if (error instanceof TtySecretError && error.code === "TTY_REQUIRED") {
+    return { message: "An interactive terminal is required for credential entry.", exitCode: 1 };
+  }
+  if (error instanceof TtySecretError && error.code === "TTY_CANCELLED") {
+    return { message: "Credential entry was cancelled.", exitCode: 1 };
+  }
+  if (error instanceof GrafanaProfileError && error.code === "PROFILE_NOT_FOUND") {
+    return { message: "No matching shared Grafana profile is configured.", exitCode: 1 };
+  }
+  if (error instanceof GrafanaProfileError && error.code === "PROFILE_ALREADY_EXISTS") {
+    return { message: "A shared Grafana profile with that name already exists.", exitCode: 1 };
+  }
+  if (error instanceof GrafanaKeyringError || error instanceof GrafanaProfileStoreError) {
+    return { message: "The shared Grafana credential store is unavailable.", exitCode: 1 };
+  }
+  if (error instanceof GrafanaDiscoveryError) {
+    if (error.code === "AUTHENTICATION_REJECTED") {
+      return { message: "Grafana rejected the proposed read credential.", exitCode: 1 };
+    }
+    if (error.code === "UNSUPPORTED_VERSION") {
+      return { message: "This Grafana version is outside the certified 10 through 13 range.", exitCode: 1 };
+    }
+    if (error.code === "OVER_PRIVILEGED") {
+      return { message: "The Grafana credential exposes write or administrative authority; use a least-privilege read identity.", exitCode: 1 };
+    }
+    if (error.code === "PERMISSION_REJECTED") {
+      return { message: "Grafana could not prove the required least-privilege datasource read and query permissions.", exitCode: 1 };
+    }
+    return { message: "Grafana discovery was unavailable or returned an invalid bounded response.", exitCode: 1 };
+  }
+  return { message: "The Grafana credential operation failed safely.", exitCode: 1 };
+}
+async function prompt(dependencies) {
+  return dependencies.promptSecret === void 0 ? readSecretFromTty(dependencies.io.stdin, dependencies.io.stdout) : dependencies.promptSecret();
+}
+async function confirmDelete(dependencies) {
+  return dependencies.confirmDelete === void 0 ? confirmSharedProfileDeletion(dependencies.io.stdin, dependencies.io.stdout) : dependencies.confirmDelete();
+}
+function writeConnectionPreview(options, dependencies, preview) {
+  if (options.json) {
+    dependencies.io.stdout.write("".concat(JSON.stringify({ event: "GRAFANA_DISCOVERY_PREVIEW", ...preview }), "\n"));
+    return;
+  }
+  const lines = [
+    "Grafana discovery preview (no credential values):",
+    "Version: ".concat(preview.grafanaVersion),
+    "Permissions: ".concat(preview.permissionState),
+    "Certified datasources: ".concat(preview.datasources.length === 0 ? "none" : preview.datasources.map((item) => "".concat(item.name, " (").concat(item.type, ")")).join(", ")),
+    "Proposed packs: ".concat(preview.proposedCapabilityPackIds.length === 0 ? "none" : preview.proposedCapabilityPackIds.join(", ")),
+    "Eligible saved-panel candidates: ".concat(preview.panelCandidates.length),
+    ...preview.warnings.map((warning) => "Warning: ".concat(warning))
+  ];
+  dependencies.io.stdout.write("".concat(lines.join("\n"), "\n"));
+}
+async function confirmActivation(options, dependencies, preview) {
+  writeConnectionPreview(options, dependencies, preview);
+  return dependencies.confirmActivation === void 0 ? confirmSharedProfileActivation(dependencies.io.stdin, dependencies.io.stdout) : dependencies.confirmActivation(preview);
+}
+function sameCredentialReference2(left, right) {
+  return left.kind === right.kind && left.key === right.key;
+}
+async function requireCredential(credentialStore, reference) {
+  if (reference === null) return;
+  const lease = await credentialStore.acquire(reference);
+  if (lease === void 0) throw new GrafanaKeyringError("KEYRING_UNAVAILABLE");
+  lease.dispose();
+}
+async function cleanupCredential(credentialStore, reference) {
+  if (reference !== null) await credentialStore.delete(reference);
+}
+async function recoverCredentialLifecycle(transaction, credentialStore) {
+  const journal = transaction.readCredentialLifecycleJournal();
+  if (journal === void 0) return "NONE";
+  const authority = grafanaCredentialLifecycleAuthority(transaction.read(), journal);
+  if (authority === "INVALID") throw new GrafanaProfileStoreError("UNSAFE_STATE");
+  if (journal.phase === "PREPARED" && authority === "PREVIOUS") {
+    await cleanupCredential(credentialStore, journal.nextCredentialRef);
+    await requireCredential(credentialStore, journal.previousCredentialRef);
+    await transaction.clearCredentialLifecycleJournal();
+    return "ROLLED_BACK";
+  }
+  if (authority !== "NEXT") throw new GrafanaProfileStoreError("UNSAFE_STATE");
+  await requireCredential(credentialStore, journal.nextCredentialRef);
+  if (journal.phase === "PREPARED") {
+    await transaction.writeCredentialLifecycleJournal(
+      committedGrafanaCredentialLifecycleJournal(journal)
+    );
+  }
+  await cleanupCredential(credentialStore, journal.previousCredentialRef);
+  await transaction.clearCredentialLifecycleJournal();
+  return "COMMITTED";
+}
+async function runPreparedCredentialLifecycle(transaction, credentialStore, journal, stageAndCommitRegistry) {
+  try {
+    await transaction.writeCredentialLifecycleJournal(journal);
+    await stageAndCommitRegistry();
+    await transaction.writeCredentialLifecycleJournal(
+      committedGrafanaCredentialLifecycleJournal(journal)
+    );
+    await cleanupCredential(credentialStore, journal.previousCredentialRef);
+    await transaction.clearCredentialLifecycleJournal();
+  } catch (error) {
+    const recovery = await recoverCredentialLifecycle(transaction, credentialStore);
+    if (recovery !== "COMMITTED") throw error;
+  }
+}
+async function connect(options, dependencies) {
+  if (options.url === void 0 || options.profile === void 0) throw new CliUsageError();
+  const grafanaOrigin = options.url;
+  const profileName = normalizeGrafanaProfileName(options.profile);
+  await dependencies.profileStore.withExclusiveLifecycle(async (transaction) => {
+    await recoverCredentialLifecycle(transaction, dependencies.credentialStore);
+    const current = transaction.read();
+    if (current.profiles.some((profile2) => profile2.profileName.toLowerCase() === profileName.toLowerCase())) {
+      throw new GrafanaProfileError("PROFILE_ALREADY_EXISTS");
+    }
+    const profile = createSharedGrafanaProfile({
+      profileId: (dependencies.createProfileId ?? import_node_crypto4.randomUUID)(),
+      profileName,
+      grafanaOrigin
+    });
+    if (current.profiles.some((candidate) => candidate.profileId === profile.profileId)) {
+      throw new GrafanaProfileError("PROFILE_ALREADY_EXISTS");
+    }
+    const secret = await prompt(dependencies);
+    try {
+      if (dependencies.connectionDiscovery === void 0) {
+        throw new GrafanaDiscoveryError("UNAVAILABLE");
+      }
+      const preview = await dependencies.connectionDiscovery.inspect({
+        grafanaOrigin: profile.grafanaOrigin,
+        bearerSecret: secret
+      });
+      assertActivatableGrafanaConnectionPreview(preview, secret);
+      if (!await confirmActivation(options, dependencies, preview)) {
+        writeResult(dependencies, options, {
+          operation: "connect",
+          message: "Shared Grafana profile activation cancelled; no credential or profile was stored."
+        });
+        return;
+      }
+      const journal = {
+        schemaVersion: "1.0.0",
+        operation: "CONNECT",
+        phase: "PREPARED",
+        profileId: profile.profileId,
+        previousRevision: null,
+        previousCredentialRef: null,
+        nextRevision: profile.revision,
+        nextCredentialRef: profile.credentialRef
+      };
+      await runPreparedCredentialLifecycle(
+        transaction,
+        dependencies.credentialStore,
+        journal,
+        async () => {
+          await dependencies.credentialStore.set(profile.credentialRef, secret);
+          await transaction.update((registry) => addSharedGrafanaProfile(registry, profile));
+        }
+      );
+      writeResult(dependencies, options, {
+        operation: "connect",
+        message: "Shared Grafana profile connected.",
+        profile: profileProjection(profile),
+        credentialStatus: "AVAILABLE",
+        credentialReference: profile.credentialRef.key
+      });
+    } finally {
+      secret.fill(0);
+    }
+  });
+}
+async function status(options, dependencies) {
+  if (options.url !== void 0) throw new CliUsageError();
+  await dependencies.profileStore.withExclusiveLifecycle(async (transaction) => {
+    await recoverCredentialLifecycle(transaction, dependencies.credentialStore);
+    const profile = findSharedGrafanaProfile(transaction.read(), options.profile);
+    const credentialStatus = await dependencies.credentialStore.status(profile.credentialRef);
+    writeResult(dependencies, options, {
+      operation: "status",
+      message: "Shared Grafana profile status.",
+      profile: profileProjection(profile),
+      credentialStatus
+    });
+  });
+}
+async function rotate(options, dependencies) {
+  if (options.url !== void 0) throw new CliUsageError();
+  await dependencies.profileStore.withExclusiveLifecycle(async (transaction) => {
+    await recoverCredentialLifecycle(transaction, dependencies.credentialStore);
+    const profile = findSharedGrafanaProfile(transaction.read(), options.profile);
+    if (profile.revision >= Number.MAX_SAFE_INTEGER) throw new GrafanaProfileError("INVALID_PROFILE");
+    const secret = await prompt(dependencies);
+    try {
+      if (dependencies.connectionDiscovery === void 0) {
+        throw new GrafanaDiscoveryError("UNAVAILABLE");
+      }
+      const preview = await dependencies.connectionDiscovery.inspect({
+        grafanaOrigin: profile.grafanaOrigin,
+        bearerSecret: secret
+      });
+      assertActivatableGrafanaConnectionPreview(preview, secret);
+      if (!await confirmActivation(options, dependencies, preview)) {
+        writeResult(dependencies, options, {
+          operation: "rotate",
+          message: "Shared Grafana credential rotation cancelled; the existing credential was retained.",
+          profile: profileProjection(profile)
+        });
+        return;
+      }
+      await requireCredential(dependencies.credentialStore, profile.credentialRef);
+      const nextRevision = profile.revision + 1;
+      const updated = {
+        ...profile,
+        credentialRef: grafanaCredentialReference(profile.profileId, nextRevision),
+        revision: nextRevision
+      };
+      const journal = {
+        schemaVersion: "1.0.0",
+        operation: "ROTATE",
+        phase: "PREPARED",
+        profileId: profile.profileId,
+        previousRevision: profile.revision,
+        previousCredentialRef: profile.credentialRef,
+        nextRevision: updated.revision,
+        nextCredentialRef: updated.credentialRef
+      };
+      await runPreparedCredentialLifecycle(
+        transaction,
+        dependencies.credentialStore,
+        journal,
+        async () => {
+          await dependencies.credentialStore.set(updated.credentialRef, secret);
+          await transaction.update((registry) => {
+            const latest = findSharedGrafanaProfile(registry, profile.profileName);
+            if (latest.profileId !== profile.profileId || latest.revision !== profile.revision || !sameCredentialReference2(latest.credentialRef, profile.credentialRef)) {
+              throw new GrafanaProfileError("INVALID_PROFILE");
+            }
+            return replaceSharedGrafanaProfile(registry, updated);
+          });
+        }
+      );
+      writeResult(dependencies, options, {
+        operation: "rotate",
+        message: "Shared Grafana credential rotated. Restart provider workers to consume it.",
+        profile: profileProjection(updated),
+        credentialStatus: "AVAILABLE"
+      });
+    } finally {
+      secret.fill(0);
+    }
+  });
+}
+async function remove(options, dependencies) {
+  if (options.url !== void 0) throw new CliUsageError();
+  await dependencies.profileStore.withExclusiveLifecycle(async (transaction) => {
+    await recoverCredentialLifecycle(transaction, dependencies.credentialStore);
+    const profile = findSharedGrafanaProfile(transaction.read(), options.profile);
+    if (!await confirmDelete(dependencies)) {
+      writeResult(dependencies, options, { operation: "delete", message: "Shared Grafana profile deletion cancelled." });
+      return;
+    }
+    await requireCredential(dependencies.credentialStore, profile.credentialRef);
+    const journal = {
+      schemaVersion: "1.0.0",
+      operation: "DELETE",
+      phase: "PREPARED",
+      profileId: profile.profileId,
+      previousRevision: profile.revision,
+      previousCredentialRef: profile.credentialRef,
+      nextRevision: null,
+      nextCredentialRef: null
+    };
+    await runPreparedCredentialLifecycle(
+      transaction,
+      dependencies.credentialStore,
+      journal,
+      async () => {
+        await transaction.update((registry) => {
+          const latest = findSharedGrafanaProfile(registry, profile.profileName);
+          if (latest.profileId !== profile.profileId || latest.revision !== profile.revision || !sameCredentialReference2(latest.credentialRef, profile.credentialRef)) {
+            throw new GrafanaProfileError("INVALID_PROFILE");
+          }
+          return removeSharedGrafanaProfile(registry, profile.profileId);
+        });
+      }
+    );
+    writeResult(dependencies, options, {
+      operation: "delete",
+      message: "Shared Grafana profile and keyring credential deleted.",
+      profile: profileProjection(profile)
+    });
+  });
+}
+async function runObservabilityCli(argv, dependencies) {
+  const information = observabilityCliInformation(argv);
+  if (information !== void 0) {
+    dependencies.io.stdout.write(information);
+    return 0;
+  }
+  try {
+    if (argv[0] !== "grafana" || argv.length < 2) throw new CliUsageError();
+    const command = argv[1];
+    const commandArguments = argv.slice(2);
+    if (command === "connect") {
+      const options = parseOptions(commandArguments, /* @__PURE__ */ new Set(["profile", "url", "json"]));
+      await connect(options, dependencies);
+    } else if (command === "status") {
+      const options = parseOptions(commandArguments, /* @__PURE__ */ new Set(["profile", "json"]));
+      await status(options, dependencies);
+    } else if (command === "rotate") {
+      const options = parseOptions(commandArguments, /* @__PURE__ */ new Set(["profile", "json"]));
+      await rotate(options, dependencies);
+    } else if (command === "delete") {
+      const options = parseOptions(commandArguments, /* @__PURE__ */ new Set(["profile", "json"]));
+      await remove(options, dependencies);
+    } else {
+      throw new CliUsageError();
+    }
+    return 0;
+  } catch (error) {
+    const failure = safeError(error);
+    dependencies.io.stderr.write("".concat(failure.message, "\n"));
+    return failure.exitCode;
+  }
+}
+
+// packages/observability-cli/src/entrypoint.ts
+var BUNDLED_MACOS_KEYCHAIN_ASSETS = Object.freeze({
+  arm64: Object.freeze({
+    bytes: 491232,
+    sha256: "9627560bd2490b8495504df6b48dafe0153883aab09fd8eee976f826c74a6fff"
+  }),
+  x64: Object.freeze({
+    bytes: 516004,
+    sha256: "3ad3b083cab321be04223e7fa1a22a8258c32c4da0883886683e25dcba9d03cc"
+  })
+});
+function createBundledMacOsKeychainLoader(options = {}) {
+  const platform = options.platform ?? process.platform;
+  const architecture = options.architecture ?? process.arch;
+  if (architecture === "arm64") {
+    return new HashPinnedMacOsKeychainLoader({
+      platform,
+      architecture,
+      asset: {
+        fileUrl: new import_node_url2.URL("../native/keyring.darwin-arm64.node", require("node:url").pathToFileURL(__filename).href),
+        ...BUNDLED_MACOS_KEYCHAIN_ASSETS.arm64
+      }
+    });
+  }
+  if (architecture === "x64") {
+    return new HashPinnedMacOsKeychainLoader({
+      platform,
+      architecture,
+      asset: {
+        fileUrl: new import_node_url2.URL("../native/keyring.darwin-x64.node", require("node:url").pathToFileURL(__filename).href),
+        ...BUNDLED_MACOS_KEYCHAIN_ASSETS.x64
+      }
+    });
+  }
+  return new HashPinnedMacOsKeychainLoader({
+    platform,
+    architecture,
+    asset: {
+      fileUrl: new import_node_url2.URL("../native/keyring.darwin-arm64.node", require("node:url").pathToFileURL(__filename).href),
+      ...BUNDLED_MACOS_KEYCHAIN_ASSETS.arm64
+    }
+  });
+}
+async function runObservabilityCliEntrypoint(options = {}) {
+  const io = options.io ?? {
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr
+  };
+  const argv = options.argv ?? process.argv.slice(2);
+  const information = observabilityCliInformation(argv);
+  if (information !== void 0) {
+    io.stdout.write(information);
+    return 0;
+  }
+  const backend = new NativeGrafanaKeyringBackend({
+    loader: options.nativeLoader ?? createBundledMacOsKeychainLoader(
+      options.platform === void 0 ? {} : { platform: options.platform }
+    ),
+    ...options.platform === void 0 ? {} : { platform: options.platform }
+  });
+  return runObservabilityCli(argv, {
+    profileStore: new SharedGrafanaProfileStore(
+      options.platform === void 0 ? {} : { platform: options.platform }
+    ),
+    credentialStore: new GrafanaCredentialKeyring(backend),
+    connectionDiscovery: new HttpGrafanaConnectionDiscovery(),
+    io
+  });
+}
+var directlyExecuted = process.argv[1] !== void 0 && (0, import_node_url2.pathToFileURL)(process.argv[1]).href === require("node:url").pathToFileURL(__filename).href;
+if (directlyExecuted) {
+  void Promise.resolve().then(() => runObservabilityCliEntrypoint()).then((exitCode) => {
+    process.exitCode = exitCode;
+  }).catch(() => {
+    process.stderr.write("The shared Grafana credential store is unavailable.\n");
+    process.exitCode = 1;
+  });
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  BUNDLED_MACOS_KEYCHAIN_ASSETS,
+  createBundledMacOsKeychainLoader,
+  runObservabilityCliEntrypoint
+});

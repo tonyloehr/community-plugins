@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:evidence-envelope:1",
+  "title": "Normalized evidence envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "evidenceId", "runId", "operationId", "operationDefinitionSha256", "trustBundleSha256", "origin", "authority", "source", "scope", "correlation", "evaluatedAt", "collectedAt", "window", "maxAcceptableAgeMs", "collectionState", "freshnessState", "native", "values", "redactions", "limitations", "pagination", "providerWarnings", "integrity"],
+  "properties": {
+    "schemaVersion": { "enum": ["1.0.0", "1.1.0"] }, "evidenceId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" }, "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" }, "operationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, "operationDefinitionSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "trustBundleSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }, "origin": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Origin" }, "authority": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Authority" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "sourceAlias", "adapterPackageId", "adapterVersion"],
+      "properties": {
+        "provider": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "sourceAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "adapterPackageId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/AdapterPackageId" },
+        "adapterVersion": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Semver" },
+        "sanitizedReference": { "type": "string", "minLength": 1, "maxLength": 2048 },
+        "lineage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accessPath", "datasourceType", "sourceIdentitySha256"],
+          "properties": {
+            "accessPath": { "enum": ["DIRECT", "GRAFANA"] },
+            "datasourceType": { "enum": ["prometheus", "loki", "tempo", "postgres"] },
+            "sourceIdentitySha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+          }
+        }
+      }
+    },
+    "scope": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Scope" }, "correlation": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/CorrelationIdentity" }, "evaluatedAt": { "type": "string", "format": "date-time" }, "collectedAt": { "type": "string", "format": "date-time" }, "window": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/TimeWindow" }, "maxAcceptableAgeMs": { "type": "integer", "minimum": 0, "maximum": 31536000000 },
+    "collectionState": { "enum": ["COMPLETE", "EMPTY", "ERROR"] }, "freshnessState": { "enum": ["FRESH", "STALE", "NOT_APPLICABLE"] },
+    "native": { "type": "object", "additionalProperties": false, "required": ["resultType", "dimensions"], "properties": { "resultType": { "type": "string", "minLength": 1, "maxLength": 128 }, "unit": { "type": "string", "minLength": 1, "maxLength": 64 }, "dimensions": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Dimensions" } } },
+    "values": { "type": "array", "maxItems": 10000, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/NormalizedValue" } }, "redactions": { "type": "array", "maxItems": 10000, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RedactionRecord" } }, "limitations": { "type": "array", "maxItems": 256, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "pagination": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Pagination" }, "providerWarnings": { "type": "array", "maxItems": 256, "items": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "error": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/SanitizedError" }, "integrity": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  },
+  "oneOf": [
+    { "properties": { "collectionState": { "const": "COMPLETE" }, "freshnessState": { "enum": ["FRESH", "STALE"] }, "values": { "type": "array", "minItems": 1 } }, "required": ["collectionState", "freshnessState", "values"], "not": { "properties": { "error": true }, "required": ["error"] } },
+    { "properties": { "collectionState": { "const": "EMPTY" }, "freshnessState": { "enum": ["FRESH", "STALE"] }, "values": { "type": "array", "maxItems": 0 } }, "required": ["collectionState", "freshnessState", "values"], "not": { "properties": { "error": true }, "required": ["error"] } },
+    { "properties": { "collectionState": { "const": "ERROR" }, "freshnessState": { "const": "NOT_APPLICABLE" }, "values": { "type": "array", "maxItems": 0 }, "error": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/SanitizedError" } }, "required": ["collectionState", "freshnessState", "values", "error"] }
+  ],
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": "1.1.0" } }, "required": ["schemaVersion"] },
+      "then": {
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": { "lineage": {} },
+            "required": ["lineage"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "source": {
+            "type": "object",
+            "not": {
+              "type": "object",
+              "properties": { "lineage": {} },
+              "required": ["lineage"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$comment": "Cross-source consistency is not asserted here. Contradictions are separate records; the five-state evidence view is derived."
+}

@@ -1,0 +1,4 @@
+plugins/grafana-observability/**/*.source.part-* linguist-generated=true
+plugins/grafana-observability/native/*.node binary
+# Empty context lines in a unified diff carry a significant leading space.
+vendor/grafana-observability-source/qualification.patch whitespace=-blank-at-eol

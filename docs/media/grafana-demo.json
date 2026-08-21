@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "filename": "Codex Grafana Production Monitoring Demo.mov",
+    "durationSeconds": 180.74,
+    "sha256": "5050f8d6a930739d8b4f849f5e8e0fe8cdad346ee90d5abd0cb23e522dbe4200"
+  },
+  "primary": {
+    "filename": "grafana-production-monitoring-demo-8x.mp4",
+    "speed": 8,
+    "durationSeconds": 22.6,
+    "bytes": 2089549,
+    "sha256": "b7051e2d019df063119d6337420b2623a05256a3b75fa6e1ee838bf4654b80cd"
+  },
+  "full": {
+    "filename": "grafana-production-monitoring-demo.mp4",
+    "speed": 1,
+    "durationSeconds": 180.766667,
+    "bytes": 5277709,
+    "sha256": "a133bc015e4114b69c4bc4e9fd5d05c746a02c653ef7ffb10e3d36128b491545"
+  },
+  "poster": {
+    "filename": "grafana-production-monitoring-demo.png",
+    "sourceTimeSeconds": 127.5,
+    "bytes": 489206,
+    "sha256": "5e8d6eda06013aaaaf63a0e5d5518a9bdfc84b2dc064d19ac4ed1ab4468f7270"
+  },
+  "redactions": [
+    {
+      "category": "Customer/project dashboard branding and browser profile/chrome labels",
+      "fullSpeedIntervalsSeconds": [[0, 180.766667]]
+    },
+    {
+      "category": "Workspace project selector",
+      "fullSpeedIntervalsSeconds": [[0, 53.6]]
+    },
+    {
+      "category": "Terminal account, host, project, and container labels, including clipped edges",
+      "fullSpeedIntervalsSeconds": [[4.4, 12.2], [21.4, 45.2]]
+    },
+    {
+      "category": "Internal model-selector label, excluding the actual approval panel",
+      "fullSpeedIntervalsSeconds": [[0, 140], [143.466667, 180.766667]]
+    }
+  ],
+  "reviewCoverage": {
+    "fullVideoSampleIntervalSeconds": 0.25,
+    "fullVideoSampleFrames": 723,
+    "fastVideoFrames": 678,
+    "fullRateTerminalRegionChecks": 950,
+    "fullRateAnimationRegionChecks": 109,
+    "targetedLabelMatches": 0,
+    "ocrFailures": 0,
+    "fullDecodePassed": true
+  },
+  "publicationReview": "Opaque identity/UI redactions applied. Local OCR and visual review found no remaining targeted labels or obvious credentials/customer records in the reviewed footage. Content review only; not legal or brand clearance, or a guarantee against every disclosure."
+}

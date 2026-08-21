@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:operation-snapshot:1",
+  "title": "Reviewed operation snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "operationId", "revision", "capturedAt", "definition", "definitionSha256"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" },
+    "operationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" },
+    "revision": { "type": "integer", "minimum": 1 },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "definition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "sourceAlias", "adapterPackageId", "adapterOperation", "authority", "sanitizedProviderDefinition", "scopeMapping", "allowedDimensions", "requiredProviderScopes", "sensitivity", "limits", "normalization"],
+      "properties": {
+        "domain": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain" },
+        "sourceAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "adapterPackageId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/AdapterPackageId" },
+        "adapterOperation": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" },
+        "authority": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Authority" },
+        "sanitizedProviderDefinition": { "type": "object" },
+        "expectedSourceLineage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accessPath", "datasourceType", "sourceIdentitySha256"],
+          "properties": {
+            "accessPath": { "enum": ["DIRECT", "GRAFANA"] },
+            "datasourceType": { "enum": ["prometheus", "loki", "tempo", "postgres"] },
+            "sourceIdentitySha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+          }
+        },
+        "scopeMapping": { "type": "object", "additionalProperties": { "type": "string", "maxLength": 256 } },
+        "allowedDimensions": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+        "requiredProviderScopes": { "type": "array", "maxItems": 128, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+        "sensitivity": { "enum": ["PUBLIC", "INTERNAL", "CONFIDENTIAL", "RESTRICTED"] },
+        "limits": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationLimits" },
+        "normalization": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resultKind", "dimensionMappings"],
+          "properties": {
+            "resultKind": { "enum": ["SCALAR", "TIMESERIES", "TABLE", "EVENT"] },
+            "targetUnit": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "dimensionMappings": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 128 } }
+          }
+        }
+      }
+    },
+    "definitionSha256": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Sha256" }
+  },
+  "$comment": "definitionSha256 covers canonical {operationId, revision, definition}; capturedAt and definitionSha256 are excluded."
+}

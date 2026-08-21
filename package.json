@@ -1,0 +1,24 @@
+{
+  "name": "community-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public Codex plugins and their reproducible validation suites.",
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate-marketplace.mjs && node scripts/validate-grafana.mjs",
+    "validate:grafana": "node scripts/validate-grafana.mjs",
+    "test": "node --test --test-concurrency=1 tests/grafana-observability/*.test.mjs",
+    "test:grafana": "node --test --test-concurrency=1 tests/grafana-observability/*.test.mjs",
+    "test:grafana:live": "GRAFANA_E2E_DOCKER=1 node --test tests/grafana-observability/live.test.mjs",
+    "test:grafana:auth": "GRAFANA_E2E_AUTH=1 node --test tests/grafana-observability/authenticated.test.mjs",
+    "test:grafana:installed": "GRAFANA_E2E_INSTALLED_CLIENT=1 node --test tests/grafana-observability/installed-client.test.mjs",
+    "test:grafana:matrix": "node scripts/test-grafana-live-matrix.mjs",
+    "test:grafana:keychain": "GRAFANA_E2E_KEYCHAIN=1 node --test tests/grafana-observability/native-keyring.test.mjs",
+    "test:grafana:handoff": "GRAFANA_E2E_NATIVE_PROFILE=1 node --test tests/grafana-observability/native-profile-handoff.test.mjs",
+    "verify:grafana:source": "node scripts/verify-grafana-source.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "Apache-2.0"
+}

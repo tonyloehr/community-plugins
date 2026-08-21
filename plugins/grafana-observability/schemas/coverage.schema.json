@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:production-monitoring:schema:coverage:1",
+  "title": "Investigation evidence coverage",
+  "type": "object", "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "overall", "entries", "integrity"],
+  "properties": {
+    "schemaVersion": { "const": "1.0.0" }, "runId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/RunId" }, "overall": { "enum": ["COMPLETE", "PARTIAL", "UNKNOWN"] },
+    "entries": { "type": "array", "maxItems": 1024, "items": { "type": "object", "additionalProperties": false, "required": ["domain", "operationId", "requirement", "disposition", "evidenceIds", "contradictionIds", "blocksWorkflow"], "properties": { "domain": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceDomain" }, "operationId": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/OperationId" }, "requirement": { "enum": ["REQUIRED", "OPTIONAL"] }, "sourceAlias": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Alias" }, "authority": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Authority" }, "disposition": { "enum": ["AVAILABLE", "EMPTY", "STALE", "CONTRADICTORY", "ERROR", "UNSUPPORTED", "DEFERRED"] }, "evidenceIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/EvidenceId" } }, "contradictionIds": { "type": "array", "uniqueItems": true, "items": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/ContradictionId" } }, "paginationComplete": { "type": "boolean" }, "blocksWorkflow": { "type": "boolean" }, "reason": { "type": "string", "minLength": 1, "maxLength": 2048 } } } },
+    "integrity": { "$ref": "urn:production-monitoring:schema:common:1#/$defs/Integrity" }
+  }
+}

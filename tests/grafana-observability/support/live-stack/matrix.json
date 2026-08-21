@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0.0",
+  "grafana": [
+    {
+      "major": 10,
+      "image": "grafana/grafana:10.4.19",
+      "expectedApiPolicy": "CERTIFIED"
+    },
+    {
+      "major": 11,
+      "image": "grafana/grafana:11.6.8",
+      "expectedApiPolicy": "CERTIFIED"
+    },
+    {
+      "major": 12,
+      "image": "grafana/grafana:12.1.0",
+      "expectedApiPolicy": "CERTIFIED"
+    },
+    {
+      "major": 13,
+      "image": "grafana/grafana:13.0.6",
+      "expectedApiPolicy": "CERTIFIED_WITH_DEPRECATION_WARNING"
+    }
+  ],
+  "providers": {
+    "prometheus": "prom/prometheus:v3.5.0",
+    "loki": "grafana/loki:3.5.3",
+    "tempo": "grafana/tempo:2.8.2",
+    "postgres": "postgres:17.6-alpine3.22",
+    "seed": "node:22.19.0-alpine3.22"
+  }
+}
