@@ -1,93 +1,139 @@
 # Community Plugins
 
-Public, installable Codex plugins designed to be understandable and safely
-verifiable from the first task.
-Each plugin ships with its own manifest, operating guidance, tests, and
-reproducible release evidence.
+A public, Git-backed marketplace of Codex plugins that developers, prospects,
+and enterprise teams can inspect before they install. Each plugin is packaged
+with its manifest, setup guide, tests, and license or third-party notices.
 
-## Grafana Observability for Codex
+This repository is a community distribution source for local Codex, not an
+automatic listing in OpenAI's universal Plugins Directory. See
+[OpenAI's plugin packaging docs](https://developers.openai.com/plugins/build/plugins)
+for the distinction between public directory publishing and repo marketplaces.
 
-[![Watch the Grafana production-monitoring demo](docs/media/grafana-production-monitoring-demo.png)](docs/media/grafana-production-monitoring-demo-8x.mp4)
+## Add it to Codex
 
-**[Watch the 23-second demo · 8× speed](docs/media/grafana-production-monitoring-demo-8x.mp4)** · [Full walkthrough · 3 minutes](docs/media/grafana-production-monitoring-demo.mp4)
+In Codex, choose **Add plugin marketplace** and use a repository slug or clone
+URL, not a raw `marketplace.json` URL:
 
-[Grafana Observability](plugins/grafana-observability/README.md) gives Codex five
-bounded, administrator-reviewed ways to inspect Grafana evidence for
-infrastructure, APM, logs, IoT/edge, and business KPIs. Grafana and its
-datasources stay read-only; the plugin writes only its own local audit and
-evidence state.
+```text
+Source: tonyloehr/community-plugins
+Git ref: main
+Sparse paths:
+.agents/plugins
+plugins
+```
 
-## Install
+Those two sparse paths load the complete plugin catalog without pulling this
+repo's tests, demo media, or source receipts. To fetch every repository file,
+leave **Sparse paths** blank. To fetch only Grafana Observability, use these two
+paths instead:
 
-Requires Codex and Node.js 22.19 or newer:
+```text
+.agents/plugins
+plugins/grafana-observability
+```
+
+Adding a marketplace makes its catalog available to browse. It does **not**
+install, enable, or authenticate every plugin. After adding it, install only
+the plugin you want.
+
+The same flow from the CLI:
 
 ```sh
-codex plugin marketplace add tonyloehr/community-plugins --ref main
+# Load the full catalog efficiently.
+codex plugin marketplace add tonyloehr/community-plugins \
+  --ref main \
+  --sparse .agents/plugins \
+  --sparse plugins
+
+# Install one plugin from that catalog.
 codex plugin add grafana-observability@community-plugins
 ```
 
-Start a new Codex task after installation, then try:
+If you want a full checkout instead of a sparse one:
+
+```sh
+codex plugin marketplace add tonyloehr/community-plugins --ref main
+```
+
+The `@community-plugins` selector comes from the top-level `name` in
+[the marketplace manifest](.agents/plugins/marketplace.json), not from the
+GitHub URL. Start a new Codex task after installation so its skills and tools
+are picked up.
+
+## Available plugins
+
+| Plugin | Purpose | Learn more |
+| --- | --- | --- |
+| [Grafana Observability](plugins/grafana-observability/README.md) | Inspect administrator-approved, read-only Grafana evidence for infrastructure, APM, logs, IoT/edge, and business KPIs. | [Guide](plugins/grafana-observability/README.md) · [23-second demo](docs/media/grafana-production-monitoring-demo-8x.mp4) |
+
+Grafana Observability requires Codex and Node.js 22.19 or newer. Its manifest
+declares both `Read` and `Write`. `Write` is limited to
+plugin-owned local audit and evidence files; it does not write to Grafana,
+datasources, dashboards, services, or deployments.
+
+Its default startup uses a credential-free fixture, so you can verify the
+install without touching a Grafana instance:
 
 ```text
 Use $setup-grafana-observability to check the fixture profile and available packs.
 ```
 
-The default startup is a credential-free fixture, so installation can be
-checked without touching a Grafana instance. A real connection requires a
-read-only identity and an administrator-reviewed signed authority bundle. See
-the [plugin guide](plugins/grafana-observability/README.md) for the guarded
-setup flow and platform limits.
+## Copy-paste Codex prompts
 
-The five evidence skills intentionally do not run against a canned Grafana
-dataset on first install. They stop until an administrator activates the exact
-packs and scopes the customer has reviewed, so simulated results cannot be
-mistaken for live evidence.
-
-## What ships
+Browse before installing:
 
 ```text
-.agents/plugins/marketplace.json      # Codex marketplace catalog
-plugins/grafana-observability/         # Installable plugin package
-tests/grafana-observability/           # Package, provider, auth, and install tests
-vendor/grafana-observability-source/  # Pinned source snapshot and receipts
-scripts/                               # Validation and reproducibility tooling
+Add the Git-backed marketplace from tonyloehr/community-plugins at ref main. Use sparse paths .agents/plugins and plugins. List the available plugins and recommend the best fit for this repository, but do not install or authenticate anything yet.
 ```
 
-The Grafana plugin includes:
+Install one plugin:
 
-- a `.codex-plugin/plugin.json` manifest and `.mcp.json` launcher;
-- six cold-start skills, including setup and five focused investigation paths;
-- five MCP tools with aliases, bounded windows, and opaque evidence references;
-- an integrity-checked packaged runtime, schemas, legal notices, and icon;
-- synthetic, real-Grafana, authentication, installed-client, Keychain, and
-  source-provenance tests.
+```text
+If community-plugins is not already configured, add it from tonyloehr/community-plugins at ref main using sparse paths .agents/plugins and plugins/grafana-observability. Install grafana-observability@community-plugins, explain its permissions and authentication policy, and give me the credential-free smoke-test prompt for a new Codex task.
+```
 
-The manifest declares both `Read` and `Write` because pack runs persist
-plugin-owned local evidence/audit files. It does not grant Codex write access
-to Grafana, datasources, dashboards, services, or deployments.
+Review before adoption:
 
-## Verify
+```text
+Review tonyloehr/community-plugins before I install it. Inspect .agents/plugins/marketplace.json, each plugin manifest, declared capabilities, authentication policy, external endpoints, licenses, and setup instructions. Flag anything that needs security or admin review.
+```
 
-No `npm install` is needed for the default package checks:
+## Update or remove
 
 ```sh
-npm run validate
-npm run verify:grafana:source
-npm run test:grafana
+# Refresh the Git-backed marketplace snapshot.
+codex plugin marketplace upgrade community-plugins
+
+# Reinstall a plugin after a new version is published.
+codex plugin add grafana-observability@community-plugins
+
+# Remove the configured marketplace source.
+codex plugin marketplace remove community-plugins
 ```
 
-For the Docker matrix, authentication, installed-client, native Keychain, and
-byte-for-byte source rebuild commands, see the
-[Grafana test guide](tests/grafana-observability/README.md). Source provenance
-and update mechanics are documented in
-[Grafana source and reproducible builds](docs/grafana-observability-source.md).
+For an enterprise fork or private mirror, use its HTTPS or SSH clone URL and
+make sure Git credentials already work non-interactively. Keep the same
+`.agents/plugins/marketplace.json` and `plugins/<name>/` layout.
 
-## Contribute
+## Repository layout
 
-Treat each plugin as a distributable product: keep its manifest, cold-start
-instructions, safety boundary, tests, licenses, and notices together. Run the
-checks above before opening a pull request, and use the
-[review and publish checklist](docs/review-and-publish.md) for release changes.
+```text
+.agents/plugins/marketplace.json      # Catalog and install policy
+plugins/<plugin-name>/                 # One installable plugin
+  .codex-plugin/plugin.json            # Required plugin manifest
+  README.md                            # Cold-start setup and safety guidance
+tests/<plugin-name>/                   # Plugin-specific verification
+scripts/                               # Marketplace and package checks
+```
 
-This repository is Apache-2.0 licensed. Individual plugins can carry their own
-license and third-party notices; review those files before redistribution.
+## Trust and contributions
+
+Treat every plugin as code you are choosing to run. Review its manifest,
+capabilities, authentication policy, setup guide, and license before installing
+it. This repository never needs credentials committed to it.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to add or update a plugin,
+[SECURITY.md](SECURITY.md) to report a vulnerability, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for participation expectations. The
+repository is Apache-2.0 licensed; individual plugins may carry their own
+license and third-party notices.

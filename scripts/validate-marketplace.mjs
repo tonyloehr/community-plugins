@@ -19,16 +19,13 @@ const installPolicies = new Set([
   "INSTALLED_BY_DEFAULT",
 ]);
 const authPolicies = new Set(["ON_INSTALL", "ON_USE"]);
+const semverPattern =
+  /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 const errors = [];
-const warnings = [];
 
 function fail(message) {
   errors.push(message);
-}
-
-function warn(message) {
-  warnings.push(message);
 }
 
 function readJson(filePath, label) {
@@ -66,18 +63,73 @@ function isKebabName(value) {
   return typeof value === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
 }
 
-function relativeSourcePath(sourcePath) {
-  if (typeof sourcePath !== "string") {
-    return null;
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isHttpsUrl(value) {
+  if (!isNonEmptyString(value)) {
+    return false;
   }
 
-  if (!sourcePath.startsWith("./")) {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isInside(parentDir, childPath) {
+  const relative = path.relative(parentDir, childPath);
+  return (
+    relative !== ".." &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+function relativeSourcePath(sourcePath) {
+  if (!isNonEmptyString(sourcePath) || !sourcePath.startsWith("./")) {
     return null;
   }
 
   const resolved = path.resolve(repoRoot, sourcePath);
-  const relative = path.relative(repoRoot, resolved);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+  return isInside(repoRoot, resolved) ? resolved : null;
+}
+
+function resolveInsidePlugin(pluginDir, relativePath, label) {
+  if (!isNonEmptyString(relativePath)) {
+    fail(`${label} must be a non-empty relative path`);
+    return null;
+  }
+
+  const resolved = path.resolve(pluginDir, relativePath);
+  if (!isInside(pluginDir, resolved)) {
+    fail(`${label} must stay inside the plugin folder`);
+    return null;
+  }
+
+  return resolved;
+}
+
+function validateReferencedPath(pluginDir, relativePath, label, kind) {
+  const resolved = resolveInsidePlugin(pluginDir, relativePath, label);
+  if (!resolved) {
+    return null;
+  }
+
+  if (!fs.existsSync(resolved)) {
+    fail(`${label} does not exist: ${relativePath}`);
+    return null;
+  }
+
+  const stats = fs.statSync(resolved);
+  if (kind === "directory" && !stats.isDirectory()) {
+    fail(`${label} must point to a directory: ${relativePath}`);
+    return null;
+  }
+  if (kind === "file" && !stats.isFile()) {
+    fail(`${label} must point to a file: ${relativePath}`);
     return null;
   }
 
@@ -94,6 +146,10 @@ function validatePluginEntry(entry, index) {
 
   if (!isKebabName(entry.name)) {
     fail(`${label}.name must be kebab-case`);
+  }
+
+  if (!isNonEmptyString(entry.category)) {
+    fail(`${label}.category must be a non-empty string`);
   }
 
   if (!isObject(entry.source)) {
@@ -130,16 +186,16 @@ function validatePluginEntry(entry, index) {
       );
     }
   }
-
-  if (typeof entry.category !== "string" || entry.category.length === 0) {
-    fail(`${label}.category must be a non-empty string`);
-  }
 }
 
 function validatePluginDirectory(entry, pluginDir, label) {
-  if (!fs.existsSync(pluginDir)) {
-    fail(`${label}.source.path does not exist: ${entry.source.path}`);
+  if (!fs.existsSync(pluginDir) || !fs.statSync(pluginDir).isDirectory()) {
+    fail(`${label}.source.path does not point to a directory: ${entry.source.path}`);
     return;
+  }
+
+  if (entry.source.path !== `./plugins/${entry.name}`) {
+    fail(`${label}.source.path must be "./plugins/${entry.name}"`);
   }
 
   const manifestPath = path.join(pluginDir, ".codex-plugin", "plugin.json");
@@ -157,23 +213,107 @@ function validatePluginDirectory(entry, pluginDir, label) {
     fail(`${label}.name must match manifest name "${manifest.name}"`);
   }
 
-  if (!manifest.version || typeof manifest.version !== "string") {
-    fail(`${label} manifest must include a string version`);
+  if (!isNonEmptyString(manifest.version)) {
+    fail(`${label} manifest must include a non-empty string version`);
+  } else if (!semverPattern.test(manifest.version)) {
+    fail(`${label} manifest version must use semantic versioning`);
   }
 
-  if (!manifest.description || typeof manifest.description !== "string") {
-    fail(`${label} manifest must include a string description`);
+  if (!isNonEmptyString(manifest.description)) {
+    fail(`${label} manifest must include a non-empty string description`);
+  }
+
+  if (!isObject(manifest.author) || !isNonEmptyString(manifest.author.name)) {
+    fail(`${label} manifest must include author.name`);
+  }
+
+  for (const [field, value] of [
+    ["homepage", manifest.homepage],
+    ["repository", manifest.repository],
+    ["author.url", manifest.author?.url],
+  ]) {
+    if (value !== undefined && !isHttpsUrl(value)) {
+      fail(`${label} manifest ${field} must be an HTTPS URL`);
+    }
+  }
+
+  if (!isNonEmptyString(manifest.license)) {
+    fail(`${label} manifest must include a non-empty license`);
+  }
+
+  const readmePath = path.join(pluginDir, "README.md");
+  if (!fs.existsSync(readmePath) || !fs.statSync(readmePath).isFile()) {
+    fail(`${label}.source.path is missing README.md`);
+  }
+
+  if (!isObject(manifest.interface)) {
+    fail(`${label} manifest must include interface metadata`);
+  } else {
+    for (const field of ["displayName", "shortDescription", "category"]) {
+      if (!isNonEmptyString(manifest.interface[field])) {
+        fail(`${label} manifest interface.${field} must be a non-empty string`);
+      }
+    }
+
+    if (manifest.interface.category !== entry.category) {
+      fail(`${label} category must match manifest interface.category`);
+    }
+
+    if (
+      !Array.isArray(manifest.interface.capabilities) ||
+      manifest.interface.capabilities.length === 0 ||
+      manifest.interface.capabilities.some((capability) => !isNonEmptyString(capability))
+    ) {
+      fail(`${label} manifest interface.capabilities must be a non-empty string array`);
+    }
+
+    if (
+      !Array.isArray(manifest.interface.defaultPrompt) ||
+      manifest.interface.defaultPrompt.length === 0 ||
+      manifest.interface.defaultPrompt.some((prompt) => !isNonEmptyString(prompt))
+    ) {
+      fail(`${label} manifest interface.defaultPrompt must be a non-empty string array`);
+    }
+
+    for (const field of ["websiteURL", "privacyPolicyURL", "termsOfServiceURL"]) {
+      const value = manifest.interface[field];
+      if (value !== undefined && !isHttpsUrl(value)) {
+        fail(`${label} manifest interface.${field} must be an HTTPS URL`);
+      }
+    }
+
+    for (const field of ["logo", "composerIcon"]) {
+      if (manifest.interface[field] !== undefined) {
+        validateReferencedPath(
+          pluginDir,
+          manifest.interface[field],
+          `${label} manifest interface.${field}`,
+          "file",
+        );
+      }
+    }
   }
 
   if (manifest.skills) {
-    const skillsDir = path.resolve(pluginDir, manifest.skills);
-    const relative = path.relative(pluginDir, skillsDir);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      fail(`${label} manifest skills path must stay inside the plugin folder`);
-    } else if (!fs.existsSync(skillsDir)) {
-      fail(`${label} manifest skills path does not exist: ${manifest.skills}`);
-    } else {
+    const skillsDir = validateReferencedPath(
+      pluginDir,
+      manifest.skills,
+      `${label} manifest skills path`,
+      "directory",
+    );
+    if (skillsDir) {
       validateAgentMetadataFiles(skillsDir, label);
+    }
+  }
+
+  for (const field of ["mcpServers", "apps"]) {
+    if (manifest[field]) {
+      validateReferencedPath(
+        pluginDir,
+        manifest[field],
+        `${label} manifest ${field} path`,
+        "file",
+      );
     }
   }
 }
@@ -220,25 +360,26 @@ if (marketplace) {
   if (!Array.isArray(marketplace.plugins)) {
     fail("marketplace.plugins must be an array");
   } else {
-    const seen = new Set();
+    const seenNames = new Set();
+    const seenPaths = new Set();
     for (const [index, entry] of marketplace.plugins.entries()) {
-      if (isObject(entry) && seen.has(entry.name)) {
+      if (isObject(entry) && seenNames.has(entry.name)) {
         fail(`plugins[${index}].name duplicates "${entry.name}"`);
       }
+      if (isObject(entry) && seenPaths.has(entry.source?.path)) {
+        fail(`plugins[${index}].source.path duplicates "${entry.source?.path}"`);
+      }
       if (isObject(entry)) {
-        seen.add(entry.name);
+        seenNames.add(entry.name);
+        seenPaths.add(entry.source?.path);
       }
       validatePluginEntry(entry, index);
     }
 
     if (marketplace.plugins.length === 0) {
-      warn("marketplace has no plugins yet");
+      fail("marketplace must include at least one plugin");
     }
   }
-}
-
-for (const message of warnings) {
-  console.warn(`WARN ${message}`);
 }
 
 if (errors.length > 0) {

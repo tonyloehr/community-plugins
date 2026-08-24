@@ -17,7 +17,10 @@ and evidence all agree.
   personal paths, customer identifiers, private transcripts, and unpublished
   customer data.
 - Review each plugin's license and third-party notices before redistribution.
-- Run `npm run validate` and the tests for every changed plugin.
+- Confirm GitHub private vulnerability reporting is enabled before sharing the
+  marketplace publicly.
+- Run `npm run validate:marketplace`, `npm run test:marketplace`,
+  `npm run validate`, and the deeper tests for every changed plugin.
 - For Grafana release changes, review the full demo media and source receipts;
   skipped checks are not passes.
 
