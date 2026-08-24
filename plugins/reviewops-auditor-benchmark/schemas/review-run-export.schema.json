@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:review-run-export:1",
+  "title": "ReviewOps sanitized review-run export",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "exportId",
+    "exporterVersion",
+    "runRecord",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "exportId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId" },
+    "exporterVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/ToolVersion" },
+    "runRecord": { "$ref": "urn:reviewops:schema:run-record:1" },
+    "provenance": { "$ref": "urn:reviewops:schema:common:1#/$defs/Provenance" }
+  }
+}

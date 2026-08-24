@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:static-diagnostic-report:1",
+  "title": "ReviewOps optional static diagnostic report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "summary", "findings", "limitations"],
+  "properties": {
+    "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["findingCount", "observedCount", "inferredCount", "unknownCount"],
+      "properties": {
+        "findingCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "observedCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "inferredCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "unknownCount": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ruleId",
+          "category",
+          "severity",
+          "evidenceStatus",
+          "confidence",
+          "summary",
+          "claimBoundary",
+          "possibleContributorOnly",
+          "binding",
+          "applicableToShadowPath",
+          "blocksShadowPath"
+        ],
+        "properties": {
+          "ruleId": { "type": "string", "pattern": "^RO-(?:WF|PR|TL)-[0-9]{3}$" },
+          "category": { "$ref": "urn:reviewops:schema:common:1#/$defs/Category" },
+          "severity": { "$ref": "urn:reviewops:schema:common:1#/$defs/Severity" },
+          "evidenceStatus": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/EvidenceStatus"
+          },
+          "confidence": { "enum": ["LOW", "MEDIUM", "HIGH"] },
+          "summary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" },
+          "claimBoundary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" },
+          "possibleContributorOnly": { "type": "boolean" },
+          "binding": {
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["laneId", "variantId", "architectureStructuralDigest"],
+                "properties": {
+                  "laneId": {
+                    "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+                  },
+                  "variantId": {
+                    "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+                  },
+                  "architectureStructuralDigest": {
+                    "$ref": "urn:reviewops:schema:common:1#/$defs/Digest"
+                  }
+                }
+              }
+            ]
+          },
+          "applicableToShadowPath": { "type": "boolean" },
+          "blocksShadowPath": { "type": "boolean" },
+          "path": { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+          "line": { "type": "integer", "minimum": 1, "maximum": 1000000 }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "applicableToShadowPath": { "const": true }
+              },
+              "required": ["applicableToShadowPath"]
+            },
+            "then": {
+              "properties": {
+                "binding": { "type": "object" }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "blocksShadowPath": { "const": true }
+              },
+              "required": ["blocksShadowPath"]
+            },
+            "then": {
+              "properties": {
+                "evidenceStatus": { "const": "OBSERVED" },
+                "severity": { "const": "CRITICAL" },
+                "confidence": { "const": "HIGH" },
+                "possibleContributorOnly": { "const": false },
+                "applicableToShadowPath": { "const": true },
+                "binding": { "type": "object" }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "limitations": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "reviewops-auditor-benchmark",
+  "version": "0.1.0",
+  "description": "Normalize, validate, benchmark, and recommend from declared local review-run evidence offline.",
+  "author": {
+    "name": "Tony Loehr",
+    "url": "https://github.com/tonyloehr"
+  },
+  "homepage": "https://github.com/tonyloehr/community-plugins/tree/main/plugins/reviewops-auditor-benchmark",
+  "repository": "https://github.com/tonyloehr/community-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "code-review",
+    "benchmarking",
+    "reviewops",
+    "quality",
+    "developer-tools"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "ReviewOps Auditor + Benchmark",
+    "shortDescription": "Evaluate review architectures offline.",
+    "longDescription": "Read explicitly declared sanitized local exports, protocols, labels, and pricing snapshots; normalize runs, audit evaluation validity, score fair comparison lanes, and emit shadow-only reference-architecture guidance. Optional static diagnostics remain secondary. This release uses no network, credentials, writeback, or model replay.",
+    "developerName": "Tony Loehr",
+    "category": "Developer Tools",
+    "websiteURL": "https://github.com/tonyloehr/community-plugins",
+    "capabilities": ["Read"],
+    "brandColor": "#2563EB",
+    "logo": "./assets/icon.svg",
+    "composerIcon": "./assets/icon.svg",
+    "defaultPrompt": [
+      "Use $normalize-review-runs on the bundled synthetic fixture only. Explain the normalization summary, provenance checks, safety boundaries, and next safe step.",
+      "Use $audit-review-eval-validity on the bundled synthetic fixture only. Explain which comparison claim is supported, which controls are held constant, and what would block a recommendation.",
+      "Use $benchmark-review-configs on the bundled synthetic fixture only. Explain the eligible root-cause metrics, exclusions, confidence intervals, and risk slice limitations.",
+      "Use $recommend-review-reference-architecture on the bundled synthetic fixture only. Explain the claim boundary, preserved production contracts, human approval gate, and no-posting shadow next step."
+    ]
+  }
+}

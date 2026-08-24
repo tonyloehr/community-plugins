@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:candidate-config:1",
+  "title": "ReviewOps benchmark candidate configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "variantId",
+    "architectureId",
+    "architectureStructuralDigest",
+    "modelAlias",
+    "reasoningClass",
+    "promptStructuralDigest",
+    "configStructuralDigest",
+    "contextClass",
+    "toolContractId",
+    "controllerContractId",
+    "validatorContractId",
+    "dedupePolicyId",
+    "postingPolicyId",
+    "retryPolicyId",
+    "timeoutPolicyId",
+    "routingPolicyId"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "variantId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "architectureId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "architectureStructuralDigest": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/Digest"
+    },
+    "modelAlias": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "reasoningClass": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "promptStructuralDigest": { "$ref": "urn:reviewops:schema:common:1#/$defs/Digest" },
+    "configStructuralDigest": { "$ref": "urn:reviewops:schema:common:1#/$defs/Digest" },
+    "contextClass": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "toolContractId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "controllerContractId": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+    },
+    "validatorContractId": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+    },
+    "dedupePolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "postingPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "retryPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "timeoutPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "routingPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+  }
+}

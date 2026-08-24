@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:adjudication-protocol:1",
+  "title": "ReviewOps adjudication protocol",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocolId",
+    "protocolVersion",
+    "laneId",
+    "rubricId",
+    "labelVersion",
+    "variantIdentity",
+    "presentationOrder",
+    "highCriticalReview",
+    "adjudicatorIndependence",
+    "disagreement",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "protocolId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "protocolVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "laneId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "rubricId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "labelVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "variantIdentity": { "enum": ["HIDDEN", "VISIBLE", "UNKNOWN"] },
+    "presentationOrder": { "enum": ["RANDOMIZED", "FIXED", "UNKNOWN"] },
+    "highCriticalReview": { "enum": ["HUMAN", "OTHER", "UNKNOWN"] },
+    "adjudicatorIndependence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidenceStatus", "provenanceId"],
+      "properties": {
+        "status": { "enum": ["DECLARED", "UNKNOWN"] },
+        "evidenceStatus": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/DeclarationStatus"
+        },
+        "provenanceId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+      }
+    },
+    "disagreement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policyId", "status", "count"],
+      "properties": {
+        "policyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "status": { "enum": ["COMPLETE", "PARTIAL", "UNKNOWN"] },
+        "count": { "type": "integer", "minimum": 0, "maximum": 10000 }
+      }
+    },
+    "provenance": { "$ref": "urn:reviewops:schema:common:1#/$defs/Provenance" }
+  }
+}

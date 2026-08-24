@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:decision-policy:1",
+  "title": "ReviewOps reference-architecture decision policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "policyId",
+    "confidenceLevel",
+    "bootstrapIterations",
+    "bootstrapSeed",
+    "minimumPairedCases",
+    "minimumPairedCasesPerSlice",
+    "decisionSliceIds",
+    "sliceMultiplicityMethod",
+    "minimumMetricCoverage",
+    "minimumRootCauseCoverage",
+    "maxPricingAgeDays",
+    "requiredCostBasis",
+    "highCriticalRootCauseNonInferiorityMargin",
+    "criticalMissNonInferiorityMargin",
+    "hallucinationNonInferiorityMargin",
+    "actionablePrecisionNonInferiorityMargin",
+    "rootCauseQualityNonInferiorityMargin",
+    "minimumCostPerConfirmedHighCriticalRootCauseImprovementFraction",
+    "maximumHumanReviewRegressionFraction",
+    "maximumP95CostRegressionFraction",
+    "maximumP99CostRegressionFraction",
+    "maximumP95LatencyRegressionFraction",
+    "maximumP99LatencyRegressionFraction",
+    "minimumFindingStability",
+    "blockingStaticRuleIds",
+    "allowedExceptionTypes",
+    "tiePolicy",
+    "shadowObservationDays",
+    "rollbackCriticalMisses",
+    "exceptions"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "policyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "confidenceLevel": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "bootstrapIterations": { "type": "integer", "minimum": 100, "maximum": 100000 },
+    "bootstrapSeed": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "minimumPairedCases": { "type": "integer", "minimum": 20, "maximum": 10000 },
+    "minimumPairedCasesPerSlice": {
+      "type": "integer",
+      "minimum": 20,
+      "maximum": 10000
+    },
+    "decisionSliceIds": {
+      "type": "array",
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+      }
+    },
+    "sliceMultiplicityMethod": { "const": "HOLM_BONFERRONI" },
+    "minimumMetricCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+    "minimumRootCauseCoverage": { "type": "number", "minimum": 0, "maximum": 1 },
+    "maxPricingAgeDays": { "type": "integer", "minimum": 0, "maximum": 3650 },
+    "requiredCostBasis": { "const": "FULLY_LOADED" },
+    "highCriticalRootCauseNonInferiorityMargin": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "criticalMissNonInferiorityMargin": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "hallucinationNonInferiorityMargin": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "actionablePrecisionNonInferiorityMargin": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "rootCauseQualityNonInferiorityMargin": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "minimumCostPerConfirmedHighCriticalRootCauseImprovementFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maximumHumanReviewRegressionFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maximumP95CostRegressionFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maximumP99CostRegressionFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maximumP95LatencyRegressionFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maximumP99LatencyRegressionFraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "minimumFindingStability": { "type": "number", "minimum": 0, "maximum": 1 },
+    "blockingStaticRuleIds": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^RO-(?:WF|PR|TL)-[0-9]{3}$" }
+    },
+    "allowedExceptionTypes": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "enum": ["P95_LATENCY", "P99_COST", "HUMAN_REVIEW"] }
+    },
+    "tiePolicy": {
+      "enum": ["NO_AUTOMATIC_WINNER", "LOWEST_ROOT_CAUSE_COST", "LOWEST_LATENCY"]
+    },
+    "shadowObservationDays": { "type": "integer", "minimum": 1, "maximum": 365 },
+    "rollbackCriticalMisses": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "exceptions": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "approvedBy", "scope", "expiresAt", "reason"],
+        "properties": {
+          "type": {
+            "enum": ["P95_LATENCY", "P99_COST", "HUMAN_REVIEW"]
+          },
+          "approvedBy": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "scope": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "expiresAt": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+          "reason": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:validator-result:1",
+  "title": "ReviewOps imported validator result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "checkId",
+    "status",
+    "durationMs",
+    "evidenceStructuralDigest",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "runId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueId" },
+    "findingId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueId" },
+    "checkId": { "$ref": "urn:reviewops:schema:common:1#/$defs/Alias" },
+    "status": { "enum": ["PASSED", "FAILED", "SKIPPED", "ERROR"] },
+    "durationMs": { "type": "integer", "minimum": 0, "maximum": 120000 },
+    "evidenceStructuralDigest": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/Digest"
+    },
+    "provenance": { "$ref": "urn:reviewops:schema:common:1#/$defs/Provenance" }
+  }
+}

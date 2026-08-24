@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:config:1",
+  "title": "ReviewOps analysis configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "analysisAsOf",
+    "repoRoot",
+    "inputRoots",
+    "laneBundles",
+    "limits"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "analysisAsOf": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+    "repoRoot": { "const": "." },
+    "inputRoots": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativeRoot" }
+    },
+    "decisionPolicyPath": {
+      "allOf": [
+        { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+        { "type": "string", "pattern": "\\.json$" }
+      ]
+    },
+    "laneBundles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bundleId",
+          "manifestPath",
+          "evalProtocolPath",
+          "adjudicationProtocolPath",
+          "candidateConfigPaths",
+          "rubricPath",
+          "pricingSnapshotPath",
+          "caseLabelPaths"
+        ],
+        "properties": {
+          "bundleId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "manifestPath": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.json$" }
+            ]
+          },
+          "evalProtocolPath": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.json$" }
+            ]
+          },
+          "adjudicationProtocolPath": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.json$" }
+            ]
+          },
+          "candidateConfigPaths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {
+              "allOf": [
+                { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+                { "type": "string", "pattern": "\\.json$" }
+              ]
+            }
+          },
+          "rubricPath": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.json$" }
+            ]
+          },
+          "pricingSnapshotPath": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.json$" }
+            ]
+          },
+          "caseLabelPaths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {
+              "allOf": [
+                { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+                { "type": "string", "pattern": "\\.(?:json|jsonl)$" }
+              ]
+            }
+          },
+          "exportPaths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {
+              "allOf": [
+                { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+                { "type": "string", "pattern": "\\.(?:json|jsonl)$" }
+              ]
+            }
+          },
+          "canonicalRunRecordPaths": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {
+              "allOf": [
+                { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+                { "type": "string", "pattern": "\\.(?:json|jsonl)$" }
+              ]
+            }
+          }
+        },
+        "oneOf": [
+          {
+            "required": ["exportPaths"],
+            "properties": { "exportPaths": {} }
+          },
+          {
+            "required": ["canonicalRunRecordPaths"],
+            "properties": { "canonicalRunRecordPaths": {} }
+          }
+        ]
+      }
+    },
+    "staticDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workflowPaths",
+        "promptPaths",
+        "telemetryPaths",
+        "toolContractPaths",
+        "validatorResultPaths"
+      ],
+      "properties": {
+        "workflowPaths": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.(?:yml|yaml)$" }
+            ]
+          }
+        },
+        "promptPaths": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.(?:md|txt)$" }
+            ]
+          }
+        },
+        "telemetryPaths": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.(?:json|jsonl)$" }
+            ]
+          }
+        },
+        "toolContractPaths": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.json$" }
+            ]
+          }
+        },
+        "validatorResultPaths": {
+          "type": "array",
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "allOf": [
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath" },
+              { "type": "string", "pattern": "\\.(?:json|jsonl)$" }
+            ]
+          }
+        },
+        "bindings": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ruleId",
+              "path",
+              "laneId",
+              "variantId",
+              "architectureStructuralDigest",
+              "applicableToShadowPath"
+            ],
+            "properties": {
+              "ruleId": {
+                "type": "string",
+                "pattern": "^RO-(?:WF|PR|TL)-[0-9]{3}$"
+              },
+              "path": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/RelativePath"
+              },
+              "laneId": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+              },
+              "variantId": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+              },
+              "architectureStructuralDigest": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/Digest"
+              },
+              "applicableToShadowPath": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    "limits": { "$ref": "urn:reviewops:schema:common:1#/$defs/AppliedLimits" }
+  }
+}

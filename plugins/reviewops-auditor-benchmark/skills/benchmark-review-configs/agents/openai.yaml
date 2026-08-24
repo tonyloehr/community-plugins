@@ -1,0 +1,8 @@
+interface:
+  display_name: "Benchmark Review Configs"
+  short_description: "Score imported review runs offline"
+  brand_color: "#2563EB"
+  default_prompt: "Use $benchmark-review-configs to score the bundled synthetic fixture only and explain comparability, root-cause metrics, uncertainty, and missing evidence."
+
+policy:
+  allow_implicit_invocation: false

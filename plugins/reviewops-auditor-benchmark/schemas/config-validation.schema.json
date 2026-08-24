@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:config-validation:1",
+  "title": "ReviewOps validated config result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "toolVersion",
+    "analysisAsOf",
+    "configDigest",
+    "status",
+    "inputDigests",
+    "appliedLimits",
+    "redactionCounts",
+    "warnings",
+    "claimBoundary",
+    "limitations"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "toolVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/ToolVersion" },
+    "analysisAsOf": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+    "configDigest": { "$ref": "urn:reviewops:schema:common:1#/$defs/Digest" },
+    "status": { "const": "COMPLETE" },
+    "inputDigests": {
+      "type": "array",
+      "maxItems": 1,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/InputDigest" }
+    },
+    "appliedLimits": { "$ref": "urn:reviewops:schema:common:1#/$defs/AppliedLimits" },
+    "redactionCounts": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/RedactionCounts"
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/Warning" }
+    },
+    "claimBoundary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" },
+    "limitations": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" }
+  }
+}

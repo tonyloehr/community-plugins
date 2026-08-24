@@ -1,0 +1,8 @@
+interface:
+  display_name: "Normalize Review Runs"
+  short_description: "Normalize local review exports offline"
+  brand_color: "#2563EB"
+  default_prompt: "Use $normalize-review-runs to normalize the bundled synthetic fixture only and explain accepted, rejected, and duplicate records."
+
+policy:
+  allow_implicit_invocation: false

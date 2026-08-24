@@ -1,0 +1,29 @@
+{
+  "name": "reviewops-auditor-benchmark-build",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Build and quality tooling for the offline ReviewOps plugin.",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint build.mjs src",
+    "format:check": "prettier --check build.mjs eslint.config.mjs package.json src schemas rules fixtures skills README.md tsconfig.json .codex-plugin/plugin.json",
+    "coverage": "node --experimental-test-coverage --test-coverage-include='src/**/*.mjs' --test-coverage-lines=90 --test-coverage-branches=80 --test-coverage-functions=90 --test --test-concurrency=1 ../../tests/reviewops-auditor-benchmark/*.test.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.8.1",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "Apache-2.0"
+}

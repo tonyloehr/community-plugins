@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:case-label:1",
+  "title": "ReviewOps independent case root-cause label",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "caseId",
+    "rubricId",
+    "labelVersion",
+    "riskSliceIds",
+    "groundTruth",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "caseId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId" },
+    "rubricId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "labelVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "riskSliceIds": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+    },
+    "groundTruth": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rootCauseId", "severity", "tags"],
+        "properties": {
+          "rootCauseId": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+          },
+          "severity": { "$ref": "urn:reviewops:schema:common:1#/$defs/Severity" },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+          }
+        }
+      }
+    },
+    "provenance": { "$ref": "urn:reviewops:schema:common:1#/$defs/Provenance" }
+  }
+}

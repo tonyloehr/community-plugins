@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:benchmark-scorecard:1",
+  "title": "ReviewOps lane-aware benchmark scorecard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "toolVersion",
+    "analysisAsOf",
+    "configDigest",
+    "status",
+    "inputDigests",
+    "appliedLimits",
+    "redactionCounts",
+    "warnings",
+    "claimBoundary",
+    "lanes",
+    "methodology",
+    "limitations"
+  ],
+  "$defs": {
+    "Metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metricId",
+        "direction",
+        "unit",
+        "value",
+        "denominator",
+        "coverage",
+        "confidenceInterval",
+        "eligibility",
+        "reasons",
+        "missingness",
+        "exclusions"
+      ],
+      "properties": {
+        "metricId": {
+          "enum": [
+            "high_critical_root_cause_recall",
+            "critical_miss_rate",
+            "actionable_precision",
+            "cross_system_true_positives",
+            "symptoms_per_root_cause",
+            "hallucination_rate",
+            "human_review_minutes",
+            "fully_loaded_cost_per_confirmed_high_critical_root_cause",
+            "fully_loaded_cost_per_confirmed_root_cause",
+            "root_cause_quality",
+            "finding_stability",
+            "latency_p50",
+            "latency_p95",
+            "latency_p99",
+            "cost_p50",
+            "cost_p95",
+            "cost_p99",
+            "cost_per_reviewed_case",
+            "model_only_cost",
+            "token_usage",
+            "raw_finding_count",
+            "accepted_finding_count",
+            "comment_volume",
+            "cross_file_finding_count"
+          ]
+        },
+        "direction": { "enum": ["MAXIMIZE", "MINIMIZE"] },
+        "unit": {
+          "enum": [
+            "RATIO",
+            "COUNT",
+            "MINUTES_PER_CASE",
+            "MICROS_PER_CONFIRMED_ROOT_CAUSE",
+            "SCORE",
+            "MILLISECONDS",
+            "MICROS",
+            "MICROS_PER_CASE",
+            "TOKENS_PER_CASE"
+          ]
+        },
+        "value": { "type": ["number", "null"] },
+        "denominator": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+        "coverage": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidenceInterval": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["lower", "upper", "confidenceLevel", "method"],
+              "properties": {
+                "lower": { "type": "number" },
+                "upper": { "type": "number" },
+                "confidenceLevel": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 1
+                },
+                "method": { "const": "SEEDED_PAIRED_BOOTSTRAP" }
+              }
+            }
+          ]
+        },
+        "eligibility": { "enum": ["ELIGIBLE", "INELIGIBLE", "UNKNOWN"] },
+        "reasons": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" },
+        "missingness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["count", "reasonCodes"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 0, "maximum": 10000 },
+            "reasonCodes": {
+              "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray"
+            }
+          }
+        },
+        "exclusions": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["caseId", "reasonCodes"],
+            "properties": {
+              "caseId": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+              },
+              "reasonCodes": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray"
+              }
+            }
+          }
+        }
+      }
+    },
+    "Variant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variantId", "eligible", "metrics", "reasons"],
+      "properties": {
+        "variantId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "eligible": { "type": "boolean" },
+        "metrics": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/Metric" }
+        },
+        "reasons": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" }
+      }
+    },
+    "FrontierPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variantId", "status"],
+      "properties": {
+        "variantId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "status": { "enum": ["NON_DOMINATED", "DOMINATED", "UNKNOWN"] },
+        "dominatedBy": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+        }
+      }
+    },
+    "Comparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baselineVariantId",
+        "candidateVariantId",
+        "pairedCaseCount",
+        "metrics"
+      ],
+      "properties": {
+        "baselineVariantId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "candidateVariantId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "pairedCaseCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "metrics": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/Metric" }
+        }
+      }
+    },
+    "Slice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sliceId",
+        "status",
+        "decisionEligible",
+        "descriptiveOnly",
+        "multiplicity",
+        "pairedCaseCount",
+        "variants",
+        "comparisons",
+        "frontier",
+        "limitations"
+      ],
+      "properties": {
+        "sliceId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+        "decisionEligible": { "type": "boolean" },
+        "descriptiveOnly": { "type": "boolean" },
+        "multiplicity": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["method", "familySize", "adjustedConfidenceLevel"],
+              "properties": {
+                "method": { "const": "HOLM_BONFERRONI" },
+                "familySize": { "type": "integer", "minimum": 1, "maximum": 8 },
+                "adjustedConfidenceLevel": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 1
+                }
+              }
+            }
+          ]
+        },
+        "pairedCaseCount": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "variants": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/Variant" }
+        },
+        "comparisons": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/Comparison" }
+        },
+        "frontier": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/FrontierPoint" }
+        },
+        "limitations": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "toolVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/ToolVersion" },
+    "analysisAsOf": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+    "configDigest": { "$ref": "urn:reviewops:schema:common:1#/$defs/Digest" },
+    "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+    "inputDigests": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/InputDigest" }
+    },
+    "appliedLimits": { "$ref": "urn:reviewops:schema:common:1#/$defs/AppliedLimits" },
+    "redactionCounts": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/RedactionCounts"
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/Warning" }
+    },
+    "claimBoundary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" },
+    "lanes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bundleId",
+          "laneId",
+          "laneType",
+          "status",
+          "attributionStatus",
+          "claimBoundary",
+          "currency",
+          "costBasis",
+          "decisionEligible",
+          "replicateAggregation",
+          "missingReplicatePolicy",
+          "pairedCaseCount",
+          "exclusions",
+          "global",
+          "slices",
+          "comparisons",
+          "limitations"
+        ],
+        "properties": {
+          "bundleId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "laneId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "laneType": { "$ref": "urn:reviewops:schema:common:1#/$defs/LaneType" },
+          "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+          "attributionStatus": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/AttributionStatus"
+          },
+          "claimBoundary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" },
+          "currency": {
+            "oneOf": [{ "type": "null" }, { "type": "string", "pattern": "^[A-Z]{3}$" }]
+          },
+          "costBasis": {
+            "oneOf": [
+              { "type": "null" },
+              { "$ref": "urn:reviewops:schema:common:1#/$defs/CostBasis" }
+            ]
+          },
+          "decisionEligible": { "type": "boolean" },
+          "replicateAggregation": {
+            "oneOf": [{ "const": "CASE_PRIMITIVES" }, { "type": "null" }]
+          },
+          "missingReplicatePolicy": {
+            "oneOf": [
+              { "enum": ["BLOCK", "SYMMETRIC_EXCLUDE_CASE"] },
+              { "type": "null" }
+            ]
+          },
+          "pairedCaseCount": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "exclusions": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["caseId", "reasonCodes"],
+              "properties": {
+                "caseId": {
+                  "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+                },
+                "reasonCodes": {
+                  "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray"
+                }
+              }
+            }
+          },
+          "global": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["variants", "frontier"],
+            "properties": {
+              "variants": {
+                "type": "array",
+                "maxItems": 50,
+                "items": { "$ref": "#/$defs/Variant" }
+              },
+              "frontier": {
+                "type": "array",
+                "maxItems": 50,
+                "items": { "$ref": "#/$defs/FrontierPoint" }
+              }
+            }
+          },
+          "slices": {
+            "type": "array",
+            "maxItems": 256,
+            "items": { "$ref": "#/$defs/Slice" }
+          },
+          "comparisons": {
+            "type": "array",
+            "maxItems": 50,
+            "items": { "$ref": "#/$defs/Comparison" }
+          },
+          "limitations": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray"
+          }
+        }
+      }
+    },
+    "methodology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quantile",
+        "confidence",
+        "confidenceLevel",
+        "bootstrapIterations",
+        "bootstrapSeed"
+      ],
+      "properties": {
+        "quantile": { "const": "LINEAR_INTERPOLATION" },
+        "confidence": { "const": "PAIRED_BOOTSTRAP_PERCENTILE" },
+        "confidenceLevel": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "bootstrapIterations": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "bootstrapSeed": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+      }
+    },
+    "limitations": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" },
+    "error": { "$ref": "urn:reviewops:schema:common:1#/$defs/SanitizedError" }
+  }
+}

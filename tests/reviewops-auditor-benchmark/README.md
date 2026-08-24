@@ -1,0 +1,52 @@
+# ReviewOps Auditor + Benchmark tests
+
+The ReviewOps suite is synthetic, offline, and deterministic. The revised
+v0.1.0 contract covers four explicit skills and five CLI commands:
+`validate-config`, `normalize`, `audit-eval`, `benchmark`, and
+`recommend-architecture`.
+
+Run from the repository root:
+
+```sh
+npm run test:reviewops-auditor-benchmark
+```
+
+The fixture intentionally contains no customer data, provider credentials,
+private URLs, real prompts, real diffs, or live integration.
+
+## Required qualification coverage
+
+Before release, the suite must demonstrate:
+
+- strict schema and path validation for lane bundles, source-neutral exports,
+  canonical records, protocols, labels, pricing, policies, and outputs;
+- bounded normalization with accepted, rejected, duplicate, and reason-code
+  reporting;
+- fair-evaluation gates for pairing, held constants, allowed differences,
+  blinding, leakage controls, adjudication, attribution, and exclusions;
+- validity-gated global and per-slice root-cause, quality, cost, latency,
+  confidence, stability, and frontier results;
+- shadow-only reference-architecture gates, preserved contracts, human
+  approval, rollback triggers, and no-posting language;
+- secondary static diagnostics that cannot become causal proof without an
+  observed, policy-bound shadow-path finding;
+- hostile prompt and export data, redaction, path containment, regular-file
+  checks, resource limits, stable errors, and text-accessible Markdown;
+- copied-package execution without runtime `node_modules`, network,
+  credentials, Git metadata, home-directory reads, or provider calls.
+
+## Qualification record
+
+Local revised-contract qualification on 2026-08-24:
+
+- <code>npm run test:reviewops-auditor-benchmark</code>: 106 passed, 0 failed;
+- aggregate coverage: 92.74% lines, 80.83% branches, 94.57% functions;
+- <code>npm run verify:reviewops-source</code>, <code>npm run validate</code>,
+  and <code>npm run test:marketplace</code>: passed;
+- <code>npm audit --prefix plugins/reviewops-auditor-benchmark --omit=dev</code>:
+  0 vulnerabilities;
+- both shipped entrypoints passed <code>node --check</code>;
+- copied-package and isolated installed-fixture paths ran all five commands
+  without credentials, network, provider calls, or writeback.
+
+CI results remain unclaimed until CI actually completes.

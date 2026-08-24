@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:common:1",
+  "title": "ReviewOps common definitions",
+  "$defs": {
+    "SchemaVersion": { "const": 1 },
+    "ToolVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "OpaqueDigestId": { "$ref": "#/$defs/Digest" },
+    "OpaqueId": { "$ref": "#/$defs/OpaqueDigestId" },
+    "PublicAlias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+    },
+    "Alias": { "$ref": "#/$defs/PublicAlias" },
+    "UtcTimestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "RelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*\\u0000).+$"
+    },
+    "RelativeRoot": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?:\\.|(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*\\u0000).+)$"
+    },
+    "Status": {
+      "enum": ["COMPLETE", "PARTIAL", "INSUFFICIENT_EVIDENCE", "BLOCKED", "ERROR"]
+    },
+    "GateStatus": { "enum": ["PASS", "FAIL", "UNKNOWN", "BLOCKED"] },
+    "Category": {
+      "enum": [
+        "SECURITY",
+        "RELIABILITY",
+        "COST",
+        "LATENCY",
+        "QUALITY",
+        "NOISE",
+        "TELEMETRY"
+      ]
+    },
+    "Severity": { "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] },
+    "EvidenceStatus": { "enum": ["OBSERVED", "INFERRED", "UNKNOWN"] },
+    "DeclarationStatus": { "enum": ["DECLARED", "UNKNOWN"] },
+    "LaneType": {
+      "enum": ["PORTABLE_CORE_MODEL", "HARNESS_ABLATION", "BEST_SYSTEM", "SHADOW_PILOT"]
+    },
+    "ExecutionMode": { "enum": ["OFFLINE_REPLAY", "SHADOW_NO_POSTING"] },
+    "AttributionStatus": {
+      "enum": ["SINGLE_FACTOR", "HOLISTIC_VARIANT", "CONFOUNDED", "UNKNOWN"]
+    },
+    "SourceMode": { "enum": ["SANITIZED_EXPORT", "CANONICAL_RECORDS"] },
+    "CostBasis": { "enum": ["MODEL_ONLY", "FULLY_LOADED"] },
+    "CostSource": { "enum": ["SUPPLIED_TOTAL", "RECONSTRUCTED_COMPONENTS"] },
+    "DifferenceAxis": {
+      "enum": [
+        "modelAlias",
+        "promptStructuralDigest",
+        "configStructuralDigest",
+        "contextClass",
+        "toolContractId",
+        "controllerContractId",
+        "validatorContractId",
+        "dedupePolicyId",
+        "postingPolicyId",
+        "reasoningClass",
+        "retryPolicyId",
+        "timeoutPolicyId",
+        "routingPolicyId"
+      ]
+    },
+    "SafeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "SafeTextArray": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/SafeText" }
+    },
+    "Warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$"
+        },
+        "message": { "$ref": "#/$defs/SafeText" }
+      }
+    },
+    "RedactionCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "secrets": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "urls": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "emails": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "paths": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "content": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "controlCharacters": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "InputDigest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "digest"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "CONFIG",
+            "REVIEW_RUN_EXPORT",
+            "CANONICAL_RUN_RECORD",
+            "BENCHMARK_MANIFEST",
+            "EVAL_PROTOCOL",
+            "ADJUDICATION_PROTOCOL",
+            "CANDIDATE_CONFIG",
+            "DECISION_POLICY",
+            "TOOL_CONTRACT",
+            "VALIDATOR_RESULT",
+            "RUBRIC",
+            "PRICING_SNAPSHOT",
+            "CASE_LABEL",
+            "WORKFLOW",
+            "PROMPT",
+            "TELEMETRY"
+          ]
+        },
+        "path": { "$ref": "#/$defs/RelativePath" },
+        "digest": { "$ref": "#/$defs/Digest" }
+      }
+    },
+    "AppliedLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxFiles", "maxBytesPerFile", "maxTotalBytes", "maxRecords"],
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maxBytesPerFile": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+        "maxTotalBytes": { "type": "integer", "minimum": 1, "maximum": 33554432 },
+        "maxRecords": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+    "SanitizedError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$"
+        },
+        "message": { "$ref": "#/$defs/SafeText" }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sourceLabel"],
+      "properties": {
+        "kind": { "enum": ["USER_SUPPLIED", "PRIVATE_EXPORT", "SYNTHETIC_FIXTURE"] },
+        "sourceLabel": { "$ref": "#/$defs/PublicAlias" },
+        "exporterVersion": { "$ref": "#/$defs/ToolVersion" }
+      }
+    },
+    "StructuralReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "digest"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "EXPORT",
+            "MANIFEST",
+            "EVAL_PROTOCOL",
+            "ADJUDICATION_PROTOCOL",
+            "CANDIDATES",
+            "RUBRIC",
+            "PRICING",
+            "CASE_LABELS",
+            "CANONICAL_RUNS"
+          ]
+        },
+        "digest": { "$ref": "#/$defs/Digest" }
+      }
+    }
+  }
+}
