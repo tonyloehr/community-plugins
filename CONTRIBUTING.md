@@ -19,8 +19,11 @@ can understand and verify it from a cold start.
    behavior.
 5. Keep tests, fixtures, licenses, and third-party notices with the plugin or
    in clearly named companion folders.
-6. Add a `test:<plugin-name>` script to `package.json`. The marketplace-wide
-   CI job discovers each catalog entry and runs that matching test script.
+6. Add one `test:<plugin-name>` master suite to `package.json`. It should
+   run the plugin's functional, integration/E2E, security, and packaged checks
+   as applicable. The marketplace-wide CI job discovers each catalog entry
+   and runs that matching test script; plugin-specific CI should expose one
+   plugin-level job that invokes the same master suite.
 
 Never commit credentials, OAuth tokens, customer data, private URLs, personal
 paths, or generated caches.

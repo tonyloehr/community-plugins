@@ -1,0 +1,6 @@
+interface:
+  display_name: "Verify SwiftUI Parity"
+  short_description: "Check contract-backed SwiftUI parity"
+  default_prompt: "Use $verify-swiftui-parity to verify the approved SwiftUI slice against its behavioral parity contract."
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Port React Native Slice"
+  short_description: "Port one approved slice into SwiftUI"
+  default_prompt: "Use $port-react-native-slice to port the explicitly approved feature slice into the declared SwiftUI target directory."
+policy:
+  allow_implicit_invocation: false

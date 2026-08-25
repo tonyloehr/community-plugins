@@ -39,6 +39,13 @@ To fetch only ReviewOps Auditor + Benchmark, use:
 plugins/reviewops-auditor-benchmark
 ```
 
+To fetch only React Native to SwiftUI, use:
+
+```text
+.agents/plugins
+plugins/react-native-to-swiftui
+```
+
 Adding a marketplace makes its catalog available to browse. It does **not**
 install, enable, or authenticate every plugin. After adding it, install only
 the plugin you want.
@@ -57,6 +64,9 @@ codex plugin add grafana-observability@community-plugins
 
 # Or install the offline ReviewOps package.
 codex plugin add reviewops-auditor-benchmark@community-plugins
+
+# Or install the bounded native-migration workflow.
+codex plugin add react-native-to-swiftui@community-plugins
 ```
 
 If you want a full checkout instead of a sparse one:
@@ -76,6 +86,7 @@ are picked up.
 | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | [Grafana Observability](plugins/grafana-observability/README.md)               | Inspect administrator-approved, read-only Grafana evidence for infrastructure, APM, logs, IoT/edge, and business KPIs.     | [Guide](plugins/grafana-observability/README.md) · [23-second demo](docs/media/grafana-production-monitoring-demo-8x.mp4) |
 | [ReviewOps Auditor + Benchmark](plugins/reviewops-auditor-benchmark/README.md) | Normalize sanitized review-run exports, audit evaluation validity, benchmark lanes, and emit shadow-only guidance offline. | [Guide](plugins/reviewops-auditor-benchmark/README.md)                                                                    |
+| [React Native to SwiftUI](plugins/react-native-to-swiftui/README.md)           | Plan a bounded React Native/Expo feature migration, then port one explicitly approved slice with deterministic SwiftUI parity checks. | [Guide](plugins/react-native-to-swiftui/README.md) |
 
 Grafana Observability requires Codex and Node.js 22.19 or newer. Its manifest
 declares both `Read` and `Write`. `Write` is limited to
@@ -98,6 +109,17 @@ run is also synthetic and credential-free:
 Use $normalize-review-runs on the bundled synthetic fixture only. Explain the normalization summary, provenance checks, safety boundaries, and next safe step.
 ```
 
+React Native to SwiftUI requires Codex and Node.js 22.19 or newer. Its
+manifest declares both `Read` and `Write`: planning is read-only, while
+writes are limited to an explicitly approved target directory for one feature
+slice. It has no app or MCP dependency, does not copy source or assets into
+the plugin, and does not promise App Store approval. Its first run is a
+read-only parity-planning prompt:
+
+```text
+Use $plan-react-native-port to inspect only the declared React Native feature and propose a SwiftUI parity contract. Do not edit files yet.
+```
+
 ## Copy-paste Codex prompts
 
 Browse before installing:
@@ -118,6 +140,12 @@ Install ReviewOps without private data:
 If community-plugins is not already configured, add it from tonyloehr/community-plugins at ref main using sparse paths .agents/plugins and plugins/reviewops-auditor-benchmark. Install reviewops-auditor-benchmark@community-plugins, explain its read-only offline boundary, and give me the synthetic-fixture smoke-test prompt for a new Codex task.
 ```
 
+Install React Native to SwiftUI with a read-only first run:
+
+```text
+If community-plugins is not already configured, add it from tonyloehr/community-plugins at ref main using sparse paths .agents/plugins and plugins/react-native-to-swiftui. Install react-native-to-swiftui@community-plugins, explain its Read and Write boundaries and ON_USE authentication policy, and give me the read-only parity-planning prompt for a new Codex task.
+```
+
 Review before adoption:
 
 ```text
@@ -133,6 +161,7 @@ codex plugin marketplace upgrade community-plugins
 # Reinstall a plugin after a new version is published.
 codex plugin add grafana-observability@community-plugins
 codex plugin add reviewops-auditor-benchmark@community-plugins
+codex plugin add react-native-to-swiftui@community-plugins
 
 # Remove the configured marketplace source.
 codex plugin marketplace remove community-plugins

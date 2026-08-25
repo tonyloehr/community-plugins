@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">React Native to SwiftUI</title>
+  <desc id="description">A phone outline with a layered transition arrow and code brackets.</desc>
+  <defs>
+    <linearGradient id="background" x1="24" y1="20" x2="232" y2="236" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#252650"/>
+      <stop offset="1" stop-color="#5B5CE2"/>
+    </linearGradient>
+    <linearGradient id="transition" x1="70" y1="128" x2="186" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#62D6FF"/>
+      <stop offset="1" stop-color="#B9A7FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="54" fill="url(#background)"/>
+  <rect x="66" y="30" width="124" height="196" rx="22" fill="#111329" stroke="#F7F7FF" stroke-width="8"/>
+  <path d="M112 48h32" stroke="#F7F7FF" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="128" cy="207" r="7" fill="#F7F7FF"/>
+  <path d="M91 100 73 128l18 28M165 100l18 28-18 28" fill="none" stroke="#62D6FF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M92 128h67" stroke="url(#transition)" stroke-width="12" stroke-linecap="round"/>
+  <path d="m145 111 22 17-22 17" fill="none" stroke="#B9A7FF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M105 172h46" stroke="#F7F7FF" stroke-width="7" stroke-linecap="round" opacity=".78"/>
+</svg>
