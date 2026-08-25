@@ -1748,11 +1748,11 @@ Coverage remains an aggregate 90% line / 80% branch / 90% function source
 gate, but every lane, metric, recommendation gate, and safety boundary needs
 an explicit negative test; coverage alone is not sufficient.
 
-The full 106-test suite runs before coverage on every supported Node version.
-Coverage instrumentation is limited to the 78 deterministic unit suites
-so it cannot distort the public CLI worker's fixed five-second safety
-deadline; copied-package, accessibility, security, and CLI subprocess tests
-still run uninstrumented as required end-to-end gates.
+The full 106-test suite runs uninstrumented on every supported Node version.
+Node 22.19 also runs coverage on the 78 deterministic unit suites so
+instrumentation cannot distort the public CLI worker's fixed five-second
+safety deadline; copied-package, accessibility, security, and CLI subprocess
+tests still run uninstrumented as required end-to-end gates.
 
 ### Dedicated CI
 
@@ -1762,9 +1762,13 @@ The dedicated workflow must include:
   package scripts, and plan/docs;
 - `permissions: contents: read`, `persist-credentials: false`, pinned
   actions, concurrency cancellation;
-- 10-minute normal test timeout and explicit longer cold-install timeout;
-- Node 22.19, 24, and 26 matrix for package/unit/security/benchmark tests;
-- Linux copied-package smoke job;
+- one visible ReviewOps E2E check instead of separate matrix, source, and
+  copied-package checks;
+- Node 22.19 full qualification, coverage, dependency audit, source
+  verification, and pre-install copied-package smoke steps;
+- Node 24 and 26 uninstrumented full-suite compatibility steps in the same
+  E2E job;
+- a 15-minute bounded job timeout;
 - no live provider, database, GitHub, customer-data, or runtime-network test;
 - explicit skipped-gate ledger when a platform check is unavailable.
 

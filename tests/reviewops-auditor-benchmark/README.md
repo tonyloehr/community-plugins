@@ -18,6 +18,9 @@ Tests are grouped by execution boundary:
 - `security/` keeps adversarial input, redaction, and isolation checks easy to
   audit separately.
 
+CI exposes one ReviewOps E2E check. Node 22.19, 24, and 26 compatibility runs
+stay inside that check instead of multiplying GitHub status checks.
+
 The fixture intentionally contains no customer data, provider credentials,
 private URLs, real prompts, real diffs, or live integration.
 
