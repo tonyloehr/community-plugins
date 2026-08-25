@@ -48,5 +48,6 @@ jobs:
         with:
           node-version: "22.19.0"
           package-manager-cache: false
+      - run: npm --prefix plugins/reviewops-auditor-benchmark ci --ignore-scripts
       - run: npm run validate:marketplace
       - run: npm run test:marketplace

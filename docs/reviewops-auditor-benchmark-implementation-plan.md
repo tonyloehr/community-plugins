@@ -1,7 +1,7 @@
 # ReviewOps Auditor + Benchmark implementation plan
 
 - Status: operator-aligned implementation complete and locally qualified;
-  clean PR and CI confirmation pending
+  clean PR open and CI confirmation pending
 - Date: 2026-08-24
 - Target repository: `tonyloehr/community-plugins`
 - Package slug: `reviewops-auditor-benchmark`
@@ -54,8 +54,6 @@ Baseline qualification recorded before this revision:
   validation, marketplace-wide tests, entrypoint syntax checks, source-bundle
   verification, npm runtime audit, diff whitespace checks, and clean isolated
   installation passed;
-- a final Codex Security diff scan reported complete coverage and zero
-  findings.
 
 Those results remain historical evidence for reused safety machinery. They
 must be rerun and expanded after the operator-aligned contracts, skills, fixtures,
@@ -1716,7 +1714,7 @@ Keep or add plugin-scoped scripts:
     "format:check:reviewops-auditor-benchmark": "npm --prefix plugins/reviewops-auditor-benchmark run format:check",
     "coverage:reviewops-auditor-benchmark": "npm --prefix plugins/reviewops-auditor-benchmark run coverage",
     "verify:reviewops-source": "node scripts/verify-reviewops-source.mjs",
-    "test:reviewops-auditor-benchmark": "npm run build:reviewops-auditor-benchmark && npm run validate:reviewops-auditor-benchmark && npm run typecheck:reviewops-auditor-benchmark && npm run lint:reviewops-auditor-benchmark && npm run format:check:reviewops-auditor-benchmark && npm run coverage:reviewops-auditor-benchmark"
+    "test:reviewops-auditor-benchmark": "npm run build:reviewops-auditor-benchmark && npm run validate:reviewops-auditor-benchmark && npm run typecheck:reviewops-auditor-benchmark && npm run lint:reviewops-auditor-benchmark && npm run format:check:reviewops-auditor-benchmark && npm --prefix plugins/reviewops-auditor-benchmark run test && npm run coverage:reviewops-auditor-benchmark"
   }
 }
 ```
@@ -1745,6 +1743,12 @@ bundles change.
 Coverage remains an aggregate 90% line / 80% branch / 90% function source
 gate, but every lane, metric, recommendation gate, and safety boundary needs
 an explicit negative test; coverage alone is not sufficient.
+
+The full 106-test suite runs before coverage on every supported Node version.
+Coverage instrumentation is limited to the 78 deterministic in-process suites
+so it cannot distort the public CLI worker's fixed five-second safety
+deadline; copied-package, accessibility, security, and CLI subprocess tests
+still run uninstrumented as required end-to-end gates.
 
 ### Dedicated CI
 

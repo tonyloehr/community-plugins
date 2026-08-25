@@ -40,7 +40,8 @@ Before release, the suite must demonstrate:
 Local revised-contract qualification on 2026-08-24:
 
 - <code>npm run test:reviewops-auditor-benchmark</code>: 106 passed, 0 failed;
-- aggregate coverage: 92.74% lines, 80.83% branches, 94.57% functions;
+- coverage subset: 78 passed, 0 failed; 92.46% lines, 82.83% branches,
+  95.10% functions;
 - <code>npm run verify:reviewops-source</code>, <code>npm run validate</code>,
   and <code>npm run test:marketplace</code>: passed;
 - <code>npm audit --prefix plugins/reviewops-auditor-benchmark --omit=dev</code>:
