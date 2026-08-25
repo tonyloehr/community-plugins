@@ -4,11 +4,11 @@ import test from "node:test";
 import {
   evaluateEvalValidity,
   evaluateLaneValidity,
-} from "../../plugins/reviewops-auditor-benchmark/src/eval/index.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/eval/index.mjs";
 import {
   computeStructuralReceipts,
   normalizeLaneBundle,
-} from "../../plugins/reviewops-auditor-benchmark/src/normalize/index.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/normalize/index.mjs";
 
 const digest = (number) => "sha256:" + number.toString(16).padStart(64, "0");
 

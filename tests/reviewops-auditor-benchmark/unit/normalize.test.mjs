@@ -5,7 +5,7 @@ import {
   computeStructuralReceipts,
   normalizeLaneBundle,
   normalizeLaneBundles,
-} from "../../plugins/reviewops-auditor-benchmark/src/normalize/index.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/normalize/index.mjs";
 
 const digest = (number) => "sha256:" + number.toString(16).padStart(64, "0");
 

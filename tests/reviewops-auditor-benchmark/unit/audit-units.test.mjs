@@ -13,21 +13,21 @@ import {
   createReadBudget,
   HARD_LIMITS,
   resolveLimits,
-} from "../../plugins/reviewops-auditor-benchmark/src/bounds.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/bounds.mjs";
 import {
   auditLoadedInputs,
   auditPrompt,
   auditWorkflow,
-} from "../../plugins/reviewops-auditor-benchmark/src/audit/index.mjs";
-import { auditTelemetryEvidence } from "../../plugins/reviewops-auditor-benchmark/src/audit/telemetry.mjs";
-import { publicError } from "../../plugins/reviewops-auditor-benchmark/src/errors.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/audit/index.mjs";
+import { auditTelemetryEvidence } from "../../../plugins/reviewops-auditor-benchmark/src/audit/telemetry.mjs";
+import { publicError } from "../../../plugins/reviewops-auditor-benchmark/src/errors.mjs";
 import {
   createTrustedPathContext,
   isContainedPath,
   normalizeDeclaredRelativePath,
   readApprovedFile,
   readTrustedConfigFile,
-} from "../../plugins/reviewops-auditor-benchmark/src/paths.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/paths.mjs";
 import {
   escapeUntrustedText,
   redactJsonValue,
@@ -35,16 +35,16 @@ import {
   redactText,
   redactedTextShape,
   stripUnsafeControls,
-} from "../../plugins/reviewops-auditor-benchmark/src/redact.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/redact.mjs";
 import {
   lineForYamlPath,
   parseSafeYaml,
   parseWorkflowYaml,
-} from "../../plugins/reviewops-auditor-benchmark/src/yaml.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/yaml.mjs";
 import {
   parseJsonLines,
   parseJsonText,
-} from "../../plugins/reviewops-auditor-benchmark/src/schema.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/schema.mjs";
 import {
   isNonEmptyString,
   iterateLines,
@@ -53,7 +53,7 @@ import {
   lineCount,
   sortedUniqueStrings,
   stableJson,
-} from "../../plugins/reviewops-auditor-benchmark/src/utils.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/utils.mjs";
 
 const PINNED_SHA = "0123456789012345678901234567890123456789";
 const SAFE_WORKFLOW = `name: review
@@ -573,11 +573,11 @@ test("line and JSONL scanning preserve newline semantics lazily", () => {
 
 test("dense line scanning stays within a bounded heap", () => {
   const boundsUrl = new URL(
-    "../../plugins/reviewops-auditor-benchmark/src/bounds.mjs",
+    "../../../plugins/reviewops-auditor-benchmark/src/bounds.mjs",
     import.meta.url,
   ).href;
   const schemaUrl = new URL(
-    "../../plugins/reviewops-auditor-benchmark/src/schema.mjs",
+    "../../../plugins/reviewops-auditor-benchmark/src/schema.mjs",
     import.meta.url,
   ).href;
   const script = [

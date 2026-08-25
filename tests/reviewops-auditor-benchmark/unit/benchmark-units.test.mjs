@@ -12,14 +12,14 @@ import {
   computeParetoFrontier,
   normalizeBenchmarkInput,
   pairedBootstrapInterval,
-} from "../../plugins/reviewops-auditor-benchmark/src/benchmark/index.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/benchmark/index.mjs";
 import {
   computeStructuralReceipts,
   normalizeLaneBundle,
-} from "../../plugins/reviewops-auditor-benchmark/src/normalize/index.mjs";
-import { pairedBootstrapStatisticInterval } from "../../plugins/reviewops-auditor-benchmark/src/benchmark/confidence.mjs";
-import { pairingForSlice } from "../../plugins/reviewops-auditor-benchmark/src/benchmark/slices.mjs";
-import { calculateFindingStability } from "../../plugins/reviewops-auditor-benchmark/src/benchmark/stability.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/normalize/index.mjs";
+import { pairedBootstrapStatisticInterval } from "../../../plugins/reviewops-auditor-benchmark/src/benchmark/confidence.mjs";
+import { pairingForSlice } from "../../../plugins/reviewops-auditor-benchmark/src/benchmark/slices.mjs";
+import { calculateFindingStability } from "../../../plugins/reviewops-auditor-benchmark/src/benchmark/stability.mjs";
 
 const RUBRIC = {
   rubricId: "rubric-v1",

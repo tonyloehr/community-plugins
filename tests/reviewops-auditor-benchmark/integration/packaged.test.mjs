@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const pluginRoot = path.join(
   repoRoot,
   "plugins",

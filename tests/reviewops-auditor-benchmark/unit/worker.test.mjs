@@ -6,10 +6,10 @@ import { Worker } from "node:worker_threads";
 import { fileURLToPath } from "node:url";
 
 const workerUrl = new URL(
-  "../../plugins/reviewops-auditor-benchmark/src/worker.mjs",
+  "../../../plugins/reviewops-auditor-benchmark/src/worker.mjs",
   import.meta.url,
 );
-const repoRoot = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
+const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const fixtureRoot = path.join(
   repoRoot,
   "plugins",

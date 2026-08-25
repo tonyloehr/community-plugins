@@ -83,4 +83,4 @@ jobs:
         with:
           node-version: "22.19.0"
           package-manager-cache: false
-      - run: node --test --test-concurrency=1 tests/reviewops-auditor-benchmark/packaged.test.mjs
+      - run: node --test --test-concurrency=1 tests/reviewops-auditor-benchmark/integration/packaged.test.mjs

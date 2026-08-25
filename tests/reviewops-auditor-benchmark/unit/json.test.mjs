@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   parseJsonLines,
   parseJsonText,
-} from "../../plugins/reviewops-auditor-benchmark/src/json.mjs";
+} from "../../../plugins/reviewops-auditor-benchmark/src/json.mjs";
 
 test("JSON parsing rejects duplicate decoded object keys", () => {
   assert.throws(

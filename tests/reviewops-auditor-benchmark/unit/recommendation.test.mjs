@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { recommendReferenceArchitecture } from "../../plugins/reviewops-auditor-benchmark/src/recommend/index.mjs";
-import { buildStaticDiagnostics } from "../../plugins/reviewops-auditor-benchmark/src/audit/index.mjs";
+import { recommendReferenceArchitecture } from "../../../plugins/reviewops-auditor-benchmark/src/recommend/index.mjs";
+import { buildStaticDiagnostics } from "../../../plugins/reviewops-auditor-benchmark/src/audit/index.mjs";
 
 function policy(overrides = {}) {
   return {

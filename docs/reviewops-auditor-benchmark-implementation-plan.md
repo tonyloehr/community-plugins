@@ -401,16 +401,20 @@ plugins/reviewops-auditor-benchmark/
       agents/openai.yaml
 tests/reviewops-auditor-benchmark/
   README.md
-  contract.test.mjs
-  normalize.test.mjs
-  eval-validity.test.mjs
-  benchmark-units.test.mjs
-  recommendation.test.mjs
-  static-diagnostics.test.mjs
-  accessibility.test.mjs
-  security.test.mjs
-  packaged.test.mjs
-  worker.test.mjs
+  unit/
+    audit-units.test.mjs
+    benchmark-units.test.mjs
+    eval-validity.test.mjs
+    json.test.mjs
+    normalize.test.mjs
+    recommendation.test.mjs
+    worker.test.mjs
+  integration/
+    accessibility.test.mjs
+    packaged.test.mjs
+    reviewops.test.mjs
+  security/
+    security.test.mjs
 scripts/validate-reviewops-auditor-benchmark.mjs
 scripts/verify-reviewops-source.mjs
 .github/workflows/reviewops-auditor-benchmark.yml
@@ -1745,7 +1749,7 @@ gate, but every lane, metric, recommendation gate, and safety boundary needs
 an explicit negative test; coverage alone is not sufficient.
 
 The full 106-test suite runs before coverage on every supported Node version.
-Coverage instrumentation is limited to the 78 deterministic in-process suites
+Coverage instrumentation is limited to the 78 deterministic unit suites
 so it cannot distort the public CLI worker's fixed five-second safety
 deadline; copied-package, accessibility, security, and CLI subprocess tests
 still run uninstrumented as required end-to-end gates.

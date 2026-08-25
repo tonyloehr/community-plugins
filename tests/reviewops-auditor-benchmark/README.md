@@ -11,6 +11,13 @@ Run from the repository root:
 npm run test:reviewops-auditor-benchmark
 ```
 
+Tests are grouped by execution boundary:
+
+- `unit/` imports reviewed source directly and is the coverage-gated suite;
+- `integration/` exercises the public CLI, Markdown, and copied package;
+- `security/` keeps adversarial input, redaction, and isolation checks easy to
+  audit separately.
+
 The fixture intentionally contains no customer data, provider credentials,
 private URLs, real prompts, real diffs, or live integration.
 
@@ -40,8 +47,8 @@ Before release, the suite must demonstrate:
 Local revised-contract qualification on 2026-08-24:
 
 - <code>npm run test:reviewops-auditor-benchmark</code>: 106 passed, 0 failed;
-- coverage subset: 78 passed, 0 failed; 92.46% lines, 82.83% branches,
-  95.10% functions;
+- unit coverage: 78 passed, 0 failed; at least 92.45% lines, 82.80%
+  branches, and 95.10% functions;
 - <code>npm run verify:reviewops-source</code>, <code>npm run validate</code>,
   and <code>npm run test:marketplace</code>: passed;
 - <code>npm audit --prefix plugins/reviewops-auditor-benchmark --omit=dev</code>:
