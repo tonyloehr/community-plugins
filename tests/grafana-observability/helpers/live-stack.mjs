@@ -105,7 +105,7 @@ export async function startLiveStack(major = 12) {
     return { identity: "grafana_live_reader", selectOnly: true };
   };
   try {
-    await run(command, [...args, "up", "--detach", "--build", "--quiet-pull", "--quiet-build", "--wait", "--wait-timeout", "180"], {
+    await run(command, [...args, "up", "--detach", "--build", "--quiet-pull", "--wait", "--wait-timeout", "180"], {
       env,
       timeoutMs: 900_000,
     });

@@ -32,6 +32,13 @@ paths instead:
 plugins/grafana-observability
 ```
 
+To fetch only ReviewOps Auditor + Benchmark, use:
+
+```text
+.agents/plugins
+plugins/reviewops-auditor-benchmark
+```
+
 Adding a marketplace makes its catalog available to browse. It does **not**
 install, enable, or authenticate every plugin. After adding it, install only
 the plugin you want.
@@ -47,6 +54,9 @@ codex plugin marketplace add tonyloehr/community-plugins \
 
 # Install one plugin from that catalog.
 codex plugin add grafana-observability@community-plugins
+
+# Or install the offline ReviewOps package.
+codex plugin add reviewops-auditor-benchmark@community-plugins
 ```
 
 If you want a full checkout instead of a sparse one:
@@ -62,9 +72,10 @@ are picked up.
 
 ## Available plugins
 
-| Plugin | Purpose | Learn more |
-| --- | --- | --- |
-| [Grafana Observability](plugins/grafana-observability/README.md) | Inspect administrator-approved, read-only Grafana evidence for infrastructure, APM, logs, IoT/edge, and business KPIs. | [Guide](plugins/grafana-observability/README.md) · [23-second demo](docs/media/grafana-production-monitoring-demo-8x.mp4) |
+| Plugin                                                                         | Purpose                                                                                                                    | Learn more                                                                                                                |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [Grafana Observability](plugins/grafana-observability/README.md)               | Inspect administrator-approved, read-only Grafana evidence for infrastructure, APM, logs, IoT/edge, and business KPIs.     | [Guide](plugins/grafana-observability/README.md) · [23-second demo](docs/media/grafana-production-monitoring-demo-8x.mp4) |
+| [ReviewOps Auditor + Benchmark](plugins/reviewops-auditor-benchmark/README.md) | Normalize sanitized review-run exports, audit evaluation validity, benchmark lanes, and emit shadow-only guidance offline. | [Guide](plugins/reviewops-auditor-benchmark/README.md)                                                                    |
 
 Grafana Observability requires Codex and Node.js 22.19 or newer. Its manifest
 declares both `Read` and `Write`. `Write` is limited to
@@ -76,6 +87,15 @@ install without touching a Grafana instance:
 
 ```text
 Use $setup-grafana-observability to check the fixture profile and available packs.
+```
+
+ReviewOps Auditor + Benchmark requires Codex and Node.js 22.19 or newer. Its
+manifest declares only `Read`; it has no app, MCP server, authentication,
+network call, model replay, workflow execution, or writeback path. Its first
+run is also synthetic and credential-free:
+
+```text
+Use $normalize-review-runs on the bundled synthetic fixture only. Explain the normalization summary, provenance checks, safety boundaries, and next safe step.
 ```
 
 ## Copy-paste Codex prompts
@@ -92,6 +112,12 @@ Install one plugin:
 If community-plugins is not already configured, add it from tonyloehr/community-plugins at ref main using sparse paths .agents/plugins and plugins/grafana-observability. Install grafana-observability@community-plugins, explain its permissions and authentication policy, and give me the credential-free smoke-test prompt for a new Codex task.
 ```
 
+Install ReviewOps without private data:
+
+```text
+If community-plugins is not already configured, add it from tonyloehr/community-plugins at ref main using sparse paths .agents/plugins and plugins/reviewops-auditor-benchmark. Install reviewops-auditor-benchmark@community-plugins, explain its read-only offline boundary, and give me the synthetic-fixture smoke-test prompt for a new Codex task.
+```
+
 Review before adoption:
 
 ```text
@@ -106,6 +132,7 @@ codex plugin marketplace upgrade community-plugins
 
 # Reinstall a plugin after a new version is published.
 codex plugin add grafana-observability@community-plugins
+codex plugin add reviewops-auditor-benchmark@community-plugins
 
 # Remove the configured marketplace source.
 codex plugin marketplace remove community-plugins

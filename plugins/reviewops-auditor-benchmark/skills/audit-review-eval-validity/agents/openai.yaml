@@ -1,0 +1,8 @@
+interface:
+  display_name: "Audit Review Eval Validity"
+  short_description: "Check review experiment validity"
+  brand_color: "#2563EB"
+  default_prompt: "Use $audit-review-eval-validity to audit the bundled synthetic fixture only and explain validity gates, confounders, and claim boundaries."
+
+policy:
+  allow_implicit_invocation: false

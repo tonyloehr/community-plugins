@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "reviewops-prompt-rules-v1",
+  "rules": [
+    {
+      "id": "RO-PR-001",
+      "version": "1.0.0",
+      "area": "prompt-size",
+      "category": "COST",
+      "defaultSeverity": "MEDIUM",
+      "title": "Prompt and context limits are explicit",
+      "check": "Prompt or context contract is oversized, duplicated, or missing explicit limits.",
+      "evidence": "Redacted prompt structure and length measurements.",
+      "claimBoundary": "Heuristic only; prompt body is never reproduced.",
+      "remediation": "State bounded context and output budgets in the review contract.",
+      "verification": "Compare imported token usage before and after a controlled change.",
+      "missingEvidence": ["token usage telemetry"],
+      "falsePositiveBoundary": "A large prompt may be justified by a measured quality gain."
+    },
+    {
+      "id": "RO-PR-002",
+      "version": "1.0.0",
+      "area": "evidence",
+      "category": "QUALITY",
+      "defaultSeverity": "HIGH",
+      "title": "Findings require evidence and uncertainty",
+      "check": "Prompt lacks evidence, verification, or uncertainty requirements.",
+      "evidence": "Redacted prompt structure.",
+      "claimBoundary": "Heuristic only; wording does not prove runtime behavior.",
+      "remediation": "Require evidence, verification status, and explicit uncertainty for each finding.",
+      "verification": "Adjudicate imported findings against the versioned rubric.",
+      "missingEvidence": ["adjudicated run records"],
+      "falsePositiveBoundary": "Equivalent requirements can be enforced by a separately declared tool contract."
+    },
+    {
+      "id": "RO-PR-003",
+      "version": "1.0.0",
+      "area": "hallucination",
+      "category": "QUALITY",
+      "defaultSeverity": "HIGH",
+      "title": "Unverified findings are pruned before publishing",
+      "check": "Prompt or telemetry lacks validation or pruning before publishing findings.",
+      "evidence": "Prompt structure and supplied telemetry.",
+      "claimBoundary": "Static prompt evidence alone cannot establish hallucination rate.",
+      "remediation": "Require a deterministic verification gate and suppress unverified findings.",
+      "verification": "Compare validator outcomes with adjudicated finding labels.",
+      "missingEvidence": ["validator results", "adjudication"],
+      "falsePositiveBoundary": "A declared external validator may enforce the gate."
+    },
+    {
+      "id": "RO-PR-004",
+      "version": "1.0.0",
+      "area": "noise",
+      "category": "NOISE",
+      "defaultSeverity": "MEDIUM",
+      "title": "Comment noise is bounded",
+      "check": "No comment budget, deduplication, or suppression rule is visible.",
+      "evidence": "Prompt, workflow, and optional telemetry structure.",
+      "claimBoundary": "Static indicator only; actual noise needs publish telemetry.",
+      "remediation": "Set a maximum comment count, deduplicate, and suppress unverified findings.",
+      "verification": "Measure proposed and published counts in imported telemetry.",
+      "missingEvidence": ["publish telemetry"],
+      "falsePositiveBoundary": "A separately declared publisher can enforce a budget."
+    }
+  ]
+}

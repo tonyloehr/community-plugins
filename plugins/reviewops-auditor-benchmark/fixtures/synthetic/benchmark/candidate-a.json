@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "variantId": "candidate-a",
+  "architectureId": "candidate-a",
+  "architectureStructuralDigest": "sha256:6a60f3c6712f8dd5d43239b3e90c3d14ab58f97b0e73f28af332f3ecfe6a9d7e",
+  "modelAlias": "candidate-model",
+  "reasoningClass": "standard",
+  "promptStructuralDigest": "sha256:af98e77f7fd610ae4e121447b53f4acb8a7a5eaa03bd81b06103af66b2ae0522",
+  "configStructuralDigest": "sha256:c14aef2e8a110d0e5177fceec2322887ed81cbd15cf182354a07906621822f8e",
+  "contextClass": "declared-files",
+  "toolContractId": "review-tools-v1",
+  "controllerContractId": "controller-v1",
+  "validatorContractId": "validator-v1",
+  "dedupePolicyId": "dedupe-v1",
+  "postingPolicyId": "posting-v1",
+  "retryPolicyId": "retry-v1",
+  "timeoutPolicyId": "timeout-v1",
+  "routingPolicyId": "routing-v1"
+}

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "best-system-eval-v1",
+  "protocolVersion": "v1",
+  "laneId": "best-system-2026-08",
+  "intendedClaim": "HOLISTIC_SYSTEM",
+  "samplingFrame": "synthetic-paired-cases",
+  "cohortSelectionDigest": "sha256:fed94090c7171e6376b25b31777cc54e6995fd16dc85b5b33daf8501019e7172",
+  "cohortWindowId": "sha256:289c234acbfbbcf3b2c653e605491a3266a3cb0e3d2e0f2dadb9f6e45d1bd7eb",
+  "inclusionPolicyId": "include-all-v1",
+  "exclusionPolicyId": "symmetric-exclusions-v1",
+  "assignmentMethod": "PAIRED_SAME_CASE",
+  "pairingMethod": "CASE_VARIANT_REPLICATE",
+  "replicateAggregation": "CASE_PRIMITIVES",
+  "missingReplicatePolicy": "BLOCK",
+  "leakageControls": [
+    {
+      "controlId": "opaque-case-ids",
+      "status": "DECLARED",
+      "evidenceStatus": "DECLARED"
+    }
+  ],
+  "knownContamination": "NONE_DECLARED",
+  "heldConstantFields": [
+    "promptStructuralDigest",
+    "configStructuralDigest",
+    "contextClass",
+    "toolContractId",
+    "controllerContractId",
+    "validatorContractId",
+    "dedupePolicyId",
+    "postingPolicyId",
+    "reasoningClass",
+    "retryPolicyId",
+    "timeoutPolicyId",
+    "routingPolicyId"
+  ],
+  "preservationContracts": {
+    "controllerContractId": "controller-v1",
+    "validatorContractId": "validator-v1",
+    "dedupePolicyId": "dedupe-v1",
+    "postingPolicyId": "posting-v1",
+    "toolContractId": "review-tools-v1",
+    "contextClass": "declared-files",
+    "retryPolicyId": "retry-v1",
+    "timeoutPolicyId": "timeout-v1",
+    "routingPolicyId": "routing-v1"
+  },
+  "expectedExecutionMode": "OFFLINE_REPLAY",
+  "provenance": {
+    "kind": "SYNTHETIC_FIXTURE",
+    "sourceLabel": "synthetic-fixture",
+    "exporterVersion": "0.1.0"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:tool-contract:1",
+  "title": "ReviewOps read-only tool contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "toolContractId",
+    "contextScopes",
+    "beyondDiffMode",
+    "capabilities",
+    "verificationCheckIds",
+    "commandPolicy",
+    "timeoutMs",
+    "failurePolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "toolContractId": { "$ref": "urn:reviewops:schema:common:1#/$defs/Alias" },
+    "contextScopes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["DIFF", "DECLARED_FILES", "REPOSITORY_METADATA", "DEPENDENCY_METADATA"]
+      }
+    },
+    "beyondDiffMode": {
+      "enum": ["DISABLED", "DECLARED_FILES_ONLY", "BOUNDED_READ_ONLY"]
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "uniqueItems": true,
+      "items": { "const": "READ" }
+    },
+    "verificationCheckIds": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/Alias" }
+    },
+    "commandPolicy": { "enum": ["NO_COMMANDS", "DECLARED_ALLOWLIST"] },
+    "timeoutMs": { "type": "integer", "minimum": 1, "maximum": 120000 },
+    "failurePolicy": { "enum": ["FAIL_CLOSED", "MARK_UNVERIFIED"] }
+  }
+}

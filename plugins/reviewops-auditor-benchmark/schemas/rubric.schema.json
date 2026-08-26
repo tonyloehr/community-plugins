@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:rubric:1",
+  "title": "ReviewOps root-cause adjudication rubric",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "rubricId",
+    "labelVersion",
+    "severityWeights",
+    "matching",
+    "outcomes",
+    "provenance"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "rubricId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "labelVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "severityWeights": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"],
+      "properties": {
+        "CRITICAL": { "type": "number", "minimum": 0, "maximum": 1000000 },
+        "HIGH": { "type": "number", "minimum": 0, "maximum": 1000000 },
+        "MEDIUM": { "type": "number", "minimum": 0, "maximum": 1000000 },
+        "LOW": { "type": "number", "minimum": 0, "maximum": 1000000 },
+        "INFO": { "type": "number", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "matching": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "oneFindingMayMatchManyRootCauses",
+        "manyFindingsMayMatchOneRootCause",
+        "duplicateCollapse",
+        "unmatchedFindingOutcome"
+      ],
+      "properties": {
+        "oneFindingMayMatchManyRootCauses": { "type": "boolean" },
+        "manyFindingsMayMatchOneRootCause": { "type": "boolean" },
+        "duplicateCollapse": { "enum": ["FIRST_BY_ID", "REJECT_DUPLICATES"] },
+        "unmatchedFindingOutcome": { "enum": ["REJECTED", "UNKNOWN"] }
+      }
+    },
+    "outcomes": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "enum": ["ACCEPTED", "REJECTED", "UNKNOWN"] }
+    },
+    "provenance": { "$ref": "urn:reviewops:schema:common:1#/$defs/Provenance" }
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:benchmark-manifest:1",
+  "title": "ReviewOps imported benchmark lane manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "corpusId",
+    "exporterVersion",
+    "exportedAt",
+    "caseIds",
+    "variantIds",
+    "rubricId",
+    "labelVersion",
+    "pricingSnapshotId",
+    "redactionPolicyVersion",
+    "lane",
+    "sliceTaxonomy",
+    "productionBaselineContracts",
+    "structuralReceipts"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "corpusId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId" },
+    "exporterVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/ToolVersion" },
+    "exportedAt": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+    "caseIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId" }
+    },
+    "variantIds": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+    },
+    "rubricId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "labelVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "pricingSnapshotId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "redactionPolicyVersion": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+    },
+    "lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "laneId",
+        "laneType",
+        "baselineVariantId",
+        "cohortSelectionDigest",
+        "cohortWindowId",
+        "allowedDifferenceAxes",
+        "executionMode"
+      ],
+      "properties": {
+        "laneId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "laneType": { "$ref": "urn:reviewops:schema:common:1#/$defs/LaneType" },
+        "baselineVariantId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "cohortSelectionDigest": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/Digest"
+        },
+        "cohortWindowId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+        },
+        "allowedDifferenceAxes": {
+          "type": "array",
+          "maxItems": 13,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/DifferenceAxis" }
+        },
+        "executionMode": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/ExecutionMode"
+        }
+      }
+    },
+    "sliceTaxonomy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomyId", "version", "sliceIds"],
+      "properties": {
+        "taxonomyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "version": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "sliceIds": {
+          "type": "array",
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+        }
+      }
+    },
+    "productionBaselineContracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controllerContractId",
+        "validatorContractId",
+        "dedupePolicyId",
+        "postingPolicyId"
+      ],
+      "properties": {
+        "controllerContractId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "validatorContractId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "dedupePolicyId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "postingPolicyId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        }
+      }
+    },
+    "structuralReceipts": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 9,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/StructuralReceipt" }
+    }
+  }
+}

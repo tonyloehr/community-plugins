@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:run-record:1",
+  "title": "ReviewOps canonical review run record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "caseId",
+    "variantId",
+    "architectureId",
+    "architectureStructuralDigest",
+    "runId",
+    "replicateId",
+    "contextDigest",
+    "toolContractId",
+    "controllerContractId",
+    "validatorContractId",
+    "dedupePolicyId",
+    "postingPolicyId",
+    "reasoningClass",
+    "retryPolicyId",
+    "timeoutPolicyId",
+    "routingPolicyId",
+    "startedAt",
+    "latencyMs",
+    "findings"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "caseId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId" },
+    "variantId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "architectureId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "architectureStructuralDigest": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/Digest"
+    },
+    "runId": { "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId" },
+    "replicateId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "contextDigest": { "$ref": "urn:reviewops:schema:common:1#/$defs/Digest" },
+    "toolContractId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "controllerContractId": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+    },
+    "validatorContractId": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+    },
+    "dedupePolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "postingPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "reasoningClass": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "retryPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "timeoutPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "routingPolicyId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+    "startedAt": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+    "latencyMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "cachedInputTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+        "outputTokens": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+        "cachedInputTokens": { "type": "integer", "minimum": 0, "maximum": 1000000000 }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currency",
+        "amountMicros",
+        "costBasis",
+        "costSource",
+        "pricingSnapshotId"
+      ],
+      "properties": {
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "amountMicros": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000000000
+        },
+        "costBasis": { "$ref": "urn:reviewops:schema:common:1#/$defs/CostBasis" },
+        "costSource": { "$ref": "urn:reviewops:schema:common:1#/$defs/CostSource" },
+        "pricingSnapshotId": {
+          "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+        },
+        "components": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modelMicros", "toolingMicros", "humanReviewMicros"],
+          "properties": {
+            "modelMicros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000000000
+            },
+            "toolingMicros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000000000
+            },
+            "humanReviewMicros": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000000000
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "costBasis": { "const": "FULLY_LOADED" } },
+            "required": ["costBasis"]
+          },
+          "then": {
+            "required": ["components"],
+            "properties": { "components": {} }
+          }
+        },
+        {
+          "if": {
+            "properties": { "costSource": { "const": "RECONSTRUCTED_COMPONENTS" } },
+            "required": ["costSource"]
+          },
+          "then": {
+            "required": ["components"],
+            "properties": { "components": {} }
+          }
+        }
+      ]
+    },
+    "humanReviewMinutes": { "type": "number", "minimum": 0, "maximum": 1000000 },
+    "findings": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["findingId", "severity", "verification"],
+        "properties": {
+          "findingId": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+          },
+          "severity": { "$ref": "urn:reviewops:schema:common:1#/$defs/Severity" },
+          "category": { "$ref": "urn:reviewops:schema:common:1#/$defs/Category" },
+          "verification": { "enum": ["VERIFIED", "UNVERIFIED", "UNKNOWN"] },
+          "tags": {
+            "type": "array",
+            "maxItems": 32,
+            "uniqueItems": true,
+            "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" }
+          }
+        }
+      }
+    },
+    "outputCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposedFindings", "publishedComments"],
+      "properties": {
+        "proposedFindings": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "publishedComments": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
+    "adjudication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "rubricId", "labelVersion", "findingLabels"],
+      "properties": {
+        "status": { "enum": ["ADJUDICATED", "PARTIAL", "UNADJUDICATED"] },
+        "rubricId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "labelVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        "findingLabels": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["findingId", "outcome", "matchedRootCauseIds"],
+            "properties": {
+              "findingId": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+              },
+              "outcome": { "enum": ["ACCEPTED", "REJECTED", "UNKNOWN"] },
+              "matchedRootCauseIds": {
+                "type": "array",
+                "maxItems": 1000,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+                }
+              }
+            }
+          }
+        },
+        "rootCauseAssessments": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["rootCauseId", "qualityScore", "qualityRubricId"],
+            "properties": {
+              "rootCauseId": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/OpaqueDigestId"
+              },
+              "qualityScore": { "type": "number", "minimum": 0, "maximum": 1 },
+              "qualityRubricId": {
+                "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

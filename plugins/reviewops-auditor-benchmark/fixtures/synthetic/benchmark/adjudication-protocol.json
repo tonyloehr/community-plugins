@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "synthetic-adjudication-v1",
+  "protocolVersion": "v1",
+  "laneId": "portable-core-2026-08",
+  "rubricId": "review-rubric-v1",
+  "labelVersion": "v1",
+  "variantIdentity": "HIDDEN",
+  "presentationOrder": "RANDOMIZED",
+  "highCriticalReview": "HUMAN",
+  "adjudicatorIndependence": {
+    "status": "DECLARED",
+    "evidenceStatus": "DECLARED",
+    "provenanceId": "independent-review-v1"
+  },
+  "disagreement": {
+    "policyId": "resolve-disagreement-v1",
+    "status": "COMPLETE",
+    "count": 0
+  },
+  "provenance": {
+    "kind": "SYNTHETIC_FIXTURE",
+    "sourceLabel": "synthetic-fixture",
+    "exporterVersion": "0.1.0"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "catalogId": "reviewops-telemetry-rules-v1",
+  "rules": [
+    {
+      "id": "RO-TL-001",
+      "version": "1.0.0",
+      "area": "tool-scope",
+      "category": "SECURITY",
+      "defaultSeverity": "HIGH",
+      "title": "Beyond-diff tools have a bounded read-only contract",
+      "check": "Beyond-diff or context tools lack a bounded read-only contract or declared scope.",
+      "evidence": "Sanitized tool contract only.",
+      "claimBoundary": "The plugin never invokes a declared tool.",
+      "remediation": "Export a versioned read-only tool contract with bounded scopes.",
+      "verification": "Validate the exported tool contract against its schema.",
+      "missingEvidence": ["tool contract"],
+      "falsePositiveBoundary": "No tool contract is needed when the review uses no tools."
+    },
+    {
+      "id": "RO-TL-002",
+      "version": "1.0.0",
+      "area": "verification",
+      "category": "RELIABILITY",
+      "defaultSeverity": "HIGH",
+      "title": "Verification checks are bounded and provenance-backed",
+      "check": "Verification checks lack an allowlist state, timeout, failure policy, or provenance.",
+      "evidence": "Sanitized tool contract and validator results.",
+      "claimBoundary": "No validator command is executed.",
+      "remediation": "Export check IDs, timeout, failure policy, and provenance without command text.",
+      "verification": "Validate synthetic validator-result records against the contract.",
+      "missingEvidence": ["validator results"],
+      "falsePositiveBoundary": "A review with no verification checks should be reported as unknown, not failed."
+    },
+    {
+      "id": "RO-TL-003",
+      "version": "1.0.0",
+      "area": "validator-quality",
+      "category": "QUALITY",
+      "defaultSeverity": "HIGH",
+      "title": "Validator results tie to findings",
+      "check": "Validation results are absent, stale, contradictory, or not tied to finding IDs.",
+      "evidence": "Validator-result and adjudication records.",
+      "claimBoundary": "Imported evidence only; validator quality is not inferred from its name.",
+      "remediation": "Export finding-linked validator results with structural receipts.",
+      "verification": "Reject contradictory or unknown finding references in conformance tests.",
+      "missingEvidence": ["finding-linked validator results"],
+      "falsePositiveBoundary": "A deterministic exact-ID adjudication path can provide equivalent evidence."
+    }
+  ]
+}

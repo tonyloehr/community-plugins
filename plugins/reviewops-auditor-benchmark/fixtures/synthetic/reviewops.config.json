@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "analysisAsOf": "2026-08-15T00:00:00Z",
+  "repoRoot": ".",
+  "inputRoots": ["."],
+  "decisionPolicyPath": "benchmark/decision-policy.json",
+  "laneBundles": [
+    {
+      "bundleId": "portable-core",
+      "exportPaths": ["exports/review-runs.jsonl"],
+      "manifestPath": "benchmark/benchmark-manifest.json",
+      "evalProtocolPath": "benchmark/eval-protocol.json",
+      "adjudicationProtocolPath": "benchmark/adjudication-protocol.json",
+      "candidateConfigPaths": [
+        "benchmark/candidate-baseline.json",
+        "benchmark/candidate-a.json"
+      ],
+      "rubricPath": "benchmark/rubric.json",
+      "pricingSnapshotPath": "benchmark/pricing.json",
+      "caseLabelPaths": ["benchmark/case-labels.jsonl"]
+    },
+    {
+      "bundleId": "best-system",
+      "exportPaths": ["exports/review-runs.jsonl"],
+      "manifestPath": "benchmark/best-system-manifest.json",
+      "evalProtocolPath": "benchmark/best-system-eval-protocol.json",
+      "adjudicationProtocolPath": "benchmark/best-system-adjudication-protocol.json",
+      "candidateConfigPaths": [
+        "benchmark/candidate-baseline.json",
+        "benchmark/candidate-a.json"
+      ],
+      "rubricPath": "benchmark/rubric.json",
+      "pricingSnapshotPath": "benchmark/pricing.json",
+      "caseLabelPaths": ["benchmark/case-labels.jsonl"]
+    }
+  ],
+  "limits": {
+    "maxFiles": 50,
+    "maxBytesPerFile": 1048576,
+    "maxTotalBytes": 16777216,
+    "maxRecords": 5000
+  }
+}

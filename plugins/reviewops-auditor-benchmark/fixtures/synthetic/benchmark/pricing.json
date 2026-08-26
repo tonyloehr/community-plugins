@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "pricing-2026-08-01",
+  "currency": "USD",
+  "effectiveAt": "2026-08-01T00:00:00Z",
+  "costBasis": "FULLY_LOADED",
+  "provenance": {
+    "kind": "SYNTHETIC_FIXTURE",
+    "sourceLabel": "synthetic-fixture",
+    "exporterVersion": "0.1.0"
+  },
+  "rates": [
+    {
+      "variantId": "baseline",
+      "inputMicrosPerMillion": 1000000,
+      "cachedInputMicrosPerMillion": 0,
+      "outputMicrosPerMillion": 1000000,
+      "toolingMicrosPerRun": 0,
+      "humanReviewMicrosPerMinute": 100000
+    },
+    {
+      "variantId": "candidate-a",
+      "inputMicrosPerMillion": 500000,
+      "cachedInputMicrosPerMillion": 0,
+      "outputMicrosPerMillion": 500000,
+      "toolingMicrosPerRun": 0,
+      "humanReviewMicrosPerMinute": 100000
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "rubricId": "review-rubric-v1",
+  "labelVersion": "v1",
+  "severityWeights": {
+    "CRITICAL": 8,
+    "HIGH": 4,
+    "MEDIUM": 2,
+    "LOW": 1,
+    "INFO": 0
+  },
+  "matching": {
+    "oneFindingMayMatchManyRootCauses": false,
+    "manyFindingsMayMatchOneRootCause": true,
+    "duplicateCollapse": "REJECT_DUPLICATES",
+    "unmatchedFindingOutcome": "REJECTED"
+  },
+  "outcomes": ["ACCEPTED", "REJECTED", "UNKNOWN"],
+  "provenance": {
+    "kind": "SYNTHETIC_FIXTURE",
+    "sourceLabel": "synthetic-fixture",
+    "exporterVersion": "0.1.0"
+  }
+}

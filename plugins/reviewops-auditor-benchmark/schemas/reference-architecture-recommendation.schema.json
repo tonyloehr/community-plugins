@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:reviewops:schema:reference-architecture-recommendation:1",
+  "title": "ReviewOps shadow-only reference-architecture recommendation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "toolVersion",
+    "analysisAsOf",
+    "configDigest",
+    "status",
+    "inputDigests",
+    "appliedLimits",
+    "redactionCounts",
+    "warnings",
+    "claimBoundary",
+    "recommendationStatus",
+    "decisionPolicyId",
+    "decisionPolicy",
+    "gates",
+    "lanes",
+    "perSliceArchitectures",
+    "preservedContracts",
+    "rationale",
+    "limitations"
+  ],
+  "properties": {
+    "schemaVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/SchemaVersion" },
+    "toolVersion": { "$ref": "urn:reviewops:schema:common:1#/$defs/ToolVersion" },
+    "analysisAsOf": { "$ref": "urn:reviewops:schema:common:1#/$defs/UtcTimestamp" },
+    "configDigest": { "$ref": "urn:reviewops:schema:common:1#/$defs/Digest" },
+    "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+    "inputDigests": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/InputDigest" }
+    },
+    "appliedLimits": { "$ref": "urn:reviewops:schema:common:1#/$defs/AppliedLimits" },
+    "redactionCounts": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/RedactionCounts"
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 256,
+      "items": { "$ref": "urn:reviewops:schema:common:1#/$defs/Warning" }
+    },
+    "claimBoundary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" },
+    "recommendationStatus": {
+      "enum": [
+        "RECOMMENDED_FOR_SHADOW",
+        "NO_CHANGE_RECOMMENDED",
+        "INSUFFICIENT_EVIDENCE",
+        "BLOCKED_BY_SAFETY_GATE"
+      ]
+    },
+    "decisionPolicyId": {
+      "oneOf": [
+        { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+        { "type": "null" }
+      ]
+    },
+    "decisionPolicy": {
+      "oneOf": [
+        { "$ref": "urn:reviewops:schema:decision-policy:1" },
+        { "type": "null" }
+      ]
+    },
+    "defaultArchitectureId": {
+      "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+    },
+    "gates": {
+      "type": "array",
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gateId", "status", "reason"],
+        "properties": {
+          "gateId": { "type": "string", "pattern": "^RO-GATE-[A-Z0-9-]+$" },
+          "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/GateStatus" },
+          "reason": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" }
+        }
+      }
+    },
+    "lanes": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "laneId",
+          "laneType",
+          "status",
+          "attributionStatus",
+          "claimBoundary"
+        ],
+        "properties": {
+          "laneId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "laneType": { "$ref": "urn:reviewops:schema:common:1#/$defs/LaneType" },
+          "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+          "attributionStatus": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/AttributionStatus"
+          },
+          "claimBoundary": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeText" }
+        }
+      }
+    },
+    "perSliceArchitectures": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sliceId", "status"],
+        "properties": {
+          "sliceId": { "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias" },
+          "status": { "$ref": "urn:reviewops:schema:common:1#/$defs/Status" },
+          "architectureId": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+          },
+          "reasonCodes": {
+            "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray"
+          }
+        }
+      }
+    },
+    "preservedContracts": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "controllerContractId",
+            "validatorContractId",
+            "dedupePolicyId",
+            "postingPolicyId"
+          ],
+          "properties": {
+            "controllerContractId": {
+              "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+            },
+            "validatorContractId": {
+              "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+            },
+            "dedupePolicyId": {
+              "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+            },
+            "postingPolicyId": {
+              "$ref": "urn:reviewops:schema:common:1#/$defs/PublicAlias"
+            }
+          }
+        }
+      ]
+    },
+    "shadowPilot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executionMode",
+        "minimumCases",
+        "observationDays",
+        "humanApprovalRequired",
+        "rollbackCriticalMisses"
+      ],
+      "properties": {
+        "executionMode": { "const": "SHADOW_NO_POSTING" },
+        "minimumCases": { "type": "integer", "minimum": 20, "maximum": 10000 },
+        "observationDays": { "type": "integer", "minimum": 1, "maximum": 365 },
+        "humanApprovalRequired": { "const": true },
+        "rollbackCriticalMisses": { "type": "integer", "minimum": 0, "maximum": 1000 }
+      }
+    },
+    "rationale": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" },
+    "limitations": { "$ref": "urn:reviewops:schema:common:1#/$defs/SafeTextArray" },
+    "error": { "$ref": "urn:reviewops:schema:common:1#/$defs/SanitizedError" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "recommendationStatus": { "const": "RECOMMENDED_FOR_SHADOW" }
+        },
+        "required": ["recommendationStatus"]
+      },
+      "then": {
+        "required": ["defaultArchitectureId", "shadowPilot"],
+        "properties": {
+          "defaultArchitectureId": {},
+          "shadowPilot": {}
+        }
+      }
+    }
+  ]
+}
