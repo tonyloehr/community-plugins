@@ -1,0 +1,67 @@
+name: React Native to SwiftUI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/react-native-to-swiftui.yml"
+      - ".agents/plugins/marketplace.json"
+      - "package.json"
+      - "README.md"
+      - "plugins/react-native-to-swiftui/**"
+      - "scripts/*react-native-to-swiftui*"
+      - "scripts/validate-marketplace.mjs"
+      - "tests/react-native-to-swiftui/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/react-native-to-swiftui.yml"
+      - ".agents/plugins/marketplace.json"
+      - "package.json"
+      - "README.md"
+      - "plugins/react-native-to-swiftui/**"
+      - "scripts/*react-native-to-swiftui*"
+      - "scripts/validate-marketplace.mjs"
+      - "tests/react-native-to-swiftui/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: react-native-to-swiftui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  react-native-to-swiftui-e2e:
+    name: React Native to SwiftUI E2E
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+          package-manager-cache: false
+      - name: Cold copied package / Node 22.19.0
+        run: node --test --test-concurrency=1 tests/react-native-to-swiftui/integration/packaged.test.mjs
+      - name: Full React Native to SwiftUI qualification / Node 22.19.0
+        run: npm run test:react-native-to-swiftui
+      - name: Probe installed Xcode and available Simulator
+        continue-on-error: true
+        run: node plugins/react-native-to-swiftui/scripts/native-port.mjs toolchain --format json
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Full uninstrumented suite / Node 24
+        run: npm run test:react-native-to-swiftui
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26"
+          package-manager-cache: false
+      - name: Full uninstrumented suite / Node 26
+        run: npm run test:react-native-to-swiftui

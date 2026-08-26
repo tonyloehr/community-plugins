@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "kind": "react-native-swiftui-parity-contract",
+  "status": "approved",
+  "feature": "StableCounter",
+  "source": {
+    "root": ".",
+    "files": [
+      "source/StableCounter.tsx"
+    ]
+  },
+  "backendContract": "Local counter state only; no network, authentication, persistence, or external side effects.",
+  "licensing": "Owned synthetic fixture with no copied source, assets, or third-party implementation material.",
+  "parityExpectations": [
+    "Render the initial count.",
+    "Increment the visible count after the button is activated."
+  ],
+  "target": {
+    "module": "ConflictingModule",
+    "slice": "StableCounter"
+  },
+  "approval": {
+    "status": "approved",
+    "targetModule": "DemoApp",
+    "slice": "StableCounter",
+    "allowedWrites": [
+      "DemoApp/Domain/CounterState.swift"
+    ]
+  }
+}

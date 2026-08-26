@@ -1,0 +1,42 @@
+{
+  "name": "react-native-to-swiftui",
+  "version": "0.1.0",
+  "description": "Plan and port one bounded React Native or Expo feature slice to SwiftUI with parity evidence and iOS readiness checks.",
+  "author": {
+    "name": "Tony Loehr",
+    "url": "https://github.com/tonyloehr"
+  },
+  "homepage": "https://github.com/tonyloehr/community-plugins/tree/main/plugins/react-native-to-swiftui",
+  "repository": "https://github.com/tonyloehr/community-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "react-native",
+    "expo",
+    "swiftui",
+    "ios",
+    "migration",
+    "modernization"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "React Native to SwiftUI",
+    "shortDescription": "Port one approved native iOS slice safely.",
+    "longDescription": "A contract-first workflow for bounded React Native and Expo modernization. Inspect only declared source, write a behavioral parity contract, port one explicitly approved slice into a declared SwiftUI target, keep domain logic pure Swift, verify deterministic behavior, and preflight iOS release readiness without promising App Store approval.",
+    "developerName": "Tony Loehr",
+    "category": "Developer Tools",
+    "websiteURL": "https://github.com/tonyloehr/community-plugins",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "brandColor": "#5B5CE2",
+    "logo": "./assets/icon.svg",
+    "composerIcon": "./assets/icon.svg",
+    "defaultPrompt": [
+      "Use $plan-react-native-port to inspect only the declared React Native feature and propose a SwiftUI parity contract. Do not edit files yet.",
+      "Use $port-react-native-slice to port one explicitly approved feature slice into my declared SwiftUI target directory.",
+      "Use $verify-swiftui-parity to check the approved SwiftUI slice against its behavioral parity contract.",
+      "Use $audit-ios-readiness to run a read-only App Store-readiness preflight for my declared iOS target."
+    ]
+  }
+}
