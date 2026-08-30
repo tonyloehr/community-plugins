@@ -1,0 +1,114 @@
+{
+  "schema": 1,
+  "kind": "community-source-native-build",
+  "platform": "darwin",
+  "arch": "arm64",
+  "target": "aarch64-apple-darwin",
+  "build_helper_sha256": "3a5358781127811d3c59e8243b5bfe4cee42b3ed003325b2221c3eb7c3209994",
+  "upstream_commit": "e46be75c3ba8d5fde6b88a17c6153b87ffe4b946",
+  "source_tree_sha256": "2b12e5268ffb4e98c75894be0abab6dd5594a3da6f45f4757d51568b087dc222",
+  "source_manifest_sha256": "b1292219f61974e35ac089780671a14557c0b2343b94d7f33dd4509c1955ac39",
+  "source_files": {
+    "Cargo.lock": "e08809525623788a684fdf8a01e4e25fd013cbe2dcb7b3cfc3ca4cd6212ae63c",
+    "Cargo.toml": "b2002f67465ded6267a8255723971154df773517c72093647d302db615e86a57",
+    "LICENSE": "02965ed67e29f871a53f7a7afa593a0ddc8020f86ccce0faaf1aa59215b5269e",
+    "build.rs": "1deabac8209cf86d6dd6f4950bb5bf213ac9c9b4af31b64c2a72b4642d483524",
+    "src/async_entry.rs": "90e10b6595a9c38ab92c68b3965a0606310554e176d8c46d0c1b240cc4363fa9",
+    "src/credential_result.rs": "1b36533d6f03297e238bc850fd643523720bd759b40f51a34bc9bee50b691585",
+    "src/entry.rs": "4a3dc94f45ca7fbd1e4582d466eb646eab8ed8b12dbb364c6a6498c3f2ea4444",
+    "src/lib.rs": "fc056084291aad17bdbcd48f4aa336d05d178f109a6bc60f5435bc55eeb76f5c",
+    "src/linux_credential_builder.rs": "e1d2741cb16c62077f8b698443fb0d2662350baae22fda1d5b061a343e84c8c8"
+  },
+  "community_patch_sha256": "71155a06a00f88f62c051cd41fb1bb50aa1647b962c26ba1e95d11efe7aed216",
+  "cargo_lock_sha256": "e08809525623788a684fdf8a01e4e25fd013cbe2dcb7b3cfc3ca4cd6212ae63c",
+  "rust_toolchain": {
+    "version": "1.98.0",
+    "rustc_verbose": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: aarch64-apple-darwin\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "cargo_verbose": "cargo 1.98.0 (797e8a9bc 2026-08-05)\nrelease: 1.98.0\ncommit-hash: 797e8a9bca276c1c9f9f738d2a20f484fa4eea9d\ncommit-date: 2026-08-05\nhost: aarch64-apple-darwin\nlibgit2: 1.9.4 (sys:0.21.0 vendored)\nlibcurl: 8.7.1 (sys:0.4.90+curl-8.21.0 system ssl:(SecureTransport) LibreSSL/3.3.6)\nssl: OpenSSL 3.6.3 9 Jun 2026\nos: Mac OS 26.6.2 [64-bit]",
+    "compiler_sha256": "a11618eca0956a8aa4372c2bc898690b513cbdfa2cb9125b2a5301e360ed5b49",
+    "cargo_sha256": "1de2e84c15443b70444eecfa959ff9099dd8c1a5606b6d9ef5bc0ea9c25bc7f9"
+  },
+  "build_command_args": [
+    "+1.98.0",
+    "build",
+    "--locked",
+    "--release",
+    "--manifest-path",
+    "/fusion-source/Cargo.toml",
+    "--target",
+    "aarch64-apple-darwin",
+    "--target-dir",
+    "/fusion-build/target"
+  ],
+  "build_warnings": {
+    "compiler": 0,
+    "recovered_network_retries": 0
+  },
+  "environment": {
+    "os_release": "25.6.0",
+    "os_version": "Darwin Kernel Version 25.6.0: Fri Jul 31 19:19:08 PDT 2026; root:xnu-12377.161.14~5/RELEASE_ARM64_T6050",
+    "architecture": "arm64",
+    "sdk_version": "26.5",
+    "deployment_target": "11.0",
+    "compiler": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "cargo_incremental": "0",
+    "rustflags": [
+      "-Cdebuginfo=0",
+      "--remap-path-prefix=<fusion-home>=/fusion-home",
+      "--remap-path-prefix=<fusion-temporary>=/fusion-temporary",
+      "--remap-path-prefix=<fusion-output>=/fusion-output",
+      "--remap-path-prefix=<fusion-original-cargo>=/fusion-original-cargo",
+      "--remap-path-prefix=<fusion-rustup>=/fusion-rustup",
+      "--remap-path-prefix=<fusion-build>=/fusion-build",
+      "--remap-path-prefix=<fusion-repository>=/fusion-repository",
+      "--remap-path-prefix=<fusion-rust-toolchains>=/fusion-rust-toolchains",
+      "--remap-path-prefix=<fusion-source>=/fusion-source",
+      "--remap-path-prefix=<fusion-cargo>=/fusion-cargo",
+      "--remap-path-prefix=<fusion-plugin>=/fusion-plugin",
+      "--remap-path-prefix=<fusion-rust-toolchain>=/fusion-rust-toolchain"
+    ],
+    "c_file_prefix_map": true,
+    "macos_build_llvm_library": "/fusion-rust-toolchain/lib"
+  },
+  "ci": {
+    "repository": null,
+    "commit": null,
+    "head_commit": null,
+    "run_id": null,
+    "run_attempt": null,
+    "job": null,
+    "runner_image": null,
+    "runner_image_version": null
+  },
+  "output": {
+    "filename": "keyring.darwin-arm64.node",
+    "sha256": "d746d09e60aa7a6c595b3eae1ae76cb2cdd64a1696a8988d90338dec7c2daa9d",
+    "size_bytes": 525696
+  },
+  "smoke_test": {
+    "kind": "module-load-export-shape",
+    "passed": true,
+    "credential_accessed": false,
+    "node_version": "v26.0.0",
+    "napi_version": "10"
+  },
+  "path_remapping": {
+    "enabled": true,
+    "labels": [
+      "/fusion-home",
+      "/fusion-temporary",
+      "/fusion-output",
+      "/fusion-original-cargo",
+      "/fusion-rustup",
+      "/fusion-build",
+      "/fusion-repository",
+      "/fusion-rust-toolchains",
+      "/fusion-source",
+      "/fusion-cargo",
+      "/fusion-plugin",
+      "/fusion-rust-toolchain"
+    ],
+    "private_prefix_scan": "ASCII-folded UTF-8 and UTF-16LE scan of private source, build, cache, toolchain and home prefixes; passed"
+  },
+  "reproducibility": "Source, lockfile and Rust toolchain are pinned. OS, linker and SDK differences can produce different binaries; this receipt does not claim cross-host byte reproducibility or vault qualification."
+}

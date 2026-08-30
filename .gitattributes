@@ -2,3 +2,22 @@ plugins/grafana-observability/**/*.source.part-* linguist-generated=true
 plugins/grafana-observability/native/*.node binary
 # Empty context lines in a unified diff carry a significant leading space.
 vendor/grafana-observability-source/qualification.patch whitespace=-blank-at-eol
+# These source/runtime bytes are verified against committed build receipts on
+# every host. Do not turn LF into CRLF during a Windows checkout.
+plugins/autodesk-fusion/** text eol=lf
+plugins/autodesk-fusion/native/*.node binary
+# Preserve exact collected upstream license bytes, including original line
+# endings/whitespace. Their SHA-256 values are verified by the package build.
+plugins/autodesk-fusion/native/UPSTREAM_NOTICES.txt -text -whitespace linguist-vendored=true
+plugins/autodesk-fusion/THIRD_PARTY_NOTICES.txt -text -whitespace linguist-generated=true
+plugins/autodesk-fusion/native/community-credential-errors.patch whitespace=-blank-at-eol
+plugins/autodesk-fusion/native/source/** linguist-vendored=true
+plugins/autodesk-fusion/dist/** linguist-generated=true
+# Bundled upstream template literals retain their original blank-line spaces.
+plugins/autodesk-fusion/dist/*.mjs whitespace=-blank-at-eol
+plugins/autodesk-fusion/docs/operation-catalog.json linguist-generated=true
+plugins/autodesk-fusion/docs/software-inventory.json linguist-generated=true
+plugins/autodesk-fusion/docs/native-dependencies.json linguist-generated=true
+plugins/autodesk-fusion/docs/support-matrix.md linguist-generated=true
+plugins/autodesk-fusion/docs/autodesk-fusion-*.md linguist-generated=true
+docs/autodesk-fusion-*.md text eol=lf

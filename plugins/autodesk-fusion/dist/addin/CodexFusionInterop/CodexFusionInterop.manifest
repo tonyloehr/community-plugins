@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "f238fb76-80f0-4b92-9ca5-0e55bf1ef710",
+  "author": "Community Plugins contributors",
+  "description": {
+    "": "Optional typed local interoperability with Codex using reviewed Fusion operation handlers. Community software; not an Autodesk or OpenAI product. Live qualification is required."
+  },
+  "version": "0.1.0",
+  "runOnStartup": false,
+  "supportedOS": "windows|mac",
+  "editEnabled": false
+}

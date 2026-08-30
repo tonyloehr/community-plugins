@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Fusion Cloud Recipes"
+  short_description: "Run reviewed Autodesk compute recipes with evidence."
+  default_prompt: "Use $run-fusion-cloud-recipes for the selected Autodesk Fusion workflow."

@@ -1,0 +1,156 @@
+{
+  "templateVersion": 1,
+  "enabled": false,
+  "qualificationStatus": "not_qualified_no_live_autodesk_engine_or_service_type_definitions",
+  "sourceFile": "main.ts",
+  "sourceSha256": "7dc3198fb638d01289f8b5ec29e3f7392dbeaaf203111d56a8379c19717d44f6",
+  "sourceProvenance": [
+    {
+      "url": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/TypeScriptSpecific_UM.htm",
+      "observedAt": "2026-08-28",
+      "scope": "Current documented service import and exported-run lifecycle; page includes desktop TypeScript preview warning."
+    },
+    {
+      "url": "https://github.com/autodesk-platform-services/aps-configurator-fusion/blob/9b7e21de2759ece63c7824ec60ca0ae625966057/services/da-script-setparams.ts",
+      "commit": "9b7e21de2759ece63c7824ec60ca0ae625966057",
+      "scope": "Legacy @adsk/fas TaskParameters/adsk.parameters/adsk.result and parameter/save flow; not proof of current service declarations."
+    }
+  ],
+  "activationRequirements": {
+    "administratorReviewRef": null,
+    "typeDefinitionsVersion": null,
+    "typeDefinitionsSha256": null,
+    "typecheckEvidenceRef": null,
+    "engineCanaryEvidenceRef": null,
+    "confirmedParameterAndResultChannels": false,
+    "confirmedExportedRunLifecycle": false,
+    "plainUnconfiguredTemplateEvidenceRef": null,
+    "exactTemplateVersionEvidenceRef": null,
+    "approvedDestinationFolderEvidenceRef": null,
+    "reviewedAuthenticationPath": null,
+    "inputScopeAndBudgetEnforcementEvidenceRef": null,
+    "outputValidatorEvidenceRef": null,
+    "actualBillingReconcilerEvidenceRef": null,
+    "noAutomaticResubmission": true
+  },
+  "reviewBindings": {
+    "tenantId": null,
+    "qualificationRef": null,
+    "typeDefinitionsSha256": null,
+    "source": {
+      "hubId": null,
+      "projectId": null,
+      "itemId": null,
+      "versionId": null,
+      "configurationId": null,
+      "resourceHash": null
+    },
+    "destination": {
+      "alias": "candidate-designs",
+      "hubId": null,
+      "projectId": null,
+      "folderId": null
+    },
+    "templateKind": "unconfigured_single_body_plate"
+  },
+  "recipe": {
+    "id": "parameterized-plate",
+    "version": "1.0.0",
+    "tenantId": null,
+    "delivery": "inline_script",
+    "script": {
+      "source": null,
+      "sha256": null,
+      "language": "typescript",
+      "entryPoint": "run",
+      "typeDefinitionsVersion": null
+    },
+    "activity": {
+      "reference": null,
+      "version": null,
+      "definitionHash": null,
+      "engine": "Autodesk.Fusion+Latest"
+    },
+    "bundles": [],
+    "inputSchema": {
+      "width_mm": {
+        "type": "number",
+        "required": true,
+        "minimum": 20,
+        "maximum": 200
+      },
+      "height_mm": {
+        "type": "number",
+        "required": true,
+        "minimum": 20,
+        "maximum": 200
+      },
+      "thickness_mm": {
+        "type": "number",
+        "required": true,
+        "minimum": 2,
+        "maximum": 20
+      },
+      "hole_diameter_mm": {
+        "type": "number",
+        "required": true,
+        "minimum": 2,
+        "maximum": 20
+      }
+    },
+    "allowedSources": [
+      {
+        "hubId": null,
+        "projectId": null,
+        "itemId": null
+      }
+    ],
+    "destinations": [
+      {
+        "alias": "candidate-designs",
+        "kind": "fusion_project",
+        "hubId": null,
+        "projectId": null
+      }
+    ],
+    "limits": {
+      "maxVariants": 1,
+      "maxInputBytes": 65536,
+      "maxOutputBytes": 104857600,
+      "maxProcessingSeconds": 300,
+      "maxAttempts": 1,
+      "minimumDelegatedTokenLifetimeMs": 600000
+    },
+    "cost": {
+      "kind": "estimated",
+      "currency": null,
+      "amountPerVariant": null,
+      "priceAsOf": null,
+      "evidence": null
+    },
+    "authority": "managed_service",
+    "dependencyImmutability": "release_alias_revalidated",
+    "verification": {
+      "procedure": "Verify the exact new item/version in its approved folder, request identity, reopened parameter values, template timeline/body checks and independent dimensional/geometry checks. Hash any exported validation artifacts. Provider compute or save completion alone is insufficient; never authorize release.",
+      "validatorIds": [
+        "exact-output-version",
+        "parameter-readback",
+        "geometry-dimensions"
+      ]
+    }
+  },
+  "publicClientActivation": {
+    "activitySignature": null,
+    "providerRecipeScopeBudgetEnforcementEvidence": null,
+    "instruction": "Do not use generic signed TaskScript authority as a managed boundary. A qualified constrained publisher activity and its signature are separately required for public_pkce."
+  },
+  "limitations": [
+    "This object is deliberately not a recipesFile registry array and is rejected as active configuration.",
+    "REVIEW_BINDINGS in main.ts is null; the script fails before opening a document until qualified bindings are installed.",
+    "Autodesk.Fusion+Latest rolls; no immutable engine or unavoidable alias-repointing race elimination is promised.",
+    "The cost model and input/output byte limits are admission controls, not a hard billing or cloud save size ceiling.",
+    "The new destination item/version does not exist before save; it is recorded only after readback and never guessed.",
+    "The recipe creates an unreleased candidate copy, never overwrites the source, advances PLM lifecycle or generates NC.",
+    "The service module, TaskParameters/result channel and lifecycle must be verified against the actual supplied service declarations and a disposable live canary before activation."
+  ]
+}

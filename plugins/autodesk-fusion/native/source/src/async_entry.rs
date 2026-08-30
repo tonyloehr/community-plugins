@@ -1,0 +1,310 @@
+use std::sync::Arc;
+
+use napi::bindgen_prelude::*;
+use napi_derive::napi;
+
+use crate::credential_result::{deleted_credential, optional_credential};
+
+#[cfg(target_os = "linux")]
+use crate::linux_credential_builder::LinuxCredentialBuilder;
+
+#[napi]
+pub struct AsyncEntry {
+  inner: Arc<keyring_core::Entry>,
+}
+
+#[cfg(target_os = "linux")]
+fn setup_linux_store() -> anyhow::Result<()> {
+  let builder = LinuxCredentialBuilder::new()?;
+  keyring_core::set_default_store(builder.get_store());
+  Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn setup_macos_store() -> anyhow::Result<()> {
+  use std::collections::HashMap;
+
+  use apple_native_keyring_store::keychain::Store;
+
+  let store = Store::new_with_configuration(&HashMap::new())?;
+  keyring_core::set_default_store(store);
+  Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn setup_windows_store() -> anyhow::Result<()> {
+  use std::collections::HashMap;
+
+  use windows_native_keyring_store::Store;
+
+  let store = Store::new_with_configuration(&HashMap::new())?;
+  keyring_core::set_default_store(store);
+  Ok(())
+}
+
+#[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+fn setup_bsd_store() -> anyhow::Result<()> {
+  use std::collections::HashMap;
+
+  use dbus_secret_service_keyring_store::Store;
+
+  let store = Store::new_with_configuration(&HashMap::new())?;
+  keyring_core::set_default_store(store);
+  Ok(())
+}
+
+#[napi]
+impl AsyncEntry {
+  #[napi(constructor)]
+  /// Create an entry for the given service and username.
+  ///
+  /// The default credential builder is used.
+  pub fn new(service: String, username: String) -> Result<Self> {
+    #[cfg(target_os = "linux")]
+    setup_linux_store()?;
+    #[cfg(target_os = "macos")]
+    setup_macos_store()?;
+    #[cfg(target_os = "windows")]
+    setup_windows_store()?;
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+    setup_bsd_store()?;
+
+    Ok(Self {
+      inner: Arc::new(keyring_core::Entry::new(&service, &username).map_err(anyhow::Error::from)?),
+    })
+  }
+
+  #[napi(factory)]
+  /// Create an entry for the given target, service, and username.
+  ///
+  /// The default credential builder is used.
+  pub fn with_target(target: String, service: String, username: String) -> Result<Self> {
+    #[cfg(target_os = "linux")]
+    setup_linux_store()?;
+    #[cfg(target_os = "macos")]
+    setup_macos_store()?;
+    #[cfg(target_os = "windows")]
+    setup_windows_store()?;
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+    setup_bsd_store()?;
+
+    let entry = Self {
+      inner: Arc::new(
+        keyring_core::Entry::new_with_modifiers(&service, &username, &{
+          let mut mods = std::collections::HashMap::new();
+          #[cfg(target_os = "macos")]
+          mods.insert("keychain", target.as_str());
+          #[cfg(not(target_os = "macos"))]
+          mods.insert("target", target.as_str());
+          mods
+        })
+        .map_err(anyhow::Error::from)?,
+      ),
+    };
+
+    // On Windows, when using the target modifier, the username needs to be preserved
+    // by creating a placeholder credential and setting the username attribute explicitly.
+    // This is because credentials with explicit targets don't have specifiers in keyring v4.
+    // When the actual password is set later, set_secret will read and preserve these attributes.
+    #[cfg(target_os = "windows")]
+    {
+      // Create a temporary credential with empty password
+      if let Ok(_) = entry.inner.set_secret(&[]) {
+        // Set the username attribute so it's preserved when the real password is set
+        let mut attrs = std::collections::HashMap::new();
+        attrs.insert("username", username.as_str());
+        entry.inner.update_attributes(&attrs).ok();
+      }
+    }
+
+    Ok(entry)
+  }
+
+  #[napi(ts_return_type = "Promise<void>")]
+  /// Set the password for this entry.
+  ///
+  /// Can return an [Ambiguous](Error::Ambiguous) error
+  /// if there is more than one platform credential
+  /// that matches this entry.  This can only happen
+  /// on some platforms, and then only if a third-party
+  /// application wrote the ambiguous credential.
+  pub fn set_password(
+    &self,
+    password: String,
+    signal: Option<AbortSignal>,
+  ) -> AsyncTask<EntryTask> {
+    AsyncTask::with_optional_signal(
+      EntryTask {
+        inner: self.inner.clone(),
+        kind: TaskKind::SetPassword(password),
+      },
+      signal,
+    )
+  }
+
+  #[napi(ts_return_type = "Promise<void>")]
+  /// Set the secret for this entry.
+  ///
+  /// Can return an [Ambiguous](Error::Ambiguous) error
+  /// if there is more than one platform credential
+  /// that matches this entry.  This can only happen
+  /// on some platforms, and then only if a third-party
+  /// application wrote the ambiguous credential.
+  pub fn set_secret(&self, secret: &[u8], signal: Option<AbortSignal>) -> AsyncTask<EntryTask> {
+    AsyncTask::with_optional_signal(
+      EntryTask {
+        inner: self.inner.clone(),
+        kind: TaskKind::SetSecret(secret.to_vec()),
+      },
+      signal,
+    )
+  }
+
+  #[napi(ts_return_type = "Promise<string | null>")]
+  /// Retrieve the password saved for this entry.
+  ///
+  /// Resolves to null only if no credential exists; store failures reject.
+  ///
+  /// Can return an [Ambiguous](Error::Ambiguous) error
+  /// if there is more than one platform credential
+  /// that matches this entry.  This can only happen
+  /// on some platforms, and then only if a third-party
+  /// application wrote the ambiguous credential.
+  pub fn get_password(&self, signal: Option<AbortSignal>) -> AsyncTask<PasswordTask> {
+    AsyncTask::with_optional_signal(
+      PasswordTask {
+        inner: self.inner.clone(),
+      },
+      signal,
+    )
+  }
+
+  #[napi(ts_return_type = "Promise<number[] | null>")]
+  /// Retrieve the secret saved for this entry.
+  ///
+  /// Resolves to null only if no credential exists; store failures reject.
+  ///
+  /// Can return an [Ambiguous](Error::Ambiguous) error
+  /// if there is more than one platform credential
+  /// that matches this entry.  This can only happen
+  /// on some platforms, and then only if a third-party
+  /// application wrote the ambiguous credential.
+  pub fn get_secret(&self, signal: Option<AbortSignal>) -> AsyncTask<SecretTask> {
+    AsyncTask::with_optional_signal(
+      SecretTask {
+        inner: self.inner.clone(),
+      },
+      signal,
+    )
+  }
+
+  #[napi(ts_return_type = "Promise<boolean>")]
+  /// Delete the underlying credential for this entry.
+  ///
+  /// Resolves to false only if no credential exists; store failures reject.
+  ///
+  /// Can return an [Ambiguous](Error::Ambiguous) error
+  /// if there is more than one platform credential
+  /// that matches this entry.  This can only happen
+  /// on some platforms, and then only if a third-party
+  /// application wrote the ambiguous credential.
+  ///
+  /// Note: This does _not_ affect the lifetime of the [Entry]
+  /// structure, which is controlled by Rust.  It only
+  /// affects the underlying credential store.
+  pub fn delete_credential(&self, signal: Option<AbortSignal>) -> AsyncTask<EntryTask> {
+    AsyncTask::with_optional_signal(
+      EntryTask {
+        inner: self.inner.clone(),
+        kind: TaskKind::DeleteCredential,
+      },
+      signal,
+    )
+  }
+
+  #[napi]
+  /// Alias for `deleteCredential`
+  pub fn delete_password(&self, signal: Option<AbortSignal>) -> AsyncTask<EntryTask> {
+    self.delete_credential(signal)
+  }
+}
+
+#[allow(clippy::enum_variant_names)]
+enum TaskKind {
+  SetPassword(String),
+  SetSecret(Vec<u8>),
+  DeleteCredential,
+}
+
+pub struct EntryTask {
+  inner: Arc<keyring_core::Entry>,
+  kind: TaskKind,
+}
+
+// Password task
+pub struct PasswordTask {
+  inner: Arc<keyring_core::Entry>,
+}
+
+#[napi]
+impl Task for PasswordTask {
+  type Output = Option<String>;
+  type JsValue = Option<String>;
+
+  fn compute(&mut self) -> Result<Self::Output> {
+    optional_credential(self.inner.get_password()).map_err(napi::Error::from_reason)
+  }
+
+  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+    Ok(output)
+  }
+}
+
+// Secret task
+pub struct SecretTask {
+  inner: Arc<keyring_core::Entry>,
+}
+
+#[napi]
+impl Task for SecretTask {
+  type Output = Option<Vec<u8>>;
+  type JsValue = Option<Vec<u8>>;
+
+  fn compute(&mut self) -> Result<Self::Output> {
+    optional_credential(self.inner.get_secret()).map_err(napi::Error::from_reason)
+  }
+
+  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+    Ok(output)
+  }
+}
+
+// Generic task for operations that don't return values or return booleans
+#[napi]
+impl Task for EntryTask {
+  type Output = Option<bool>;
+  type JsValue = Option<bool>;
+
+  fn compute(&mut self) -> Result<Self::Output> {
+    match self.kind {
+      TaskKind::DeleteCredential => deleted_credential(self.inner.delete_credential())
+        .map(Some)
+        .map_err(napi::Error::from_reason),
+      TaskKind::SetPassword(ref password) => {
+        self
+          .inner
+          .set_password(password)
+          .map_err(anyhow::Error::from)?;
+        Ok(None)
+      }
+      TaskKind::SetSecret(ref secret) => {
+        self.inner.set_secret(secret).map_err(anyhow::Error::from)?;
+        Ok(None)
+      }
+    }
+  }
+
+  fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+    Ok(output)
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "id": "fixture-parameter-control",
+  "purpose": "Synthetic control-flow, unit, analytic volume and explicit compensation test; no Autodesk kernel is involved.",
+  "steps": [
+    {
+      "id": "before",
+      "action": "read",
+      "input": {
+        "operation": "parameters.list",
+        "document_id": "fixture:bracket",
+        "args": {}
+      },
+      "assertions": [
+        {
+          "kind": "length_at_least",
+          "pointer": "/data/parameters",
+          "expected": 3
+        }
+      ]
+    },
+    {
+      "id": "change_width",
+      "action": "change",
+      "input": {
+        "operation": "parameters.set",
+        "document_id": "fixture:bracket",
+        "args": {
+          "changes": [
+            {
+              "parameter_id": {
+                "$ref": "before#/data/parameters",
+                "select": {
+                  "pointer": "/id",
+                  "equals": "fixture:param:width",
+                  "value_pointer": "/id"
+                }
+              },
+              "expression": "5 cm"
+            }
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        }
+      ]
+    },
+    {
+      "id": "measure",
+      "action": "read",
+      "input": {
+        "operation": "geometry.measure",
+        "document_id": "fixture:bracket",
+        "args": {
+          "kind": "physical",
+          "entity_ids": [
+            "fixture:body:bracket"
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "kind": "approx",
+          "pointer": "/data/volume/value",
+          "expected": 5000,
+          "absolute_tolerance": 0.000001,
+          "relative_tolerance": 1e-8
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/volume/unit",
+          "expected": "mm^3"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/live_fusion_verified",
+          "expected": false
+        }
+      ]
+    }
+  ],
+  "cleanup": [
+    {
+      "id": "restore",
+      "action": "change",
+      "input": {
+        "operation": "parameters.set",
+        "document_id": "fixture:bracket",
+        "args": {
+          "changes": [
+            {
+              "parameter_id": {
+                "$ref": "before#/data/parameters",
+                "select": {
+                  "pointer": "/id",
+                  "equals": "fixture:param:width",
+                  "value_pointer": "/id"
+                }
+              },
+              "expression": {
+                "$ref": "before#/data/parameters",
+                "select": {
+                  "pointer": "/id",
+                  "equals": "fixture:param:width",
+                  "value_pointer": "/expression"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        }
+      ]
+    }
+  ]
+}

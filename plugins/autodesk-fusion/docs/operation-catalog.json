@@ -1,0 +1,3300 @@
+{
+  "schema": 1,
+  "generated_from": "src/catalog.ts",
+  "live_qualified": false,
+  "operations": [
+    {
+      "id": "documents.list",
+      "title": "List open documents and session identity",
+      "family": "documents",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Documents.htm",
+      "document_required": false,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 256
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "documents.import",
+      "title": "Import a reviewed STEP or F3D source into a new document",
+      "family": "documents",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ImportManager_importToNewDocument.htm",
+      "notes": "Runs the Autodesk parser in the Fusion process. A new document is not a parser security sandbox; only explicitly trusted inputs are allowed.",
+      "document_required": false,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "step",
+              "f3d"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "asset",
+                  "artifact"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "format",
+          "source"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "documents.create",
+      "title": "Create an unsaved Fusion design",
+      "family": "documents",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Documents_add.htm",
+      "document_required": false,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "documents.open",
+      "title": "Open an explicitly pinned cloud file",
+      "family": "documents",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Documents_open.htm",
+      "document_required": false,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "data_file_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "expected_version_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "data_file_id",
+          "expected_version_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "documents.activate",
+      "title": "Activate the selected open document",
+      "family": "documents",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Document_activate.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "documents.close",
+      "title": "Close an unmodified document without discarding edits",
+      "family": "documents",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Document_close.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "discard_unsaved": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "discard_unsaved"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "documents.save",
+      "title": "Save the selected state to Autodesk cloud storage",
+      "family": "documents",
+      "effect": "cloud_write",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Document_save.htm",
+      "notes": "Save acknowledgement is not cloud translation/index completion.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "folder_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "document.inspect",
+      "title": "Inspect structure, units, state and feature health",
+      "family": "document",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Design.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "bom.inspect",
+      "title": "Inspect the desktop occurrence structure and explicit BOM limitations",
+      "family": "bom",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Component_allOccurrences.htm",
+      "notes": "Desktop occurrence structure does not imply MFGDM BOM override quantities or released PLM authority.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "include_suppressed": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "parameters.list",
+      "title": "List user and model parameters",
+      "family": "parameters",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Design_allParameters.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "default": "user",
+            "type": "string",
+            "enum": [
+              "user",
+              "all"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "parameters.set",
+      "title": "Atomically update a batch of parameter expressions",
+      "family": "parameters",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Design_modifyParameters.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "changes": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "parameter_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "expression": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "parameter_id",
+                "expression"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "changes"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "parameters.add",
+      "title": "Add a named user parameter",
+      "family": "parameters",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/UserParameters_add.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "unit": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "name",
+          "expression",
+          "unit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "entities.find",
+      "title": "Resolve bounded typed entity candidates",
+      "family": "entities",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Design_findEntityByToken.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "component",
+              "occurrence",
+              "body",
+              "face",
+              "edge",
+              "sketch",
+              "profile",
+              "parameter",
+              "feature",
+              "sketch_line",
+              "sketch_circle",
+              "sketch_point",
+              "construction_axis",
+              "construction_plane"
+            ]
+          },
+          "parent_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "geometry.measure",
+      "title": "Measure physical properties, bounds, distances or angles",
+      "family": "geometry",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MeasureManager.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "entity_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "physical",
+              "distance",
+              "angle",
+              "bounding_box"
+            ]
+          },
+          "accuracy": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "very_high"
+            ]
+          }
+        },
+        "required": [
+          "entity_ids",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "geometry.check",
+      "title": "Inspect feature health or static interference",
+      "family": "geometry",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Design_analyzeInterference.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "health",
+              "interference"
+            ]
+          },
+          "entity_ids": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "sketches.create",
+      "title": "Create a sketch on an explicit plane",
+      "family": "sketches",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Sketches_add.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "plane": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "xy",
+                  "xz",
+                  "yz"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "entity_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "entity_id"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "plane"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "sketches.draw",
+      "title": "Draw unit-aware sketch curves",
+      "family": "sketches",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SketchCurves.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sketch_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "frame": {
+            "type": "string",
+            "const": "sketch"
+          },
+          "curves": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "line"
+                    },
+                    "start": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        }
+                      ]
+                    },
+                    "end": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "start",
+                    "end"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "circle"
+                    },
+                    "center": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        }
+                      ]
+                    },
+                    "radius": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 512
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "center",
+                    "radius"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "rectangle"
+                    },
+                    "corner1": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        }
+                      ]
+                    },
+                    "corner2": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 512
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "corner1",
+                    "corner2"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "sketch_id",
+          "frame",
+          "curves"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "sketches.dimension",
+      "title": "Add a driving sketch dimension",
+      "family": "sketches",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SketchDimensions.htm",
+      "notes": "Distance takes two sketch point IDs; diameter/radial take one sketch circle ID from the exact selected sketch.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "sketch_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "orientation": {
+                "type": "string",
+                "enum": [
+                  "horizontal",
+                  "vertical",
+                  "aligned"
+                ]
+              },
+              "text_position": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                ]
+              },
+              "expression": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "kind": {
+                "type": "string",
+                "const": "distance"
+              },
+              "entity_ids": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sketch_id",
+              "text_position",
+              "expression",
+              "kind",
+              "entity_ids"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "sketch_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              "orientation": {
+                "type": "string",
+                "enum": [
+                  "horizontal",
+                  "vertical",
+                  "aligned"
+                ]
+              },
+              "text_position": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  }
+                ]
+              },
+              "expression": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "diameter",
+                  "radial"
+                ]
+              },
+              "entity_ids": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                ]
+              }
+            },
+            "required": [
+              "sketch_id",
+              "text_position",
+              "expression",
+              "kind",
+              "entity_ids"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    {
+      "id": "sketches.constrain",
+      "title": "Apply explicit typed geometric sketch constraints",
+      "family": "sketches",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/GeometricConstraints.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sketch_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "horizontal",
+                        "vertical"
+                      ]
+                    },
+                    "entity_ids": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_ids"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "coincident",
+                        "parallel",
+                        "perpendicular",
+                        "collinear",
+                        "concentric",
+                        "equal",
+                        "tangent",
+                        "midpoint",
+                        "horizontal_points",
+                        "vertical_points"
+                      ]
+                    },
+                    "entity_ids": {
+                      "type": "array",
+                      "prefixItems": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_ids"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "sketch_id",
+          "constraints"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.extrude",
+      "title": "Create a parametric extrude feature",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ExtrudeFeatures.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "profile_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "distance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "new_body",
+              "join",
+              "cut",
+              "intersect"
+            ]
+          },
+          "participant_body_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "profile_ids",
+          "distance",
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.revolve",
+      "title": "Create a parametric revolve feature",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RevolveFeatures.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "profile_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "axis_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "angle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "new_body",
+              "join",
+              "cut",
+              "intersect"
+            ]
+          },
+          "participant_body_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "profile_ids",
+          "axis_id",
+          "angle",
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.hole",
+      "title": "Create blind holes on a planar face",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/HoleFeatures.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "face_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "frame": {
+            "type": "string",
+            "const": "component"
+          },
+          "positions": {
+            "minItems": 1,
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                }
+              ]
+            }
+          },
+          "diameter": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "depth": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "face_id",
+          "frame",
+          "positions",
+          "diameter",
+          "depth"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.fillet",
+      "title": "Fillet selected edge sets",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/FilletFeatures.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "edge_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "radius": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "tangent_chain": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "edge_ids",
+          "radius"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.chamfer",
+      "title": "Chamfer selected edge sets",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ChamferFeatures_createInput2.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "edge_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "distance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "tangent_chain": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "edge_ids",
+          "distance"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.shell",
+      "title": "Shell selected body faces",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ShellFeatures.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "face_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "thickness": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "face_ids",
+          "thickness"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.combine",
+      "title": "Combine explicitly selected bodies",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CombineFeatures.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "target_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "tool_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "join",
+              "cut",
+              "intersect"
+            ]
+          },
+          "keep_tools": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "target_id",
+          "tool_ids",
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.pattern",
+      "title": "Create a circular BRep body pattern",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CircularPatternFeatures.htm",
+      "notes": "This reviewed variant patterns BRep bodies; feature and occurrence patterns require separate handlers.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "entity_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "axis_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "quantity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "angle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "symmetric": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entity_ids",
+          "axis_id",
+          "quantity",
+          "angle"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "components.create",
+      "title": "Create an occurrence with a new component",
+      "family": "components",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Occurrences_addNewComponent.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "parent_component_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "transform": {
+            "type": "object",
+            "properties": {
+              "frame": {
+                "type": "string",
+                "const": "parent"
+              },
+              "matrix": {
+                "minItems": 16,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "translation_unit": {
+                "type": "string",
+                "enum": [
+                  "mm",
+                  "cm",
+                  "m",
+                  "in"
+                ]
+              }
+            },
+            "required": [
+              "frame",
+              "matrix",
+              "translation_unit"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "components.insert",
+      "title": "Insert an explicitly versioned external component",
+      "family": "components",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Occurrences_addByInsert.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "parent_component_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "data_file_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "expected_version_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "is_referenced": {
+            "type": "boolean",
+            "const": true
+          },
+          "transform": {
+            "type": "object",
+            "properties": {
+              "frame": {
+                "type": "string",
+                "const": "parent"
+              },
+              "matrix": {
+                "minItems": 16,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "translation_unit": {
+                "type": "string",
+                "enum": [
+                  "mm",
+                  "cm",
+                  "m",
+                  "in"
+                ]
+              }
+            },
+            "required": [
+              "frame",
+              "matrix",
+              "translation_unit"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data_file_id",
+          "expected_version_id",
+          "is_referenced",
+          "transform"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "components.transform",
+      "title": "Change an occurrence transform in its parent frame",
+      "family": "components",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Occurrence_transform2.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "occurrence_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "transform": {
+            "type": "object",
+            "properties": {
+              "frame": {
+                "type": "string",
+                "const": "parent"
+              },
+              "matrix": {
+                "minItems": 16,
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              },
+              "translation_unit": {
+                "type": "string",
+                "enum": [
+                  "mm",
+                  "cm",
+                  "m",
+                  "in"
+                ]
+              }
+            },
+            "required": [
+              "frame",
+              "matrix",
+              "translation_unit"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "occurrence_id",
+          "transform"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "joints.create",
+      "title": "Create an as-built rigid joint",
+      "family": "joints",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/AsBuiltJoints.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "occurrence_ids": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              },
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "const": "rigid"
+          }
+        },
+        "required": [
+          "occurrence_ids",
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "configurations.list",
+      "title": "Inspect configuration rows and editability",
+      "family": "configurations",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ConfigurationTopTable.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "configurations.activate",
+      "title": "Activate an existing configuration row",
+      "family": "configurations",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ConfigurationRow_activate.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "row_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "row_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "materials.list",
+      "title": "Inspect available materials",
+      "family": "materials",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MaterialLibraries.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "library_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "materials.assign",
+      "title": "Assign a pinned physical material definition",
+      "family": "materials",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/BRepBody_material.htm",
+      "notes": "Use the current engineering_sha256 from materials.list; same-ID library property changes invalidate assignment.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "library_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "material_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "expected_material_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "entity_id",
+          "library_id",
+          "material_id",
+          "expected_material_sha256"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "exports.generate",
+      "title": "Export STEP, STL or a local Fusion archive",
+      "family": "exports",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ExportManager.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "enum": [
+              "step",
+              "stl",
+              "f3d"
+            ]
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          },
+          "entity_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "mm",
+              "cm",
+              "m",
+              "in"
+            ]
+          },
+          "mesh_refinement": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "required": [
+          "format",
+          "output"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "drawings.export_pdf",
+      "title": "Export all sheets of an existing drawing",
+      "family": "drawings",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/DrawingExportManager.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          },
+          "all_sheets": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "output",
+          "all_sheets"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "view.capture",
+      "title": "Capture the current viewport without changing fit",
+      "family": "view",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Viewport_saveAsImageFile.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 108,
+            "maximum": 4000
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 108,
+            "maximum": 4000
+          },
+          "fit": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "output",
+          "width",
+          "height"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "render.start",
+      "title": "Start a local render to an explicit local destination",
+      "family": "render",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "unsupported",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Rendering_startLocalRender.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 108,
+            "maximum": 4000
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 108,
+            "maximum": 4000
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "standard",
+              "excellent"
+            ]
+          }
+        },
+        "required": [
+          "output",
+          "width",
+          "height",
+          "quality"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "render.status",
+      "title": "Read a local render future",
+      "family": "render",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/RenderFuture.htm",
+      "notes": "Use the durable plugin job ID from render.start, not the raw session-scoped Fusion future ID.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.inspect",
+      "title": "Inspect setups, operations and generation state",
+      "family": "cam",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CAM.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.setup_schema",
+      "title": "Discover typed milling setup inputs and required safety fields",
+      "family": "cam",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Setups_createInput.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operation_type": {
+            "type": "string",
+            "const": "milling"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "operation_type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.operation_schema",
+      "title": "Discover typed parameters and entitlement for a milling strategy",
+      "family": "cam",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Operations_createInput.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "setup_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "face",
+              "adaptive",
+              "parallel"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "setup_id",
+          "strategy"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.setup_create",
+      "title": "Create a milling setup with explicit stock and fixtures",
+      "family": "cam",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Setups.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "model_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "fixture_ids": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "operation_type": {
+            "type": "string",
+            "const": "milling"
+          },
+          "stock_mode": {
+            "type": "string",
+            "enum": [
+              "relative_box",
+              "fixed_box"
+            ]
+          },
+          "parameters": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "expression"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "string"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "boolean"
+                    },
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "integer"
+                    },
+                    "value": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "float"
+                    },
+                    "value": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "choice"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "selection"
+                    },
+                    "value": {
+                      "minItems": 1,
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "machine_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "name",
+          "model_ids",
+          "fixture_ids",
+          "operation_type",
+          "stock_mode",
+          "parameters"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.operation_create",
+      "title": "Create an entitled operation with typed parameters",
+      "family": "cam",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Operations_createInput.htm",
+      "notes": "Managed mode requires a tool selected by full definition hash from a pinned library. Raw tool_json is an assisted-mode input.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "setup_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "face",
+              "adaptive",
+              "parallel"
+            ]
+          },
+          "tool_library_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "tool_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "tool_json": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1048576
+          },
+          "parameters": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "expression"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "string"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "boolean"
+                    },
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "integer"
+                    },
+                    "value": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "float"
+                    },
+                    "value": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "choice"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "selection"
+                    },
+                    "value": {
+                      "minItems": 1,
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "setup_id",
+          "strategy",
+          "parameters"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.tools_list",
+      "title": "Inspect tools in an approved pinned tool library",
+      "family": "cam",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ToolLibrary.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "tool_library_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "tool_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "tool_library_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.machining_time",
+      "title": "Estimate machining time with explicit feed assumptions",
+      "family": "cam",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CAM_getMachiningTime.htm",
+      "notes": "Estimated time is not a measured cycle time, commercial quote or machine capability guarantee.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operation_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "feed_scale_percent": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 1000
+          },
+          "rapid_feed_cm_per_second": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100000
+          },
+          "tool_change_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 3600
+          }
+        },
+        "required": [
+          "operation_ids",
+          "feed_scale_percent",
+          "rapid_feed_cm_per_second",
+          "tool_change_seconds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.setup_sheet",
+      "title": "Generate a local HTML setup-sheet review package",
+      "family": "cam",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CAM_generateSetupSheet.htm",
+      "notes": "Review artifact only; no browser launch, sending or manufacturing signoff.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operation_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "format": {
+            "type": "string",
+            "const": "html"
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "operation_ids",
+          "format",
+          "output"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.template_apply",
+      "title": "Apply a pinned reviewed CAM template",
+      "family": "cam",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Setup_createFromCAMTemplate2.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "setup_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "template_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          }
+        },
+        "required": [
+          "setup_id",
+          "template_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.generate",
+      "title": "Generate selected toolpaths and track the future",
+      "family": "cam",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "unsupported",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/CAM_generateToolpath.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operation_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          }
+        },
+        "required": [
+          "operation_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.status",
+      "title": "Read a toolpath generation future",
+      "family": "cam",
+      "effect": "read",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/GenerateToolpathFuture.htm",
+      "notes": "Use the durable plugin job ID from cam.generate or cam.nc_post, not the raw session-scoped Fusion future ID.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "job_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "cam.nc_post",
+      "title": "Post an operator-reviewed NC candidate to quarantine",
+      "family": "cam",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/NCProgram_postProcess.htm",
+      "notes": "Requires pinned post, machine and operator evidence; never transfers to equipment.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "operation_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "manufacturing_profile_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "review_record_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          },
+          "program_name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$"
+          },
+          "parameters": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "expression"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1024
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "string"
+                    },
+                    "value": {
+                      "type": "string",
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "boolean"
+                    },
+                    "value": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "integer"
+                    },
+                    "value": {
+                      "type": "integer",
+                      "minimum": -2147483648,
+                      "maximum": 2147483647
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "float"
+                    },
+                    "value": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "choice"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "type": {
+                      "type": "string",
+                      "const": "selection"
+                    },
+                    "value": {
+                      "minItems": 1,
+                      "maxItems": 100,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "operation_ids",
+          "manufacturing_profile_id",
+          "review_record_id",
+          "output",
+          "program_name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "flatpattern.create",
+      "title": "Create a flat pattern from a stationary face",
+      "family": "flatpattern",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/Component_createFlatPattern.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "stationary_face_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "stationary_face_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "flatpattern.export",
+      "title": "Export an existing sheet-metal flat pattern as DXF",
+      "family": "flatpattern",
+      "effect": "local_artifact",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ExportManager_createDXFFlatPatternExportOptions.htm",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "root": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$"
+              },
+              "filename": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "root",
+              "filename"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "output"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ],
+  "boundaries": [
+    {
+      "family": "drawings.author",
+      "maturity": "preview",
+      "status": "research_only",
+      "reason": "Automatic drawing creation is preview; existing drawing PDF export has its own released path."
+    },
+    {
+      "family": "electronics",
+      "maturity": "preview",
+      "status": "research_only",
+      "reason": "Preview inspection is not unrestricted schematic/PCB authoring or fresh ERC/DRC execution."
+    },
+    {
+      "family": "simulation",
+      "maturity": "preview",
+      "status": "human_handoff",
+      "reason": "Insider simulation APIs are not a released supported solver interface."
+    },
+    {
+      "family": "generative_design",
+      "maturity": "unverified",
+      "status": "human_handoff",
+      "reason": "No qualified public generation/solve API is advertised."
+    },
+    {
+      "family": "manufacturing.release",
+      "maturity": "unverified",
+      "status": "human_handoff",
+      "reason": "No structured machine collision proof or physical machine control is implemented."
+    },
+    {
+      "family": "sheet_metal.advanced",
+      "maturity": "preview",
+      "status": "research_only",
+      "reason": "Released collection access is not authoring; fold/convert/join variants require separate API qualification."
+    },
+    {
+      "family": "ui.arbitrary",
+      "maturity": "unverified",
+      "status": "assisted_only",
+      "reason": "Native raw tools are outside the typed managed facade. They cannot provide managed-policy guarantees."
+    },
+    {
+      "family": "released_variants_outside_registry",
+      "maturity": "released",
+      "status": "not_implemented_in_typed_facade",
+      "reason": "Sweep/loft/draft/split/mirror, surface/direct geometry authoring, motion-joint variants, appearance editing, hem/Form/mesh exchange, turning/multi-axis/additive and administration require additional reviewed handlers and live qualification. The assisted native route is separate broad authority."
+    }
+  ]
+}

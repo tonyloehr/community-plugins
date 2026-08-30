@@ -5,7 +5,7 @@
   "description": "Public Codex plugins and their reproducible validation suites.",
   "type": "module",
   "scripts": {
-    "validate": "npm run validate:marketplace && node scripts/validate-grafana.mjs && npm run validate:reviewops-auditor-benchmark && npm run validate:react-native-to-swiftui",
+    "validate": "npm run validate:marketplace && node scripts/validate-grafana.mjs && npm run validate:reviewops-auditor-benchmark && npm run validate:react-native-to-swiftui && npm run validate:autodesk-fusion",
     "validate:marketplace": "node scripts/validate-marketplace.mjs",
     "validate:grafana": "node scripts/validate-grafana.mjs",
     "validate:reviewops-auditor-benchmark": "node scripts/validate-reviewops-auditor-benchmark.mjs",
@@ -28,7 +28,10 @@
     "test:grafana:matrix": "node scripts/test-grafana-live-matrix.mjs",
     "test:grafana:keychain": "GRAFANA_E2E_KEYCHAIN=1 node --test tests/grafana-observability/native-keyring.test.mjs",
     "test:grafana:handoff": "GRAFANA_E2E_NATIVE_PROFILE=1 node --test tests/grafana-observability/native-profile-handoff.test.mjs",
-    "verify:grafana:source": "node scripts/verify-grafana-source.mjs"
+    "verify:grafana:source": "node scripts/verify-grafana-source.mjs",
+    "validate:autodesk-fusion": "node scripts/validate-autodesk-fusion.mjs",
+    "test:autodesk-fusion": "npm --prefix plugins/autodesk-fusion run verify && npm run validate:autodesk-fusion",
+    "build:autodesk-fusion": "npm --prefix plugins/autodesk-fusion run build"
   },
   "engines": {
     "node": ">=22.19.0"

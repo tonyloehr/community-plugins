@@ -46,6 +46,13 @@ To fetch only React Native to SwiftUI, use:
 plugins/react-native-to-swiftui
 ```
 
+To fetch only Autodesk Fusion interoperability, use:
+
+```text
+.agents/plugins
+plugins/autodesk-fusion
+```
+
 Adding a marketplace makes its catalog available to browse. It does **not**
 install, enable, or authenticate every plugin. After adding it, install only
 the plugin you want.
@@ -67,6 +74,9 @@ codex plugin add reviewops-auditor-benchmark@community-plugins
 
 # Or install the bounded native-migration workflow.
 codex plugin add react-native-to-swiftui@community-plugins
+
+# Or install the Fusion interoperability preview (starts in synthetic fixture mode).
+codex plugin add autodesk-fusion@community-plugins
 ```
 
 If you want a full checkout instead of a sparse one:
@@ -87,6 +97,7 @@ are picked up.
 | [Grafana Observability](plugins/grafana-observability/README.md)               | Inspect administrator-approved, read-only Grafana evidence for infrastructure, APM, logs, IoT/edge, and business KPIs.     | [Guide](plugins/grafana-observability/README.md) · [23-second demo](docs/media/grafana-production-monitoring-demo-8x.mp4) |
 | [ReviewOps Auditor + Benchmark](plugins/reviewops-auditor-benchmark/README.md) | Normalize sanitized review-run exports, audit evaluation validity, benchmark lanes, and emit shadow-only guidance offline. | [Guide](plugins/reviewops-auditor-benchmark/README.md)                                                                    |
 | [React Native to SwiftUI](plugins/react-native-to-swiftui/README.md)           | Plan a bounded React Native/Expo feature migration, then port one explicitly approved slice with deterministic SwiftUI parity checks. | [Guide](plugins/react-native-to-swiftui/README.md) |
+| [Autodesk Fusion](plugins/autodesk-fusion/README.md) | Connect typed CAD/CAM operations, scoped Autodesk data, reviewed cloud recipes and engineering evidence; live qualification required. | [Guide](plugins/autodesk-fusion/README.md) |
 
 Grafana Observability requires Codex and Node.js 22.19 or newer. Its manifest
 declares both `Read` and `Write`. `Write` is limited to

@@ -1,0 +1,34 @@
+{
+  "name": "autodesk-fusion",
+  "version": "0.1.0",
+  "description": "Connect Codex to Autodesk Fusion through governed desktop operations, cloud data adapters, reviewed Automation recipes, and engineering evidence workflows.",
+  "author": {
+    "name": "Tony Loehr",
+    "url": "https://github.com/tonyloehr"
+  },
+  "homepage": "https://github.com/tonyloehr/community-plugins/tree/main/plugins/autodesk-fusion",
+  "repository": "https://github.com/tonyloehr/community-plugins",
+  "license": "Apache-2.0",
+  "keywords": ["autodesk", "fusion", "cad", "cam", "mcp", "manufacturing", "interoperability"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Autodesk Fusion",
+    "shortDescription": "Work with Fusion models, CAM and enterprise data.",
+    "longDescription": "A typed interoperability layer for Autodesk Fusion. Inspect explicit documents, prepare state-bound CAD changes, stage artifacts, prepare reviewed manufacturing candidates, reconcile enterprise data, and submit approved cloud recipes. Starts with an offline synthetic fixture. Real workflows require configured Autodesk providers, scoped authorization and operation-specific live qualification; this plugin does not control physical machines.",
+    "developerName": "Tony Loehr",
+    "category": "Developer Tools",
+    "websiteURL": "https://github.com/tonyloehr/community-plugins",
+    "capabilities": ["Read", "Write"],
+    "brandColor": "#156B87",
+    "logo": "./assets/icon.svg",
+    "composerIcon": "./assets/icon.svg",
+    "defaultPrompt": [
+      "Use $setup-autodesk-fusion to inspect my connection and configure the appropriate Fusion integration without changing a model.",
+      "Use $inspect-fusion-design to inspect the selected model, its parameters, references and engineering evidence gaps.",
+      "Use $edit-fusion-design to prepare and execute the authorized CAD changes against the exact inspected document state.",
+      "Use $prepare-fusion-manufacturing to prepare a machining candidate using our reviewed tool, machine and post profiles. Stage outputs only.",
+      "Use $reconcile-fusion-data to compare explicitly versioned BOMs and prepare an enterprise synchronization draft."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}
