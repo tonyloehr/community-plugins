@@ -1157,6 +1157,318 @@
       }
     },
     {
+      "id": "construction_planes.offset",
+      "title": "Create a parametric offset construction plane",
+      "family": "construction_planes",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/ConstructionPlaneInput_setByOffset.htm",
+      "notes": "Uses a native construction plane or planar face in the same editable component. Signed, unit-aware offset; no design-mode conversion or implicit occurrence transform.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "plane_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "distance": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "plane_id",
+          "distance"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.sweep",
+      "title": "Sweep one closed sketch profile along an explicit open path",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SweepFeatures_createInput.htm",
+      "notes": "Solid full-path sweep, perpendicular orientation, zero twist/taper, no guides. Native sketch lines or BRep edges only; exact path membership is checked without automatic chain expansion. Fusion determines connected path order. Cut/intersect require explicit bodies; join requires a single-body component.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "path_entity_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "new_body",
+              "join",
+              "cut",
+              "intersect"
+            ]
+          },
+          "participant_body_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "profile_id",
+          "path_entity_ids",
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.loft",
+      "title": "Loft ordered closed sketch profiles into a solid",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/LoftSections_add.htm",
+      "notes": "Two to twenty ordered native computed sketch profiles in one component; solid, nonclosed loft with free section conditions and no rails. Cut/intersect require explicit bodies; join requires a single-body component.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "profile_ids": {
+            "minItems": 2,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "new_body",
+              "join",
+              "cut",
+              "intersect"
+            ]
+          },
+          "participant_body_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "profile_ids",
+          "operation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.draft",
+      "title": "Apply a single-angle draft to explicitly selected solid-body faces",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/DraftFeatures_createInput.htm",
+      "notes": "Faces must belong to one persistent solid body. Signed, nonzero angle with magnitude below 90 degrees is a plugin limit. Flags default false; tangent chaining may include connected faces and symmetric mode splits at the parting plane. Fusion uses the first face pointOnFace, not a caller-picked point; angle sign and direction flip jointly control direction.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "face_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "plane_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "angle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "symmetric": {
+            "type": "boolean"
+          },
+          "direction_flipped": {
+            "type": "boolean"
+          },
+          "tangent_chain": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "face_ids",
+          "plane_id",
+          "angle"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.split_body",
+      "title": "Split selected solid bodies with an explicit native cutting tool",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/SplitBodyFeatures_createInput.htm",
+      "notes": "Same-component persistent solid targets and a construction plane, planar face or persistent surface-body cutter. Extension is explicit and may not succeed. No copy of unsplit originals, deletion of pieces or guaranteed resulting body count; multiple targets are not an atomic transaction.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "body_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "splitting_tool_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "extend_tool": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "body_ids",
+          "splitting_tool_id",
+          "extend_tool"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "features.mirror",
+      "title": "Mirror solid bodies as separate parametric bodies",
+      "family": "features",
+      "effect": "local_edit",
+      "provider": "desktop",
+      "maturity": "released",
+      "implemented": true,
+      "cancellation": "not_applicable",
+      "source": "https://help.autodesk.com/cloudhelp/ENU/Fusion-360-API/files/MirrorFeatures_createInput.htm",
+      "notes": "Same-component persistent native solid bodies and a construction plane or planar face. isCombine is always false: originals remain, mirrored bodies stay separate, and overlap is possible. Feature/occurrence mirrors and implicit joins are outside this variant.",
+      "document_required": true,
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "body_ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "plane_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "body_ids",
+          "plane_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "id": "features.hole",
       "title": "Create blind holes on a planar face",
       "family": "features",
@@ -3294,7 +3606,7 @@
       "family": "released_variants_outside_registry",
       "maturity": "released",
       "status": "not_implemented_in_typed_facade",
-      "reason": "Sweep/loft/draft/split/mirror, surface/direct geometry authoring, motion-joint variants, appearance editing, hem/Form/mesh exchange, turning/multi-axis/additive and administration require additional reviewed handlers and live qualification. The assisted native route is separate broad authority."
+      "reason": "Guided/surface/solid-body sweep and loft variants, two-angle draft, feature/occurrence mirrors, general surface/direct geometry authoring, motion-joint variants, appearance editing, hem/Form/mesh exchange, turning/multi-axis/additive and administration require additional reviewed handlers and live qualification. The assisted native route is separate broad authority."
     }
   ]
 }

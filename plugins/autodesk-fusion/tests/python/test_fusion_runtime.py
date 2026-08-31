@@ -140,7 +140,7 @@ class Material(Object):
 class Body(Object):
     def __init__(self, component, name="Body", revision="body-r1"):
         super().__init__("adsk::fusion::BRepBody", parentComponent=component, name=name,
-                         revisionId=revision, isSolid=True, isSheetMetal=False, volume=1.0,
+                         revisionId=revision, isSolid=True, isTemporary=False, isSheetMetal=False, volume=1.0,
                          material=component.material, faces=Collection(), edges=Collection(),
                          boundingBox=NS(minPoint=Point(), maxPoint=Point(1, 1, 1)))
 
@@ -158,7 +158,7 @@ class Sketch(Object):
     def __init__(self, component):
         super().__init__("adsk::fusion::Sketch", parentComponent=component, name="Sketch",
                          revisionId="sketch-r1", profiles=Collection(), sketchPoints=Collection(),
-                         isFullyConstrained=False)
+                         isFullyConstrained=False, isComputeDeferred=False)
         self.sketchCurves = Curves(self)
         self.sketchDimensions = Dimensions(self)
         self.geometricConstraints = Constraints(self)
@@ -345,10 +345,14 @@ class Component(Object):
                          sketches=Collection(), allOccurrences=Collection(), occurrences=Collection(),
                          material=Material(), features=Collection(), flatPattern=None,
                          constructionAxes=Collection(), constructionPlanes=Collection())
-        for name in ("xConstructionAxis", "yConstructionAxis", "zConstructionAxis"):
-            setattr(self, name, Object("adsk::fusion::ConstructionAxis", parentComponent=self, name=name))
-        for name in ("xYConstructionPlane", "xZConstructionPlane", "yZConstructionPlane"):
-            setattr(self, name, Object("adsk::fusion::ConstructionPlane", parentComponent=self, name=name))
+        for name, direction in (("xConstructionAxis", (1, 0, 0)), ("yConstructionAxis", (0, 1, 0)),
+                                ("zConstructionAxis", (0, 0, 1))):
+            setattr(self, name, Object("adsk::fusion::ConstructionAxis", component=self, name=name,
+                                     geometry=Object("adsk::core::InfiniteLine3D", origin=Point(), direction=Point(*direction))))
+        for name, normal in (("xYConstructionPlane", (0, 0, 1)), ("xZConstructionPlane", (0, 1, 0)),
+                             ("yZConstructionPlane", (1, 0, 0))):
+            setattr(self, name, Object("adsk::fusion::ConstructionPlane", component=self, name=name,
+                                     geometry=Object("adsk::core::Plane", origin=Point(), normal=Point(*normal))))
         for name, obj_type in (("extrude", "Extrude"), ("revolve", "Revolve"), ("hole", "Hole"),
                                ("fillet", "Fillet"), ("chamfer", "Chamfer"), ("shell", "Shell"),
                                ("combine", "Combine"), ("circularPattern", "CircularPattern")):
@@ -1050,6 +1054,7 @@ class RuntimeContracts(unittest.TestCase):
     def test_extrude_requires_explicit_participants_for_cut(self):
         sketch = self.add_sketch()
         profile = Object("adsk::fusion::Profile", parentSketch=sketch)
+        sketch.profiles.items.append(profile)
         result = self.call("features.extrude", {"profile_ids": [self.handle(profile)], "distance": "5 mm", "operation": "cut"})
         self.assert_error(result, "PARTICIPANTS_REQUIRED")
         self.assertFalse(self.env.design.rootComponent.features.extrudeFeatures.inputs)
@@ -1058,6 +1063,7 @@ class RuntimeContracts(unittest.TestCase):
         self.add_body()
         sketch = self.add_sketch()
         profile = Object("adsk::fusion::Profile", parentSketch=sketch)
+        sketch.profiles.items.append(profile)
         result = self.call("features.extrude", {"profile_ids": [self.handle(profile)], "distance": "5 mm", "operation": "new_body"})
         self.assertTrue(result["ok"], result)
         inp = self.env.design.rootComponent.features.extrudeFeatures.inputs[0]

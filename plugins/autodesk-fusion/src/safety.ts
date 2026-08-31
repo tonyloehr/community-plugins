@@ -44,23 +44,47 @@ export const hashBytes = (value: string | Buffer): string => createHash('sha256'
 export const newId = (prefix: string): string => `${prefix}_${randomUUID()}`;
 export const now = (): string => new Date().toISOString();
 
-export function redact(value: unknown): unknown {
-  const seen = new WeakSet<object>();
-  const walk = (v: unknown): unknown => {
+function redactBounded(value: unknown, maxDepth: number, maxNodes: number): unknown {
+  const ancestors = new WeakSet<object>();
+  let nodes = 0;
+  const walk = (v: unknown, depth = 0): unknown => {
+    if (++nodes > maxNodes || depth > maxDepth) throw new FusionError('INPUT_LIMIT', 'Redacted data exceeds the structural limit.');
     if (typeof v === 'string') return v.replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]').replace(/([?&](?:access_token|refresh_token|token|code|client_secret)=)[^&#\s]+/gi, '$1[REDACTED]').replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED JWT]');
     if (v && typeof v === 'object') {
-      if (seen.has(v)) return '[circular]';
-      seen.add(v);
-      if (Array.isArray(v)) return v.map(walk);
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, /^(access.?token|refresh.?token|client.?secret|authorization|cookie|password|code_verifier|adsk3LeggedToken)$/i.test(k) ? '[REDACTED]' : walk(x)]));
+      if (ancestors.has(v)) return '[circular]';
+      ancestors.add(v);
+      try {
+        // Plans share selection arrays between their public operation and the
+        // reviewed provider arguments. Only an ancestor reference is a cycle.
+        if (Array.isArray(v)) return v.map(x => walk(x, depth + 1));
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(/^(access.?token|refresh.?token|client.?secret|authorization|cookie|password|code_verifier|adsk3LeggedToken)$/i.test(k) ? '[REDACTED]' : x, depth + 1)]));
+      } finally {
+        ancestors.delete(v);
+      }
     }
     return v;
   };
   return walk(value);
 }
 
+export function redact(value: unknown): unknown {
+  return redactBounded(value, 32, 50_000);
+}
+
+function errorDetails(value: unknown): unknown {
+  try {
+    // Leave structural headroom for the plan, audit and protocol envelopes.
+    // Diagnostic formatting must not discard a known partial/unknown outcome.
+    const cleaned = redactBounded(value, 16, 5_000);
+    assertJson(cleaned, 65_536);
+    return cleaned;
+  } catch {
+    return { diagnostics_omitted: true, reason: 'Diagnostic details could not be safely represented as bounded JSON.' };
+  }
+}
+
 export function errorResult(error: unknown): { code: string; message: string; outcome: string; details?: unknown } {
-  if (error instanceof FusionError) return { code: error.code, message: String(redact(error.message)), outcome: error.outcome, ...(error.details === undefined ? {} : { details: redact(error.details) }) };
+  if (error instanceof FusionError) return { code: error.code, message: String(redact(error.message)), outcome: error.outcome, ...(error.details === undefined ? {} : { details: errorDetails(error.details) }) };
   if (error instanceof Error && 'code' in error) {
     const e = error as Error & { code: string; outcome?: string };
     return { code: e.code, message: String(redact(e.message)), outcome: e.outcome ?? 'unknown' };

@@ -24,7 +24,7 @@ await writeFile(path.join(addinOutput, 'handler-manifest.json'), JSON.stringify(
 const registry = await import(pathToFileURL(path.join(output, 'index.mjs')).href);
 const operations = registry.describeOperations(undefined, true);
 const boundaries = [...registry.capabilityBoundaries,
-  { family: 'released_variants_outside_registry', maturity: 'released', status: 'not_implemented_in_typed_facade', reason: 'Sweep/loft/draft/split/mirror, surface/direct geometry authoring, motion-joint variants, appearance editing, hem/Form/mesh exchange, turning/multi-axis/additive and administration require additional reviewed handlers and live qualification. The assisted native route is separate broad authority.' }
+  { family: 'released_variants_outside_registry', maturity: 'released', status: 'not_implemented_in_typed_facade', reason: 'Guided/surface/solid-body sweep and loft variants, two-angle draft, feature/occurrence mirrors, general surface/direct geometry authoring, motion-joint variants, appearance editing, hem/Form/mesh exchange, turning/multi-axis/additive and administration require additional reviewed handlers and live qualification. The assisted native route is separate broad authority.' }
 ];
 await mkdir(path.join(root, 'docs'), { recursive: true });
 for (const name of ['autodesk-fusion-360-plugin-implementation-plan.md', 'autodesk-fusion-implementation-status.md']) {

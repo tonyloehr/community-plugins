@@ -50,6 +50,8 @@ _FRESHNESS_SCOPE = {
     "basis": "Bounded API observation, not a vendor revision lock or solver verification",
     "engineering_materials": "Material.materialProperties IDs, types, units and complete supported scalar/multiple values; reread on every observation",
     "material_hash_schema": "fusion_engineering_material_v1",
+    "construction_geometry": "Origin and custom construction planes/axes: native component identity, finite origin and signed normal/direction; reread without refreshing selected handles",
+    "construction_geometry_hash_schema": "fusion_construction_geometry_v1",
     "excluded": ["Material.appearance and appearance overrides", "texture/image file contents", "unexposed Autodesk internal state"],
     "visual_evidence": "The state token does not attest pixel-identical appearance or texture freshness; captures/renders require visual review",
 }
@@ -130,7 +132,7 @@ def _optional(obj, name, default=None):
 
 
 def _valid(obj):
-    return obj is not None and _optional(obj, "isValid", True) is not False
+    return obj is not None and obj is not False and _optional(obj, "isValid", True) is not False
 
 
 def _same(left, right):
@@ -258,7 +260,76 @@ def _config_key(design):
     return _hash(_configuration(design))
 
 
+def _construction_geometry(obj):
+    """Observe released construction geometry without registering any handles.
+
+    ConstructionPlane and ConstructionAxis expose .component and .geometry,
+    not a documented revisionId. Preserve the orientation sign because offset,
+    draft and revolution directions depend on it. Missing data is unqualified;
+    neither a token nor an object repr substitutes for geometry evidence.
+    """
+    if not _is(obj, "adsk::fusion::ConstructionPlane", "adsk::fusion::ConstructionAxis"):
+        return None
+    try:
+        comp, geometry = obj.component, obj.geometry
+        if not _valid(obj) or not _valid(comp) or not _is(comp, "adsk::fusion::Component") or not _valid(geometry):
+            return None
+        component_id = _text(comp.id, "construction component identity", 512)
+        plane = _is(obj, "adsk::fusion::ConstructionPlane")
+        if not _is(geometry, "adsk::core::Plane" if plane else "adsk::core::InfiniteLine3D"):
+            return None
+        origin = [_number(v, "construction origin") for v in (geometry.origin.x, geometry.origin.y, geometry.origin.z)]
+        vector = geometry.normal if plane else geometry.direction
+        direction = [_number(v, "construction orientation") for v in (vector.x, vector.y, vector.z)]
+        length = math.hypot(*direction)
+        if not math.isfinite(length) or length == 0:
+            return None
+        result = {"kind": "plane" if plane else "infinite_line", "origin_cm": origin,
+                  "normal" if plane else "direction": direction}
+        fingerprint = _hash({"schema": "fusion_construction_geometry_v1", "component_id": component_id,
+                             "geometry": result})
+        return dict(result, fingerprint_sha256=fingerprint)
+    except (AttributeError, RuntimeError, TypeError, ValueError, OverflowError, FusionError):
+        return None
+
+
+def _construction_component_state(comp, budget, gaps):
+    """Include every origin/custom plane and axis within the shared scan bound."""
+    result = {}
+    specifications = (
+        ("planes", "adsk::fusion::ConstructionPlane", "constructionPlanes",
+         (("origin_xy", "xYConstructionPlane"), ("origin_xz", "xZConstructionPlane"), ("origin_yz", "yZConstructionPlane"))),
+        ("axes", "adsk::fusion::ConstructionAxis", "constructionAxes",
+         (("origin_x", "xConstructionAxis"), ("origin_y", "yConstructionAxis"), ("origin_z", "zConstructionAxis"))),
+    )
+    for label, expected_type, collection_name, origins in specifications:
+        entries = []
+        # All property names in this mapping are fixed reviewed API members.
+        sources = budget.items([(role, _optional(comp, member)) for role, member in origins])
+        collection = _optional(comp, collection_name)
+        count = len(collection) if isinstance(collection, (list, tuple)) else _optional(collection, "count")
+        if not _valid(collection) or type(count) is not int or count < 0:
+            gaps.append("construction_" + label + "_collection_unavailable")
+        else:
+            try:
+                sources += [("custom", item) for item in budget.items(collection)]
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                gaps.append("construction_" + label + "_collection_unavailable")
+        for role, obj in sources:
+            geometry = _construction_geometry(obj)
+            if (geometry is None or not _is(obj, expected_type) or
+                    not _same(_optional(obj, "component"), comp) or _optional(obj, "assemblyContext") is not None):
+                gaps.append("construction_" + label + "_geometry_unavailable")
+                geometry = None
+            entries.append({"source": role, "name": _optional(obj, "name"), "geometry": geometry})
+        result[label] = entries
+    return result
+
+
 def _entity_revision(obj):
+    if _is(obj, "adsk::fusion::ConstructionPlane", "adsk::fusion::ConstructionAxis"):
+        geometry = _construction_geometry(obj)
+        return geometry["fingerprint_sha256"] if geometry is not None else None
     revision = _optional(obj, "revisionId")
     if revision is not None:
         return str(revision)
@@ -314,7 +385,11 @@ def _resolve(ctx, handle, allowed=(), native_only=False):
         _fail("STALE_ENTITY", "The entity is invalid or its type changed")
     if not _same(_optional(obj, "assemblyContext"), entry["assembly_context"]):
         _fail("STALE_ENTITY", "The entity occurrence context changed")
-    if entry["revision"] is not None and _entity_revision(obj) != entry["revision"]:
+    current_revision = _entity_revision(obj)
+    if (_is(obj, "adsk::fusion::ConstructionPlane", "adsk::fusion::ConstructionAxis") and
+            (entry["revision"] is None or current_revision is None)):
+        _fail("FRESHNESS_UNAVAILABLE", "The selected construction geometry cannot be verified; inspect its finite origin and orientation again")
+    if entry["revision"] is not None and current_revision != entry["revision"]:
         _fail("STALE_ENTITY", "The selected geometry changed; inspect and select it again")
     if allowed and _type(obj) not in allowed:
         _fail("WRONG_ENTITY_TYPE", "Entity is not valid for this operation", {"actual": _type(obj), "allowed": list(allowed)})
@@ -579,6 +654,7 @@ def _state(ctx):
         for comp in budget.items(design.allComponents):
             component = {"id": comp.id, "name": comp.name, "part_number": comp.partNumber, "description": comp.description,
                          "material": _material_observation(comp.material, budget, gaps, material_cache), "bodies": [], "sketches": []}
+            component["construction_geometry"] = _construction_component_state(comp, budget, gaps)
             for body in budget.items(comp.bRepBodies):
                 revision = _optional(body, "revisionId")
                 if revision is None:
@@ -593,6 +669,7 @@ def _state(ctx):
                 if revision is None:
                     gaps.append("sketch_revision_unavailable")
                 component["sketches"].append({"revision": revision, "name": sketch.name,
+                                               "compute_deferred": _optional(sketch, "isComputeDeferred"),
                                                "curve_count": sketch.sketchCurves.count,
                                                "profile_count": sketch.profiles.count})
             observation["components"].append(component)
@@ -795,6 +872,8 @@ def _owner_component(ctx, objects, editable=True):
             comp = obj.parentSketch.parentComponent
         elif _is(obj, "adsk::fusion::BRepFace", "adsk::fusion::BRepEdge"):
             comp = obj.body.parentComponent
+        elif _is(obj, "adsk::fusion::ConstructionPlane", "adsk::fusion::ConstructionAxis"):
+            comp = obj.component
         if comp is None:
             _fail("UNSUPPORTED_CONTEXT", "The owning component cannot be established for this entity type")
         if not any(_same(comp, existing) for existing in components):
@@ -846,6 +925,8 @@ def _geometry_frame(ctx, obj):
         comp = obj.parentComponent
     elif _is(obj, "adsk::fusion::BRepFace", "adsk::fusion::BRepEdge"):
         comp = obj.body.parentComponent
+    elif _is(obj, "adsk::fusion::ConstructionPlane", "adsk::fusion::ConstructionAxis"):
+        comp = _optional(obj, "component")
     if occurrence is None and comp is not None:
         return {"kind": "component", "component_id": _register(ctx, comp, "component"), "qualified": True}
     return {"kind": "unqualified_provider_frame", "entity_id": _register(ctx, obj), "qualified": False,
@@ -884,6 +965,12 @@ def _entity_summary(ctx, obj, kind=None):
     if _is(obj, "adsk::fusion::SketchLine"):
         result.update({"start_point_id": _register(ctx, obj.startSketchPoint, "sketch_point"),
                        "end_point_id": _register(ctx, obj.endSketchPoint, "sketch_point")})
+    if _is(obj, "adsk::fusion::ConstructionPlane", "adsk::fusion::ConstructionAxis"):
+        geometry = _construction_geometry(obj)
+        result["construction_geometry"] = (dict(geometry, frame=_geometry_frame(ctx, obj))
+                                             if geometry is not None else None)
+        if geometry is None:
+            result["freshness_unavailable"] = "Construction geometry needs a finite origin, nonzero orientation and known component"
     box = _optional(obj, "boundingBox")
     if box is not None:
         frame = _geometry_frame(ctx, obj)
@@ -1526,37 +1613,284 @@ def _feature_operation(value):
             "cut": ops.CutFeatureOperation, "intersect": ops.IntersectFeatureOperation}[kind]
 
 
+def _persistent_body(body, solid=None):
+    if not _valid(body) or not _is(body, "adsk::fusion::BRepBody"):
+        _fail("WRONG_ENTITY_TYPE", "This feature variant requires a valid BRep body")
+    if _optional(body, "isTemporary") is not False or _optional(body, "assemblyContext") is not None:
+        _fail("UNSUPPORTED_CONTEXT", "This feature variant requires persistent native component bodies")
+    if solid is not None and _optional(body, "isSolid") is not solid:
+        _fail("WRONG_ENTITY_TYPE", "This feature variant requires " + ("solid" if solid else "non-solid") + " bodies")
+    return body
+
+
+def _native_planar_entity(ctx, handle):
+    plane = _resolve(ctx, handle, ("adsk::fusion::ConstructionPlane", "adsk::fusion::BRepFace"), True)
+    if _is(plane, "adsk::fusion::BRepFace"):
+        _planar(plane)
+        _persistent_body(plane.body)
+    return plane
+
+
+def _computed_sketch(sketch):
+    if not _valid(sketch) or not _is(sketch, "adsk::fusion::Sketch"):
+        _fail("WRONG_ENTITY_TYPE", "The selected curve/profile must belong to a valid sketch")
+    if _optional(sketch, "assemblyContext") is not None:
+        _fail("UNSUPPORTED_CONTEXT", "This feature variant requires native sketch geometry")
+    deferred = _optional(sketch, "isComputeDeferred")
+    if deferred is None:
+        _fail("FRESHNESS_UNAVAILABLE", "Sketch computation status is unavailable")
+    if deferred is not False:
+        _fail("INVALID_GEOMETRY", "Finish deferred sketch computation before using its curves or profiles")
+
+
+def _computed_profiles(ctx, handles, minimum=1, maximum=100):
+    _array(handles, "profile_ids", minimum, maximum)
+    profiles = _resolve_many(ctx, handles, ("adsk::fusion::Profile",), True, maximum)
+    budget, observed = _Budget(), []
+    for profile in profiles:
+        sketch = profile.parentSketch
+        _computed_sketch(sketch)
+        members = next((items for prior, items in observed if _same(sketch, prior)), None)
+        if members is None:
+            members = budget.items(sketch.profiles)
+            observed.append((sketch, members))
+        if not any(_same(profile, item) for item in members):
+            # Component.createOpenProfile can also produce a Profile. Only
+            # computed closed regions exposed by this sketch are accepted here.
+            _fail("INVALID_GEOMETRY", "Select a computed closed profile from its parent sketch's profiles collection")
+    return profiles
+
+
 def _feature_participants(ctx, comp, feature_input):
     kind = ctx.args["operation"]
     if kind in ("cut", "intersect"):
         if "participant_body_ids" not in ctx.args:
             _fail("PARTICIPANTS_REQUIRED", "Cut/intersection require an explicit list of participating bodies")
         bodies = _resolve_many(ctx, ctx.args["participant_body_ids"], ("adsk::fusion::BRepBody",), True, 100)
+        for body in bodies:
+            _persistent_body(body, True)
         if not _same(_owner_component(ctx, bodies), comp):
             _fail("UNSUPPORTED_CONTEXT", "Participating bodies must be in the profile's native component")
         feature_input.participantBodies = bodies
+        retained = feature_input.participantBodies
+        if retained is None:
+            _fail("API_REJECTED", "Fusion did not retain the explicit participating bodies; the all-intersected default is not permitted")
+        retained = _items(retained, 100)
+        if (len(retained) != len(bodies) or
+                any(sum(1 for item in retained if _same(item, body)) != 1 for body in bodies) or
+                any(_optional(item, "assemblyContext") is not None for item in retained)):
+            _fail("API_REJECTED", "Fusion changed the explicit participating-body selection")
     elif "participant_body_ids" in ctx.args:
         _fail("INVALID_ARGUMENT", "participant_body_ids applies only to cut and intersect")
-    elif kind == "join" and comp.bRepBodies.count != 1:
-        _fail("AMBIGUOUS_ENTITY", "Join extrusion/revolution requires a component with exactly one body; use separate-body creation and explicit combine for multi-body designs")
+    elif kind == "join":
+        if comp.bRepBodies.count != 1:
+            _fail("AMBIGUOUS_ENTITY", "Join requires a component with exactly one persistent solid body; use separate-body creation and explicit combine for multi-body designs")
+        _persistent_body(comp.bRepBodies.item(0), True)
 
 
-def _added_feature(ctx, collection, feature_input, description):
+def _added_feature(ctx, collection, feature_input, description, solid_component=None, allow_empty_bodies=False):
     name = _text(ctx.args["name"], "name", 256) if "name" in ctx.args else None
     ctx.before()
     feature = ctx.call(collection.add, feature_input)
     ctx.effect(description)
     if name:
         feature.name = name
-    return {"feature": _entity_summary(ctx, feature, "feature"),
-            "bodies": [_entity_summary(ctx, b, "body") for b in _items(feature.bodies, _MAX_RESULT)],
-            "engineering_validation": "Check resulting geometry, feature health and intended dimensions"}
+    feature_summary = _entity_summary(ctx, feature, "feature")
+    body_collection = feature.bodies
+    if solid_component is not None and body_collection is None:
+        _fail("FRESHNESS_UNAVAILABLE", "The feature's resulting-body collection is unavailable", {"feature": feature_summary})
+    bodies = _items(body_collection, _MAX_RESULT)
+    if solid_component is not None:
+        if not bodies and not allow_empty_bodies:
+            _fail("UNEXPECTED_RESULT", "The solid feature reported no created or modified bodies", {"feature": feature_summary})
+        for index, body in enumerate(bodies):
+            try:
+                _persistent_body(body, True)
+            except FusionError as error:
+                _fail("UNEXPECTED_RESULT", "The feature reported an invalid, temporary, non-solid or proxy body",
+                      {"feature": feature_summary, "reported_body_index": index, "cause": error.code})
+            if not _same(_optional(body, "parentComponent"), solid_component):
+                _fail("UNEXPECTED_RESULT", "The feature reported a body outside the selected component",
+                      {"feature": feature_summary, "reported_body_index": index})
+    result = {"feature": feature_summary, "bodies": [_entity_summary(ctx, b, "body") for b in bodies],
+              "body_semantics": "Bodies created or modified by the feature; returned bodies are not necessarily new",
+              "engineering_validation": "Check resulting geometry, feature health and intended dimensions"}
+    if solid_component is not None:
+        result["solid_output_check"] = {"status": "passed", "reported_body_count": len(bodies),
+                                         "empty_allowed": allow_empty_bodies,
+                                         "scope": "Reported bodies only; not a kernel or physical correctness test"}
+        if not bodies:
+            result["solid_output_check"]["note"] = "No remaining reported bodies; engineering validation required"
+    return result
+
+
+@_operation("construction_planes.offset", ("plane_id", "distance"), ("name",))
+def _construction_planes_offset(ctx):
+    _parametric(ctx)
+    plane = _native_planar_entity(ctx, ctx.args["plane_id"])
+    comp = _owner_component(ctx, [plane])
+    distance = _value_input(ctx, ctx.args["distance"], "cm", "distance")
+    name = _text(ctx.args["name"], "name", 256) if "name" in ctx.args else None
+    collection = comp.constructionPlanes
+    input_obj = collection.createInput()
+    if not _valid(input_obj) or input_obj.setByOffset(plane, distance) is not True:
+        _fail("API_REJECTED", "Fusion rejected the signed offset-plane input")
+    ctx.before()
+    created = ctx.call(collection.add, input_obj)
+    ctx.effect("Created a parametric construction plane at the specified signed offset")
+    if name:
+        created.name = name
+    if (not _is(created, "adsk::fusion::ConstructionPlane") or
+            not _same(_optional(created, "component"), comp) or _optional(created, "assemblyContext") is not None):
+        _fail("UNEXPECTED_RESULT", "The offset operation did not return a native construction plane in the selected component")
+    result = _entity_summary(ctx, created, "construction_plane")
+    if result["construction_geometry"] is None:
+        _fail("FRESHNESS_UNAVAILABLE", "The created plane's geometry could not be observed", result)
+    return result
+
+
+@_operation("features.sweep", ("profile_id", "path_entity_ids", "operation"), ("participant_body_ids", "name"))
+def _features_sweep(ctx):
+    _parametric(ctx)
+    profile = _computed_profiles(ctx, [ctx.args["profile_id"]], maximum=1)[0]
+    entities = _resolve_many(ctx, ctx.args["path_entity_ids"],
+                             ("adsk::fusion::SketchLine", "adsk::fusion::BRepEdge"), True, 100)
+    comp = _owner_component(ctx, [profile, *entities])
+    for entity in entities:
+        if _is(entity, "adsk::fusion::SketchLine"):
+            _computed_sketch(entity.parentSketch)
+        else:
+            _persistent_body(entity.body)
+    fusion, core = _api().fusion, _api().core
+    # The collection supplies exact members. The API determines connectivity
+    # order; it must not discover additional sketch curves or body edges.
+    path = fusion.Path.create(_object_collection(entities), fusion.ChainedCurveOptions.noChainedCurves)
+    if path is None or _optional(path, "isValid") is not True:
+        _fail("API_REJECTED", "Fusion could not form a valid path from the selected entities")
+    if _optional(path, "isClosed") is not False:
+        _fail("INVALID_GEOMETRY", "This sweep variant requires a connected open path")
+    if type(path.count) is not int or path.count != len(entities):
+        _fail("API_REJECTED", "The constructed path does not contain exactly the selected members")
+    path_members = []
+    for item in _items(path, 100):
+        entity = _optional(item, "entity")
+        if (not _valid(item) or not _valid(entity) or _optional(entity, "assemblyContext") is not None or
+                not any(_same(entity, selected) for selected in entities) or
+                any(_same(entity, prior) for prior in path_members)):
+            _fail("API_REJECTED", "The constructed path changed or duplicated the explicit source members")
+        path_members.append(entity)
+    collection = comp.features.sweepFeatures
+    input_obj = collection.createInput(profile, path, _feature_operation(ctx.args["operation"]))
+    if not _valid(input_obj):
+        _fail("API_REJECTED", "Fusion rejected the sweep profile/path input")
+    input_obj.isSolid = True
+    input_obj.orientation = fusion.SweepOrientationTypes.PerpendicularOrientationType
+    input_obj.distanceOne = core.ValueInput.createByReal(1.0)
+    input_obj.distanceTwo = core.ValueInput.createByReal(1.0)
+    input_obj.taperAngle = core.ValueInput.createByReal(0.0)
+    input_obj.twistAngle = core.ValueInput.createByReal(0.0)
+    _feature_participants(ctx, comp, input_obj)
+    return _added_feature(ctx, collection, input_obj, "Created a solid perpendicular sweep along the full explicit open path",
+                          solid_component=comp, allow_empty_bodies=ctx.args["operation"] in ("cut", "intersect"))
+
+
+@_operation("features.loft", ("profile_ids", "operation"), ("participant_body_ids", "name"))
+def _features_loft(ctx):
+    _parametric(ctx)
+    profiles = _computed_profiles(ctx, ctx.args["profile_ids"], 2, 20)
+    comp = _owner_component(ctx, profiles)
+    collection = comp.features.loftFeatures
+    input_obj = collection.createInput(_feature_operation(ctx.args["operation"]))
+    if not _valid(input_obj):
+        _fail("API_REJECTED", "Fusion rejected the loft operation input")
+    input_obj.isSolid = True
+    input_obj.isClosed = False
+    for profile in profiles:
+        # add appends in this order and initializes the section to Free. These
+        # sections belong to a new input, not an existing timeline feature.
+        if not _valid(input_obj.loftSections.add(profile)):
+            _fail("API_REJECTED", "Fusion rejected an ordered loft profile section")
+    _feature_participants(ctx, comp, input_obj)
+    return _added_feature(ctx, collection, input_obj, "Created a solid nonclosed loft through the explicitly ordered sketch profiles",
+                          solid_component=comp, allow_empty_bodies=ctx.args["operation"] in ("cut", "intersect"))
+
+
+@_operation("features.draft", ("face_ids", "plane_id", "angle"),
+            ("symmetric", "direction_flipped", "tangent_chain", "name"))
+def _features_draft(ctx):
+    _parametric(ctx)
+    faces = _resolve_many(ctx, ctx.args["face_ids"], ("adsk::fusion::BRepFace",), True, 100)
+    body = _persistent_body(faces[0].body, True)
+    if any(not _same(face.body, body) for face in faces):
+        _fail("UNSUPPORTED_CONTEXT", "This draft variant requires faces from one persistent solid body")
+    plane = _native_planar_entity(ctx, ctx.args["plane_id"])
+    comp = _owner_component(ctx, [*faces, plane])
+    angle_expression, angle = _expression(ctx, ctx.args["angle"], "rad", "angle")
+    if angle == 0 or abs(angle) >= math.pi / 2:
+        _fail("INVALID_ARGUMENT", "This draft variant requires a nonzero signed angle with magnitude below 90 degrees")
+    symmetric = _boolean(ctx.args.get("symmetric", False), "symmetric")
+    flipped = _boolean(ctx.args.get("direction_flipped", False), "direction_flipped")
+    tangent = _boolean(ctx.args.get("tangent_chain", False), "tangent_chain")
+    collection = comp.features.draftFeatures
+    # This released method expects a Python BRepFace list, not ObjectCollection.
+    # Preserve order: Autodesk uses the first face's pointOnFace as the pick.
+    input_obj = collection.createInput(faces, plane, tangent)
+    if not _valid(input_obj) or input_obj.setSingleAngle(symmetric, _api().core.ValueInput.createByString(angle_expression)) is not True:
+        _fail("API_REJECTED", "Fusion rejected the single-angle draft input")
+    input_obj.isDirectionFlipped = flipped
+    return _added_feature(ctx, collection, input_obj, "Drafted the explicitly selected solid-body faces with the specified signed angle",
+                          solid_component=comp)
+
+
+@_operation("features.split_body", ("body_ids", "splitting_tool_id", "extend_tool"), ("name",))
+def _features_split_body(ctx):
+    _parametric(ctx)
+    bodies = _resolve_many(ctx, ctx.args["body_ids"], ("adsk::fusion::BRepBody",), True, 100)
+    for body in bodies:
+        _persistent_body(body, True)
+    tool = _resolve(ctx, ctx.args["splitting_tool_id"],
+                    ("adsk::fusion::ConstructionPlane", "adsk::fusion::BRepFace", "adsk::fusion::BRepBody"), True)
+    if any(_same(tool, body) for body in bodies):
+        _fail("INVALID_ARGUMENT", "A selected target body cannot also be its splitting tool")
+    if _is(tool, "adsk::fusion::BRepFace"):
+        _planar(tool)
+        _persistent_body(tool.body)
+    elif _is(tool, "adsk::fusion::BRepBody"):
+        _persistent_body(tool, False)
+        if type(tool.faces.count) is not int or tool.faces.count < 1:
+            _fail("INVALID_GEOMETRY", "A surface-body splitting tool must contain at least one face")
+    comp = _owner_component(ctx, [*bodies, tool])
+    extend = _boolean(ctx.args["extend_tool"], "extend_tool")
+    collection = comp.features.splitBodyFeatures
+    targets = bodies[0] if len(bodies) == 1 else _object_collection(bodies)
+    input_obj = collection.createInput(targets, tool, extend)
+    if not _valid(input_obj):
+        _fail("API_REJECTED", "Fusion rejected the explicit body-split input")
+    return _added_feature(ctx, collection, input_obj, "Split the explicit solid bodies without copying originals or deleting resulting pieces",
+                          solid_component=comp)
+
+
+@_operation("features.mirror", ("body_ids", "plane_id"), ("name",))
+def _features_mirror(ctx):
+    _parametric(ctx)
+    bodies = _resolve_many(ctx, ctx.args["body_ids"], ("adsk::fusion::BRepBody",), True, 100)
+    for body in bodies:
+        _persistent_body(body, True)
+    plane = _native_planar_entity(ctx, ctx.args["plane_id"])
+    comp = _owner_component(ctx, [*bodies, plane])
+    collection = comp.features.mirrorFeatures
+    input_obj = collection.createInput(_object_collection(bodies), plane)
+    if not _valid(input_obj):
+        _fail("API_REJECTED", "Fusion rejected the body-mirror input")
+    input_obj.isCombine = False
+    return _added_feature(ctx, collection, input_obj, "Created separate mirrored solid bodies while retaining the originals without automatic joining",
+                          solid_component=comp)
 
 
 @_operation("features.extrude", ("profile_ids", "distance", "operation"), ("name", "participant_body_ids"))
 def _features_extrude(ctx):
     _parametric(ctx)
-    profiles = _resolve_many(ctx, ctx.args["profile_ids"], ("adsk::fusion::Profile",), True, 100)
+    profiles = _computed_profiles(ctx, ctx.args["profile_ids"])
     comp = _owner_component(ctx, profiles)
     if any(not _same(p.parentSketch, profiles[0].parentSketch) for p in profiles):
         _fail("UNSUPPORTED_CONTEXT", "This extrusion variant requires profiles from the same sketch")
@@ -1582,7 +1916,7 @@ def _linear_axis(ctx, handle):
 @_operation("features.revolve", ("profile_ids", "axis_id", "angle", "operation"), ("name", "participant_body_ids"))
 def _features_revolve(ctx):
     _parametric(ctx)
-    profiles = _resolve_many(ctx, ctx.args["profile_ids"], ("adsk::fusion::Profile",), True, 100)
+    profiles = _computed_profiles(ctx, ctx.args["profile_ids"])
     axis = _linear_axis(ctx, ctx.args["axis_id"])
     comp = _owner_component(ctx, [*profiles, axis])
     if any(not _same(p.parentSketch, profiles[0].parentSketch) for p in profiles):
@@ -2988,6 +3322,9 @@ SOURCE_MEMBERS = {
     "document.inspect": "Design", "parameters.list": "Design_allParameters", "parameters.set": "Design_modifyParameters",
     "parameters.add": "UserParameters_add", "entities.find": "Design_findEntityByToken", "geometry.measure": "MeasureManager",
     "geometry.check": "Design_analyzeInterference", "sketches.create": "Sketches_add", "sketches.draw": "SketchLines_addTwoPointRectangle",
+    "construction_planes.offset": "ConstructionPlaneInput_setByOffset", "features.sweep": "SweepFeatures_createInput",
+    "features.loft": "LoftSections_add", "features.draft": "DraftFeatures_createInput",
+    "features.split_body": "SplitBodyFeatures_createInput", "features.mirror": "MirrorFeatures_createInput",
     "sketches.dimension": "SketchDimensions_addDistanceDimension", "features.extrude": "ExtrudeFeatureInput_setOneSideExtent",
     "features.revolve": "RevolveFeatureInput_setAngleExtent", "features.hole": "HoleFeatureInput_setPositionByPoint",
     "features.fillet": "FilletEdgeSetInputs_addConstantRadiusEdgeSet", "features.chamfer": "ChamferFeatures_createInput2",

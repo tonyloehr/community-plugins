@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,10 +35,49 @@ function evidence() {
 
 test('authored release corpus has distinct paraphrases, both categories and held-out workflow coverage', () => {
   const summary = validateCorpus(corpus);
-  assert.ok(summary.counts.supported >= 60 && summary.counts.adversarial >= 60);
-  assert.ok(summary.prompt_count >= 240);
-  assert.ok(summary.counts.fixture > 0 && summary.counts.externally_gated > 0);
+  assert.equal(summary.schema_version, 2);
+  assert.equal(summary.case_count, 132);
+  assert.equal(summary.prompt_count, 264);
+  assert.deepEqual(summary.counts, { supported: 66, adversarial: 66, fixture: 24, externally_gated: 108, development: 106, held_out: 26 });
+  assert.deepEqual(summary.workflows.cad_edit, { supported: 16, adversarial: 16, development: 26, held_out: 6 });
+  assert.equal(corpus.cases.filter(entry => entry.provider === 'live_desktop').length, 54);
   assert.ok(Object.values(summary.workflows).every(group => group.held_out > 0));
+});
+
+test('revision 3 preserves exact archived v2 bytes and all retained task identities without inheriting changed cases', async () => {
+  const archivedBytes = await readFile(new URL('../evaluation/workflow-corpus-v2.json', import.meta.url));
+  assert.equal(createHash('sha256').update(archivedBytes).digest('hex'), '0ab4e43bb0805e4ef109c3ec0ec0d81e9982da06f6ee4ca7bfeefa19f9d266e4');
+  const archived = JSON.parse(archivedBytes);
+  assert.equal(archived.schema_version, 2);
+  assert.equal(archived.cases.length, 120);
+  const currentById = new Map(corpus.cases.map(entry => [entry.id, entry]));
+  for (const entry of archived.cases) {
+    if (entry.id === 'a-cad-edit-08') continue;
+    assert.deepEqual(currentById.get(entry.id), entry, `Retained case changed: ${entry.id}`);
+  }
+  assert.equal(currentById.has('a-cad-edit-08'), false);
+  const replacement = currentById.get('a-cad-edit-history-v3');
+  assert.ok(replacement);
+  const priorHistory = archived.cases.find(entry => entry.id === 'a-cad-edit-08');
+  for (const key of ['category', 'workflow', 'split', 'provider']) assert.equal(replacement[key], priorHistory[key]);
+  assert.equal(replacement.oracle.kind, 'manual_engineering');
+  assert.deepEqual(replacement.oracle.required_observations, []);
+  assert.notDeepEqual(replacement.prompts, priorHistory.prompts);
+  const oldIds = new Set(archived.cases.map(entry => entry.id));
+  const additions = corpus.cases.filter(entry => !oldIds.has(entry.id) && entry.id !== replacement.id);
+  assert.equal(additions.length, 12);
+  for (const entry of additions) {
+    assert.equal(entry.provider, 'live_desktop');
+    assert.equal(entry.workflow, 'cad_edit');
+    assert.equal(entry.oracle.kind, 'manual_engineering');
+    assert.deepEqual(entry.oracle.required_observations, []);
+    assert.equal(entry.prompts.length, 2);
+  }
+  for (const category of ['supported', 'adversarial']) {
+    assert.equal(additions.filter(entry => entry.category === category).length, 6);
+    assert.equal(additions.filter(entry => entry.category === category && entry.split === 'held_out').length, 1);
+  }
+  assert.deepEqual(additions.filter(entry => entry.split === 'held_out').map(entry => entry.id).sort(), ['a-cad-edit-loft-v3', 's-cad-edit-split-v3']);
 });
 
 test('invalid corpus coverage, duplicate prompts and invented fixture operations are rejected', () => {
@@ -56,6 +96,9 @@ test('invalid corpus coverage, duplicate prompts and invented fixture operations
 test('plans preserve every paraphrase/repeat and gated denominator without inventing model execution', () => {
   const runs = planRuns(corpus);
   assert.equal(runs.length, corpus.cases.reduce((total, entry) => total + entry.prompts.length * 3, 0));
+  assert.equal(runs.length, 792);
+  assert.equal(runs.filter(run => run.execution === 'fixture_model_run').length, 144);
+  assert.equal(runs.filter(run => run.execution === 'not_run_external_gate').length, 648);
   assert.equal(new Set(runs.map(run => run.run_id)).size, runs.length);
   const summary = aggregateReport(runs, []);
   assert.equal(summary.summary.executed, 0);

@@ -54,22 +54,40 @@ var hash = (value) => createHash("sha256").update(canonicalJson(value)).digest("
 var hashBytes = (value) => createHash("sha256").update(value).digest("hex");
 var newId = (prefix) => `${prefix}_${randomUUID()}`;
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
-function redact(value) {
-  const seen = /* @__PURE__ */ new WeakSet();
-  const walk = (v) => {
+function redactBounded(value, maxDepth, maxNodes) {
+  const ancestors = /* @__PURE__ */ new WeakSet();
+  let nodes = 0;
+  const walk = (v, depth = 0) => {
+    if (++nodes > maxNodes || depth > maxDepth) throw new FusionError("INPUT_LIMIT", "Redacted data exceeds the structural limit.");
     if (typeof v === "string") return v.replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]").replace(/([?&](?:access_token|refresh_token|token|code|client_secret)=)[^&#\s]+/gi, "$1[REDACTED]").replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED JWT]");
     if (v && typeof v === "object") {
-      if (seen.has(v)) return "[circular]";
-      seen.add(v);
-      if (Array.isArray(v)) return v.map(walk);
-      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, /^(access.?token|refresh.?token|client.?secret|authorization|cookie|password|code_verifier|adsk3LeggedToken)$/i.test(k) ? "[REDACTED]" : walk(x)]));
+      if (ancestors.has(v)) return "[circular]";
+      ancestors.add(v);
+      try {
+        if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1));
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(/^(access.?token|refresh.?token|client.?secret|authorization|cookie|password|code_verifier|adsk3LeggedToken)$/i.test(k) ? "[REDACTED]" : x, depth + 1)]));
+      } finally {
+        ancestors.delete(v);
+      }
     }
     return v;
   };
   return walk(value);
 }
+function redact(value) {
+  return redactBounded(value, 32, 5e4);
+}
+function errorDetails(value) {
+  try {
+    const cleaned = redactBounded(value, 16, 5e3);
+    assertJson(cleaned, 65536);
+    return cleaned;
+  } catch {
+    return { diagnostics_omitted: true, reason: "Diagnostic details could not be safely represented as bounded JSON." };
+  }
+}
 function errorResult(error51) {
-  if (error51 instanceof FusionError) return { code: error51.code, message: String(redact(error51.message)), outcome: error51.outcome, ...error51.details === void 0 ? {} : { details: redact(error51.details) } };
+  if (error51 instanceof FusionError) return { code: error51.code, message: String(redact(error51.message)), outcome: error51.outcome, ...error51.details === void 0 ? {} : { details: errorDetails(error51.details) } };
   if (error51 instanceof Error && "code" in error51) {
     const e = error51;
     return { code: e.code, message: String(redact(e.message)), outcome: e.outcome ?? "unknown" };
@@ -15191,6 +15209,12 @@ add("sketches.constrain", "Apply explicit typed geometric sketch constraints", "
 ])).min(1).max(100) }), "GeometricConstraints");
 add("features.extrude", "Create a parametric extrude feature", "local_edit", external_exports.strictObject({ profile_ids: refs, distance: expression, operation, participant_body_ids: refs.optional(), name: name.optional() }), "ExtrudeFeatures");
 add("features.revolve", "Create a parametric revolve feature", "local_edit", external_exports.strictObject({ profile_ids: refs, axis_id: ref, angle: expression, operation, participant_body_ids: refs.optional(), name: name.optional() }), "RevolveFeatures");
+add("construction_planes.offset", "Create a parametric offset construction plane", "local_edit", external_exports.strictObject({ plane_id: ref, distance: expression, name: name.optional() }), "ConstructionPlaneInput_setByOffset", { notes: "Uses a native construction plane or planar face in the same editable component. Signed, unit-aware offset; no design-mode conversion or implicit occurrence transform." });
+add("features.sweep", "Sweep one closed sketch profile along an explicit open path", "local_edit", external_exports.strictObject({ profile_id: ref, path_entity_ids: refs, operation, participant_body_ids: refs.optional(), name: name.optional() }), "SweepFeatures_createInput", { notes: "Solid full-path sweep, perpendicular orientation, zero twist/taper, no guides. Native sketch lines or BRep edges only; exact path membership is checked without automatic chain expansion. Fusion determines connected path order. Cut/intersect require explicit bodies; join requires a single-body component." });
+add("features.loft", "Loft ordered closed sketch profiles into a solid", "local_edit", external_exports.strictObject({ profile_ids: external_exports.array(ref).min(2).max(20), operation, participant_body_ids: refs.optional(), name: name.optional() }), "LoftSections_add", { notes: "Two to twenty ordered native computed sketch profiles in one component; solid, nonclosed loft with free section conditions and no rails. Cut/intersect require explicit bodies; join requires a single-body component." });
+add("features.draft", "Apply a single-angle draft to explicitly selected solid-body faces", "local_edit", external_exports.strictObject({ face_ids: refs, plane_id: ref, angle: expression, symmetric: external_exports.boolean().optional(), direction_flipped: external_exports.boolean().optional(), tangent_chain: external_exports.boolean().optional(), name: name.optional() }), "DraftFeatures_createInput", { notes: "Faces must belong to one persistent solid body. Signed, nonzero angle with magnitude below 90 degrees is a plugin limit. Flags default false; tangent chaining may include connected faces and symmetric mode splits at the parting plane. Fusion uses the first face pointOnFace, not a caller-picked point; angle sign and direction flip jointly control direction." });
+add("features.split_body", "Split selected solid bodies with an explicit native cutting tool", "local_edit", external_exports.strictObject({ body_ids: refs, splitting_tool_id: ref, extend_tool: external_exports.boolean(), name: name.optional() }), "SplitBodyFeatures_createInput", { notes: "Same-component persistent solid targets and a construction plane, planar face or persistent surface-body cutter. Extension is explicit and may not succeed. No copy of unsplit originals, deletion of pieces or guaranteed resulting body count; multiple targets are not an atomic transaction." });
+add("features.mirror", "Mirror solid bodies as separate parametric bodies", "local_edit", external_exports.strictObject({ body_ids: refs, plane_id: ref, name: name.optional() }), "MirrorFeatures_createInput", { notes: "Same-component persistent native solid bodies and a construction plane or planar face. isCombine is always false: originals remain, mirrored bodies stay separate, and overlap is possible. Feature/occurrence mirrors and implicit joins are outside this variant." });
 add("features.hole", "Create blind holes on a planar face", "local_edit", external_exports.strictObject({ face_id: ref, frame: external_exports.literal("component"), positions: external_exports.array(point3).min(1).max(50), diameter: expression, depth: expression }), "HoleFeatures");
 add("features.fillet", "Fillet selected edge sets", "local_edit", external_exports.strictObject({ edge_ids: refs, radius: expression, tangent_chain: external_exports.boolean().optional() }), "FilletFeatures");
 add("features.chamfer", "Chamfer selected edge sets", "local_edit", external_exports.strictObject({ edge_ids: refs, distance: expression, tangent_chain: external_exports.boolean().optional() }), "ChamferFeatures_createInput2");
@@ -15243,7 +15267,11 @@ function parseOperation(value) {
   if (definition.document && !envelope.data.document_id) throw new FusionError("DOCUMENT_REQUIRED", "Choose an explicit document reference from documents.list.");
   if (!definition.document && envelope.data.document_id) throw new FusionError("INVALID_INPUT", "This session operation must not target a document.");
   const result = { ...envelope.data, args: parsed.data };
-  if (["features.extrude", "features.revolve"].includes(result.operation) && ["cut", "intersect"].includes(result.args.operation) && !result.args.participant_body_ids) throw new FusionError("EXPLICIT_PARTICIPANTS_REQUIRED", "Cut/intersect must enumerate participant bodies.");
+  if (["features.extrude", "features.revolve", "features.sweep", "features.loft"].includes(result.operation)) {
+    const needsParticipants = ["cut", "intersect"].includes(result.args.operation);
+    if (needsParticipants && !result.args.participant_body_ids) throw new FusionError("EXPLICIT_PARTICIPANTS_REQUIRED", "Cut/intersect must enumerate participant bodies.");
+    if (!needsParticipants && result.args.participant_body_ids) throw new FusionError("INVALID_INPUT", "Participant bodies apply only to cut/intersect; create a separate body and use explicit combine when a join target is ambiguous.");
+  }
   return result;
 }
 var capabilityBoundaries = [

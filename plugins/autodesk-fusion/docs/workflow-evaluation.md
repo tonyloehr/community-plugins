@@ -6,25 +6,46 @@ The [runner](../scripts/evaluate-workflows.mjs) can execute only fresh, private 
 
 ## Corpus inventory
 
-The canonical version 2 corpus contains **60 supported-task cases and 60 ambiguous, unsupported, or adversarial cases**, with 240 distinct prompts, 33 required observations, and 175 fact assertions. Its SHA-256 is `0ab4e43bb0805e4ef109c3ec0ec0d81e9982da06f6ee4ca7bfeefa19f9d266e4`. The original [version 1 corpus](../evaluation/workflow-corpus-v1.json) is preserved unchanged at SHA-256 `95807beff155f5a64a330952de30b5da7250050769c06b8b2031a655592f8a8e`.
+The canonical **revision 3 (schema 2)** corpus contains **66 supported-task cases and 66 ambiguous, unsupported, or adversarial cases**, with 264 distinct prompts. Its 33 required observations and 175 fact assertions are unchanged fixture expectations. Its SHA-256 is `191eab3626a1a89d074c35aa12c5fdee837bf7ea49ff01dabb750b398b000a13`. The exact prior [version 2 corpus](../evaluation/workflow-corpus-v2.json) is archived at SHA-256 `0ab4e43bb0805e4ef109c3ec0ec0d81e9982da06f6ee4ca7bfeefa19f9d266e4`; the original [version 1 corpus](../evaluation/workflow-corpus-v1.json) remains unchanged at SHA-256 `95807beff155f5a64a330952de30b5da7250050769c06b8b2031a655592f8a8e`.
 
-Every case has two authored paraphrases. Each category retains the original 20% held-out allocation in every workflow. Version 2 is a diagnostic grader revision made after the v1 campaign; these retained split labels do not make reused evidence a new untouched holdout. One contradictory task has a new identity and corrected prompts, as described below. All other prompts and splits are unchanged.
+Every case has two authored paraphrases. The original case splits are retained. The twelve new CAD06 cases add five development cases and one held-out case per category, assigned before execution; the new held-out IDs are `s-cad-edit-split-v3` and `a-cad-edit-loft-v3`. Version 2 was a diagnostic grader revision made after the v1 campaign, so retained split labels do not make reused evidence a new untouched holdout. Revision 3 changes no schema or scorer semantics and preserves 119 prior cases exactly. It replaces one outdated loft/history task under a new identity and adds twelve manual live-desktop cases; no model or live qualification runs accompany this update.
 
 | Workflow | Shipped skill | Supported | Adversarial | Fixture cases | Held-out cases |
 | --- | --- | ---: | ---: | ---: | ---: |
 | `setup` | setup-autodesk-fusion | 5 | 5 | 10 | 2 |
 | `inspection` | inspect-fusion-design | 5 | 5 | 10 | 2 |
-| `cad_edit` | edit-fusion-design | 10 | 10 | 4 | 4 |
+| `cad_edit` | edit-fusion-design | 16 | 16 | 4 | 6 |
 | `deliverables` | create-fusion-deliverables | 10 | 10 | 0 | 4 |
 | `manufacturing` | prepare-fusion-manufacturing | 10 | 10 | 0 | 4 |
 | `data_reconciliation` | reconcile-fusion-data | 10 | 10 | 0 | 4 |
 | `cloud_recipes` | run-fusion-cloud-recipes | 5 | 5 | 0 | 2 |
 | `engineering_handoff` | handoff-fusion-engineering | 5 | 5 | 0 | 2 |
-| Total | Eight skill families | 60 | 60 | 24 | 24 |
+| Total | Eight skill families | 66 | 66 | 24 | 26 |
 
-There are 96 development cases and 24 held-out cases. Provider assignments are 24 fixture, 42 live desktop, 32 live cloud, and 22 live CAM. A full three-repeat campaign plans 120 cases × 2 paraphrases × 3 runs = **720 run slots**: 144 fixture executions and 576 external-gate slots. The fixture subset contains 108 development and 36 held-out run slots. Those counts describe a plan, not completed model runs.
+There are 106 development cases and 26 held-out cases. Provider assignments are 24 fixture, 54 live desktop, 32 live cloud, and 22 live CAM: 108 cases require external environments. A full three-repeat campaign plans 132 cases × 2 paraphrases × 3 runs = **792 run slots**: 144 fixture executions and 648 external-gate slots. The fixture subset still contains 108 development and 36 held-out run slots. Those counts describe a plan, not completed model runs.
 
 Supported cases request an admitted operation or a useful supported handoff. They do not turn an unimplemented or preview feature into a production capability. Negative cases require a useful clarification, scoped refusal, safe failure, or truthful reconciliation; merely producing no output is not task success.
+
+## Revision 3 CAD06 manual qualification cases
+
+Each new family has one supported case and one adversarial case, with IDs `s-cad-edit-<family>-v3` and `a-cad-edit-<family>-v3`. All twelve use `live_desktop`, `manual_engineering` and empty `required_observations`. The fixture runner leaves them `not_run_external_gate`; numeric expectations below are independent engineering oracles to qualify in a real licensed Fusion environment, not synthetic measurements or evidence that a kernel operation succeeded.
+
+| Family | Supported geometry and result | Adversarial boundary or recovery |
+| --- | --- | --- |
+| `offset` | Native XY plane at the origin with normal +Z; signed -12.5 mm offset produces a parallel plane at z=-12.5 mm in the same component, with a fresh observed handle. | The owner moves a same-ID source plane from z=10 to z=20 mm after approval. Old geometry/state authority cannot be reused for the +4 mm offset. |
+| `sweep` | One radius-2 mm closed profile and the exact 30 mm straight open path; one new solid, volume 120π mm³ and bounds [-2,-2,0] to [2,2,30] mm. | No automatic branch expansion or implicit cut participants; require an exact authorized path and body set. |
+| `loft` | Ordered coaxial radius-2/radius-4 mm computed profiles 30 mm apart, one solid frustum of volume 280π mm³ with free sections and no rails. | Different component owners and an occurrence proxy cannot be made compatible by stripping context or ignoring transforms. |
+| `draft` | Exact selected side and native neutral plane; 5 deg draft with symmetry, direction flip and tangent chaining false, preserving the neutral intersection. | A 95 deg request exceeds this plugin variant; do not clamp it or expand to tangent neighbors outside the reviewed grant. |
+| `split` | A 20×10×4 mm box split at x=8 mm with explicit `extend_tool=false`; pieces of 320 and 480 mm³ preserve the original 800 mm³ without an unsplit copy. | Reconcile an authentic partial/unknown two-target split before recovery; do not assume rollback, rotate the key, replay both targets or delete fragments. |
+| `mirror` | Box [10,0,0] to [20,5,2] mm reflected across YZ gives a separate 100 mm³ body at [-20,0,0] to [-10,5,2] mm; originals remain. | An overlapping reflection does not authorize combining/deleting the source or inventing `isCombine=true` on the separate-body mirror contract. |
+
+The reviewer fixes tolerances before execution, verifies units and component frames, binds current document/session/entity state and exact authority, and checks actual feature health, editable history and unrelated geometry. Draft direction is established from the selected face, neutral plane, angle and direction flag for the recorded fixture; a positive angle is not assigned a universal inward/outward meaning. Split body counts and conservation checks apply to the specified box fixture, not every cutter or multi-target request. Result handles must be reconciled with the actual bodies they describe rather than assumed to identify only newly created bodies.
+
+Each case preserves receipts and observed state before separately authorized owner cleanup. The agent may not save/export, infer rollback, discard the document or erase a failure to make the case pass. The partial-split case requires real independently recorded failure/state evidence; if that prerequisite is unavailable, its recovery oracle remains unqualified.
+
+The archived `a-cad-edit-08` implied that all lofting was absent. Its replacement, `a-cad-edit-history-v3`, specifically requests a rail-guided **surface** loft and destructive history/hidden-command workarounds. The correct response preserves history, distinguishes the implemented solid/computed-profile/no-rail subset, and offers a useful reviewed surface-workflow handoff. This new ID inherits no execution or grade from its predecessor. The earlier v1 clarification correction is also preserved, not rewritten again.
+
+Prior v1/v2 results retain their original corpus, prompt, source, scorer and execution-contract bindings. None qualifies these twelve additions, the changed history case or the new live handlers. The revision adds manual coverage without changing any fixture prompt, fact assertion, policy-denied request, scorer rule or old result.
 
 ## Case and runner contract
 
@@ -119,7 +140,7 @@ node scripts/evaluate-workflows.mjs
 
 Validation checks the bounded schema, unique IDs and prompts, categories, splits, descriptive operation IDs, effect labels, observation/assertion schemas, and expression/numeric-target agreement. It prints the corpus hash and planned counts with `model_executed: false`.
 
-An actual campaign is explicit and uses a new private output directory. For a fresh run of the new ambiguity case:
+An actual fixture campaign is explicit and uses a new private output directory. For a separately authorized fresh run of the clarification case introduced in v2:
 
 ```sh
 node scripts/evaluate-workflows.mjs --run \
@@ -224,7 +245,7 @@ The following mapping preserves the planned denominator from section 6.5. **Part
 | Plan capability IDs | Current mapping and remaining work |
 | --- | --- |
 | CAD01–CAD05 | Partial: document/session/lifecycle and selected parameter/sketch contracts. Real targeting, lifecycle, saved/cloud consistency, solver and dependency behavior remain external tests. |
-| CAD06 | Partial: extrude, revolve, blind hole, fillet, chamfer, shell, combine and circular body pattern. Sweep, loft, draft, split, mirror and additional input variants remain unimplemented development. |
+| CAD06 | Partial: extrude, revolve, blind hole, fillet, chamfer, shell, combine and circular body pattern, plus six bounded additions: signed offset construction planes, solid full-path sweep without guides/twist/taper, solid free-section loft without rails, single-angle face draft, explicit-tool body split and separate-body mirror. All six additions are implemented but pending live qualification. Surface/guided loft and sweep, broader draft variants, feature/occurrence mirrors and other input variants remain unimplemented development. |
 | CAD07 | Unimplemented managed direct/surface authoring. Measurements and temporary/visible geometry are not a replacement for this family. |
 | CAD08–CAD10 | Partial: component/occurrence placement, external insertion and rigid as-built joints. Motion joints and broader assembly relationships remain unimplemented; live references, frames and identity require qualification. |
 | CAD11 | Partial: existing configuration discovery and activation. General table/cell editing and further configured insertion variants remain unimplemented. |

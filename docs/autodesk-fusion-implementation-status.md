@@ -1,6 +1,6 @@
 # Autodesk Fusion implementation and validation status
 
-Date: August 29, 2026. Package: `autodesk-fusion` 0.1.0. Branch: `codex/autodesk-fusion-interop`.
+Date: August 31, 2026. Package: `autodesk-fusion` 0.1.0. Branch: `codex/autodesk-fusion-interop`.
 
 The user authorized implementation, testing and a pull request after the [research plan](autodesk-fusion-360-plugin-implementation-plan.md). The repository now contains an installable interoperability layer. **It is an implementation preview, not a qualified enterprise release.** The original acceptance contract remains in force; missing licensed tests, undeveloped variants and enterprise release work are not counted as complete.
 
@@ -11,7 +11,7 @@ The user authorized implementation, testing and a pull request after the [resear
 | Codex package | Marketplace entry, eight skills, bundled MCP server/CLI, notices, inventory, declarations and installed documentation | No startup dependency download or implicit Autodesk sign-in; fixture mode is synthetic |
 | Native desktop | Negotiated MCP client, exact endpoint/tool/schema enrollment, fixed reviewed Python and bounded session handling | Requires Fusion's actual tool/schema; Autodesk's local endpoint is unauthenticated |
 | Optional add-in | Explicit installation, authenticated pairing, private state, bounded IO queue and Fusion main-thread event dispatch | No evaluator or silent fallback; installed Fusion/OS behavior still needs qualification |
-| Desktop API | 54 reviewed operation IDs with generated schemas and corresponding Python handlers | Each ID has a bounded variant, not every overload, UI command or manufacturing process |
+| Desktop API | 60 reviewed operation IDs with generated schemas and corresponding Python handlers | Each ID has a bounded variant, not every overload, UI command or manufacturing process |
 | Governance | Documents/entities/units/read scope, state-bound plans, expiring grants, durable intent, process leases, idempotency and recovery/handoff records | No global transaction, broad automatic undo, Autodesk edit lock or enforcement over other host tools |
 | Artifacts/jobs | Unique quarantine, immutable completed receipts, path/size/alias checks and durable jobs for session-scoped futures | Format signatures are not geometric fidelity; unknown outcomes and unsupported cancellation remain explicit |
 | Cloud data | Scoped APS hierarchy/version reads, fixed MFGDM v3 queries/current-property writes/read-back, Fusion Manage reads/drafts | No generic GraphQL/URL execution, BOM publication, PLM release, administration or native-token reuse |
@@ -21,11 +21,51 @@ The user authorized implementation, testing and a pull request after the [resear
 
 The [support matrix](../plugins/autodesk-fusion/docs/support-matrix.md) and [operation schemas](../plugins/autodesk-fusion/docs/operation-catalog.json) define the actual desktop subset. The [enterprise guide](../plugins/autodesk-fusion/docs/enterprise.md) defines cloud and customer extension contracts.
 
-CAD includes parameter batches, sketch curves/dimensions/constraints, extrude/revolve/blind-hole/fillet/chamfer/shell/combine/circular-body-pattern variants, components, rigid as-built joints, configuration activation and physical materials. Exchange includes trusted STEP/F3D import; STEP/STL/F3D export; existing drawing PDF and flat-pattern DXF; viewport capture and local rendering. CAM includes milling schema discovery, `face`/`adaptive`/`parallel`, pinned tools/templates, generation futures, estimates, setup sheets and reviewed NC candidates.
+CAD includes parameter batches, sketch curves/dimensions/constraints, parametric offset planes, extrude/revolve/blind-hole/fillet/chamfer/shell/combine/circular-body-pattern variants, explicit-path solid sweep, ordered-profile solid loft, single-angle face draft, explicit-tool solid-body split and separate-body mirror, components, rigid as-built joints, configuration activation and physical materials. Exchange includes trusted STEP/F3D import; STEP/STL/F3D export; existing drawing PDF and flat-pattern DXF; viewport capture and local rendering. CAM includes milling schema discovery, `face`/`adaptive`/`parallel`, pinned tools/templates, generation futures, estimates, setup sheets and reviewed NC candidates.
 
-Sweep/loft/draft/split/mirror, general surface/direct geometry, motion-joint variants, appearance editing, advanced sheet metal/Form/mesh, turning/multi-axis/additive/probing and administration are outside the typed registry. Existing drawing PDF export is not drawing authoring. Preview Electronics, Animation, drawing creation, Simulation and unverified Generative Design remain research or handoff boundaries. Explicit assisted `native.invoke` exposes broader discovered native tools with broad authority outside managed guarantees; it does not qualify those variants.
+Guided/surface/solid-body sweep, surface/guided/closed loft, two-angle draft, feature/occurrence mirrors, additional splitting variants, general surface/direct geometry, motion-joint variants, appearance editing, advanced sheet metal/Form/mesh, turning/multi-axis/additive/probing and administration are outside the typed registry. Existing drawing PDF export is not drawing authoring. Preview Electronics, Animation, drawing creation, Simulation and unverified Generative Design remain research or handoff boundaries. Explicit assisted `native.invoke` exposes broader discovered native tools with broad authority outside managed guarantees; it does not qualify those variants.
 
-## Verification evidence
+## CAD feature expansion
+
+The [CAD feature guide](../plugins/autodesk-fusion/docs/cad-features.md) specifies the six added operation contracts and their required live geometry oracles. This work also corrects a real API mapping defect: construction planes and axes expose `.component`, not `.parentComponent`. Their finite origin/normal/direction observations now participate in entity and document freshness, including origin and custom construction geometry. Reading state does not refresh a stale selection. Existing sketch/revolve inputs benefit from the corrected ownership mapping.
+
+The expansion preserves explicit cut/intersect participants, single-body joins, native component scope, parametric history, current state and unknown/partial outcome reporting. It adds bounded computed-profile checks and explicit separate-body mirror, split-extension and draft behavior. A planar split cutter may belong to a target body; it is a distinct face selection, not the same body object. No test-driven blanket prohibition was added.
+
+Corpus revision 3 retains schema/scorer version 2 and all fixture prompts/observations. It archives exact v2 bytes, replaces the outdated all-loft-unsupported task under a new identity and adds twelve manual CAD cases. The current plan has 132 cases, 264 prompts and 792 run slots: 144 fixture and 648 requiring external environments. None of the new cases has a live execution or inherited passing grade.
+
+Local verification of this expansion is tracked separately from the earlier candidate below. No older licensed, model, benchmark or compiled-contract result is relabeled as execution of the new handlers. Managed qualification must bind the changed handler and compiled implementation; the synthetic bracket does not simulate the six new operations.
+
+### Verification of the CAD expansion
+
+| Check | Observed result | Scope |
+| --- | --- | --- |
+| Node 22.19.0, 24.20.0 and 26.0.0 on macOS arm64 | Build/typecheck and 333 Node tests passed per runtime; 12 explicit skips | Eleven real-Windows storage cases and one opt-in OS-vault case remain skipped in this matrix |
+| Python 3.14.6 | 156 passed, one licensed-Fusion placeholder skipped per runtime | 109 existing contracts plus 47 new strict API-double cases; no Autodesk kernel was loaded |
+| Focused CAD/MCP/diagnostic regressions | 22 passed, included in the full Node suite | Exact public plan arrays, explicit participants, stale bindings, unchanged grants, unsupported fixture operations, durable partial/unknown outcomes and restart without replay |
+| Package reproducibility | All 146 receipt entries and complete receipt bytes matched Node 22/24 fresh offline builds, repeat builds and the Node 26 build | Cached Node archives/checksum files and every extracted runtime entry were reverified. All 1,737 installed dependency files/symlinks matched; npm-generated metadata differed only in 20 registry URL fields and was retained separately |
+| Manifest, skills and repository checks | Plugin, eight skills, marketplace and package/source/native/license validators passed | Metadata validators used isolated PyYAML 6.0.3 after the default interpreter reported the missing dependency; no plugin runtime dependency or validator requirement was removed |
+| Actual Codex direct-MCP smoke | Two development paraphrases passed: 25 tool calls, zero tool errors, two distinct authorized executions | Each stored `5 cm`, observed 50 mm and analytic volume 5,000 mm³, preserved other parameters, retained intact public selection arrays and completed process/pipe cleanup |
+
+The typed MCP tests exposed a real pre-existing redaction defect: repeated references to selection arrays were incorrectly replaced with `[circular]`. Redaction now distinguishes shared references from actual cycles, counts replacement leaves and bounds expansion. Error details have a separate 16-level/5,000-node/64-KiB budget so invalid or oversized diagnostics cannot prevent the known code/outcome from reaching the plan and audit ledger. Omitted details are explicitly marked; raw diagnostics are not exposed, effects are not described as absent, and execution is not replayed.
+
+The first focused Node run retained two failures: the real redaction defect and a test that supplied JavaScript `undefined` instead of omitting a JSON field. The latter now checks both distinct cases. The initial Python draft test also incorrectly prohibited a planar cutter face owned by a target body; its failure and correction remain recorded. A later diagnostic-limit probe demonstrated the outcome-recording defect before its repair. These are preserved failures, not discarded attempts or weakened safety expectations.
+
+This checkpoint binds handler `4b3bf6281bc516fe82a723529effed96c793af6e0f054db0e63d154a6884f7df` and compiled contract `d5c3390d7e3e57d05ef8388d55c1846881d1c01edc929f43cdeead6e95ab9adb`. The current corpus hashes to `191eab3626a1a89d074c35aa12c5fdee837bf7ea49ff01dabb750b398b000a13`. The unchanged runner remains `3ae17944c01f57f7b5fddb04c0a5e8e2cc2bd2fcba3f068f9233af2fa197d9ee`; its two-run report hashes to `b8d3b99fae08573152500dda55ab67bb51b1ff31b7d9ddf6091419f8d19964de`. Both clients exited successfully, while the harness correctly retained exit 2 for incomplete engineering acceptance. No denied case was retried, no historical campaign was regraded, and no immutable model checkpoint was exposed. Final status-document refreshes are kept separate from tested executable bytes and checked for reproducibility.
+
+These checks prove the direct-MCP fixture route, not actual installed-plugin skill routing. Bounded inspection of Codex CLI 0.144.3 found no supported isolated uninstalled-plugin loader under the test constraints; no global plugin installation or configuration change was performed. Licensed tests, independent rubric review and publishing authorization remain open.
+
+### Required local workflow work still open
+
+The acceptance audit identified concrete development beyond the CAD variants. These items are not being recast as Autodesk-access blockers:
+
+- W12 engineering handoff needs typed requirements, source baselines, unit-bearing checks, assumptions, reviewer assignments and stale-evidence reporting. The current title/plan-summary record cannot represent everything requested by the skill.
+- W10 needs whole-batch validation, immutable variant/job mapping and resumable per-variant manifests over the existing individual job and budget primitives.
+- W14 and the exchange contract need portable artifact provenance and bounded content checks, including requested PNG dimensions and finite, structurally valid STL geometry. These checks will still not establish live round-trip fidelity.
+- R5 needs local retention inventory and reviewable archival planning with dependency/hold protection. Retention periods and any eventual destructive execution remain owner-selected; no deletion is implied by this planning work.
+
+## Earlier 54-operation candidate evidence
+
+The following results belong to the verified `441ef7f` publication candidate or its explicitly named earlier checkpoints. They remain historical evidence, not a passing run of the subsequent CAD expansion.
 
 | Evidence | Actual result | What it establishes |
 | --- | --- | --- |
@@ -90,6 +130,7 @@ Run `npm ci --ignore-scripts` and `npm run verify` in the plugin directory, then
 - Removed environment-specific npm mirror URLs from the public lockfile and generated inventory, preserving all 64 package versions, integrity hashes and dependency relationships. Canonical npm identities retain the deployment's configured registry behavior; no registry, proxy, credentials or security controls were changed. Package validation now rejects private mirror identities and inconsistent npm inventory.
 - Separated transient process-presence probe errors from failed cleanup signals, including Node's emitted leader-signal error path. Error evidence remains in the report, unknown presence prohibits group signals, and only authoritative absence reconciles a probe; actual signal failures and unverified cleanup remain sticky failures. Regression cases cover resolved/unresolved probes, denied signals followed by absence, late output after an error, and a still-live child requiring operator cleanup. An error event never fabricates process or pipe closure.
 - Corrected profile-init reporting to match the profile actually written. Synthetic fixture edits are reported as enabled and explicitly described as synthetic; managed/assisted defaults remain disabled. This changes the compiled qualification binding even though the desktop operation handlers are unchanged.
+- Added six bounded CAD contracts, corrected construction plane/axis ownership and geometry freshness, verified exact cut/intersect participant retention, and preserved partial or unknown post-add outcomes. Fixed shared-array redaction and bounded diagnostic handling so public plans remain reviewable and failed operations retain durable outcomes.
 
 ## Original phase mapping
 
@@ -104,7 +145,7 @@ Run `npm ci --ignore-scripts` and `npm run verify` in the plugin directory, then
 
 Work exists across all phases; their exit gates are not therefore passed. The [planned-capability accounting](../plugins/autodesk-fusion/docs/workflow-evaluation.md#planned-capability-and-workflow-accounting) distinguishes partial implementations, unimplemented variants, research/handoff boundaries and external qualification. A corpus and synthetic execution do not satisfy the full 60-positive/60-adversarial engineering evaluation or its independent rubric. Local p95, large synthetic collections and the 100-operation batch have measured evidence; real CAD/transport workloads and multi-hour stability remain open.
 
-Remaining development is distinct from missing access: broader CAD, mesh/Form, advanced manufacturing, administration, publication and customer-specific integration variants are not implemented merely because the native assisted route can discover broader tools. Their scope and priority need responsible-owner selection, additional reviewed handlers/adapters and real qualification. The full objective has not been reduced to the 54-operation registry.
+Remaining development is distinct from missing access: broader CAD, mesh/Form, advanced manufacturing, administration, publication and customer-specific integration variants are not implemented merely because the native assisted route can discover broader tools. Their scope and priority need responsible-owner selection, additional reviewed handlers/adapters and real qualification. The full objective has not been reduced to the 60-operation registry.
 
 ## Remaining acceptance work and access
 

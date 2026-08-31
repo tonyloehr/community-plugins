@@ -28,6 +28,8 @@ The workstation's new-document settings must yield a parametric design; this tes
 
 A scenario definition is not a passing live report. This test covers metric feature inputs and their reported centimeter values, but **equivalent imperial feature creation remains a separate outstanding scenario**. It does not establish general shape equivalence, assembly preservation, material/mass or appearance preservation, editable feature-history round trips, other exchange formats, feature variants or large-model behavior. Surface area, bounds, topology counts and centroid strengthen this fixture's evidence without proving arbitrary BRep equivalence.
 
+The additional offset-plane, sweep, loft, draft, split-body and mirror handlers have separate [CAD feature qualification requirements](cad-features.md). The cuboid/STEP smoke does not exercise them. Their API-double tests verify member types, preparation, freshness and failure reporting; each admitted variant still needs real geometry, topology, history and scope checks before an exact managed qualification can include it.
+
 Use an expiring **assisted typed-operation test profile** to bootstrap qualification. Its `policy.operations` must explicitly include `documents.create`, `sketches.create`, `sketches.draw`, `features.extrude`, `exports.generate` and `documents.import`; effects are `local_edit` and `local_artifact`. Enable `allowUnsavedCreation` and `allowCreatedDocuments`, and configure the private `artifacts` root. Do not grant `native.invoke`, cloud compute or manufacturing release for this scenario. Managed mode can only run previously qualified write variants.
 
 ```sh

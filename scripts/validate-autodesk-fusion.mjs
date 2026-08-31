@@ -21,7 +21,7 @@ assert.equal(mcp.mcpServers['autodesk-fusion'].command, 'node');
 assert.deepEqual(mcp.mcpServers['autodesk-fusion'].args, ['./mcp/server.mjs']);
 assert.equal(mcp.mcpServers['autodesk-fusion'].cwd, '.');
 assert.deepEqual(mcp.mcpServers['autodesk-fusion'].env_vars, ['FUSION_PROFILE']);
-for (const name of ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'SECURITY.md', 'docs/operation-catalog.json', 'docs/support-matrix.md', 'docs/software-inventory.json', 'docs/qualification.md', 'docs/enterprise.md', 'docs/operations.md', 'docs/native-builds.md', 'docs/performance.md', 'docs/workflow-evaluation.md', 'evaluation/workflow-corpus.json', 'docs/autodesk-fusion-360-plugin-implementation-plan.md', 'docs/autodesk-fusion-implementation-status.md', 'dist/index.d.mts', 'dist/types/cloud-coordinator.d.ts']) assert.ok(read(name).trim(), name);
+for (const name of ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.txt', 'SECURITY.md', 'docs/operation-catalog.json', 'docs/support-matrix.md', 'docs/software-inventory.json', 'docs/qualification.md', 'docs/cad-features.md', 'docs/enterprise.md', 'docs/operations.md', 'docs/native-builds.md', 'docs/performance.md', 'docs/workflow-evaluation.md', 'evaluation/workflow-corpus.json', 'evaluation/workflow-corpus-v2.json', 'docs/autodesk-fusion-360-plugin-implementation-plan.md', 'docs/autodesk-fusion-implementation-status.md', 'dist/index.d.mts', 'dist/types/cloud-coordinator.d.ts']) assert.ok(read(name).trim(), name);
 const evaluationCorpus = validateCorpus(JSON.parse(read('evaluation/workflow-corpus.json')));
 assert.ok(evaluationCorpus.counts.supported >= 60 && evaluationCorpus.counts.adversarial >= 60);
 const packageLock = JSON.parse(read('package-lock.json'));
@@ -47,7 +47,8 @@ for (const name of skills) {
   }
 }
 const catalog = JSON.parse(read('docs/operation-catalog.json'));
-assert.ok(catalog.operations.length >= 54);
+assert.ok(catalog.operations.length >= 60);
+for (const id of ['construction_planes.offset', 'features.sweep', 'features.loft', 'features.draft', 'features.split_body', 'features.mirror']) assert.ok(catalog.operations.some(operation => operation.id === id && operation.effect === 'local_edit'), `Missing reviewed CAD contract: ${id}`);
 assert.equal(new Set(catalog.operations.map(op => op.id)).size, catalog.operations.length);
 assert.ok(catalog.boundaries.length >= 7);
 assert.ok(catalog.operations.every(op => op.input_schema && op.source.startsWith('https://help.autodesk.com/')));
