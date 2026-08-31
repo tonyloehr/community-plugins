@@ -1,14 +1,14 @@
 import {
   createFusionServer,
   startServer
-} from "./chunk-465BXGFK.mjs";
+} from "./chunk-TTRCU3QR.mjs";
 import {
   checkQualificationAssertions,
   cliMain,
   jsonPointer,
   runCli,
   runQualification
-} from "./chunk-LK6E2MAR.mjs";
+} from "./chunk-HQL3E7C5.mjs";
 import {
   APS_ORIGIN,
   AddinDesktopProvider,
@@ -71,6 +71,12 @@ import {
   installedExecutionContract,
   loadEnterpriseServices,
   loadProfile,
+  manageDraftChanges,
+  manageDraftInspectSchema,
+  manageDraftPrepareSchema,
+  manageDraftRecordBinding,
+  manageDraftRegistrySchema,
+  manageDraftTrustedSchema,
   nativeCredentialFactory,
   newId,
   normalizeBom,
@@ -78,6 +84,7 @@ import {
   operationCatalog,
   parseCloudBatchInput,
   parseDesktopResult,
+  parseManageDraftInput,
   parseOperation,
   parseProfile,
   parseRetryAfter,
@@ -93,6 +100,7 @@ import {
   retentionPolicySchema,
   retentionRecordReferenceSchema,
   retentionSelectionSchema,
+  reviewManageDraft,
   schemaFingerprint,
   validateAutodeskOrigin,
   validateAutomationRecipe,
@@ -103,9 +111,11 @@ import {
   validatePngContent,
   validateStlContent,
   verifyHandoffManifest,
+  verifyManageDraftRecord,
+  verifyManageSdkDraft,
   verifyRetentionPlan,
   verifyTrustedExecutableAsset
-} from "./chunk-JUSHUPR6.mjs";
+} from "./chunk-WDURP6MK.mjs";
 import "./chunk-7P6ASYW6.mjs";
 export {
   APS_ORIGIN,
@@ -173,6 +183,12 @@ export {
   jsonPointer,
   loadEnterpriseServices,
   loadProfile,
+  manageDraftChanges,
+  manageDraftInspectSchema,
+  manageDraftPrepareSchema,
+  manageDraftRecordBinding,
+  manageDraftRegistrySchema,
+  manageDraftTrustedSchema,
   nativeCredentialFactory,
   newId,
   normalizeBom,
@@ -180,6 +196,7 @@ export {
   operationCatalog,
   parseCloudBatchInput,
   parseDesktopResult,
+  parseManageDraftInput,
   parseOperation,
   parseProfile,
   parseRetryAfter,
@@ -195,6 +212,7 @@ export {
   retentionPolicySchema,
   retentionRecordReferenceSchema,
   retentionSelectionSchema,
+  reviewManageDraft,
   runCli,
   runQualification,
   schemaFingerprint,
@@ -208,6 +226,8 @@ export {
   validatePngContent,
   validateStlContent,
   verifyHandoffManifest,
+  verifyManageDraftRecord,
+  verifyManageSdkDraft,
   verifyRetentionPlan,
   verifyTrustedExecutableAsset
 };

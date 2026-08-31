@@ -167,6 +167,25 @@ declare const profileSchema: z.ZodObject<{
             tenant: z.ZodString;
             workspaceIds: z.ZodArray<z.ZodNumber>;
         }, z.core.$strict>>;
+        manageDraftSchemas: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            tenant: z.ZodString;
+            workspaceId: z.ZodNumber;
+            schemaFingerprint: z.ZodString;
+            fields: z.ZodArray<z.ZodObject<{
+                fieldId: z.ZodString;
+                type: z.ZodEnum<{
+                    boolean: "boolean";
+                    number: "number";
+                    string: "string";
+                }>;
+                allowNull: z.ZodBoolean;
+                allowDraftUpdate: z.ZodBoolean;
+                lifecycle: z.ZodBoolean;
+                maxLength: z.ZodOptional<z.ZodNumber>;
+                minimum: z.ZodOptional<z.ZodNumber>;
+                maximum: z.ZodOptional<z.ZodNumber>;
+            }, z.core.$strict>>;
+        }, z.core.$strict>>>;
         recipesFile: z.ZodOptional<z.ZodString>;
         enterpriseAdapter: z.ZodOptional<z.ZodObject<{
             path: z.ZodString;

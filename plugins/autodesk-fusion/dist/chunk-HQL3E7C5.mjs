@@ -20,14 +20,16 @@ import {
   parseOperation,
   parseProfile,
   profileHash,
+  readTrustedFile,
   recoverDeadLease,
   redact,
   schemaFingerprint,
   validateEnrollment
-} from "./chunk-JUSHUPR6.mjs";
+} from "./chunk-WDURP6MK.mjs";
 
 // src/cli.ts
-import { cp, lstat, readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { cp, lstat, open, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -291,6 +293,67 @@ async function runQualification(runtime, raw) {
 }
 
 // src/cli.ts
+var MAX_PROFILE_BYTES = 1048576;
+var MAX_FIXED_ARGUMENT_BYTES = 65536;
+var profileChanged = () => new FusionError("PROFILE_CHANGED", "The trusted profile changed during native discovery. Review the current file before enrolling again.");
+var sameRevision = (a, b) => a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs && a.mode === b.mode && a.uid === b.uid && a.gid === b.gid && a.nlink === b.nlink;
+async function fixedArgumentsFile(filename) {
+  const { bytes } = await readTrustedFile(filename, MAX_FIXED_ARGUMENT_BYTES);
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new FusionError("INVALID_INPUT", "Fixed arguments must contain valid bounded UTF-8 JSON.");
+  }
+  assertJson(value, MAX_FIXED_ARGUMENT_BYTES);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new FusionError("INVALID_INPUT", "Fixed arguments must be an explicit JSON object.");
+  return value;
+}
+async function enrollmentSnapshot(filename, profile) {
+  const before = await lstat(filename, { bigint: true });
+  const file = await readTrustedFile(filename, MAX_PROFILE_BYTES);
+  const revision = await lstat(file.canonicalPath, { bigint: true });
+  if (!sameRevision(before, revision)) throw profileChanged();
+  try {
+    if (profileHash(parseProfile(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes)))) !== profileHash(profile)) throw profileChanged();
+  } catch {
+    throw profileChanged();
+  }
+  return { ...file, revision };
+}
+async function saveEnrollment(filename, snapshot, profile) {
+  const bytes = Buffer.from(JSON.stringify(profile, null, 2) + "\n");
+  if (bytes.length > MAX_PROFILE_BYTES) throw new FusionError("INPUT_LIMIT", "The enrolled profile exceeds the trusted profile byte limit.");
+  const current = await readTrustedFile(filename, MAX_PROFILE_BYTES);
+  if (current.canonicalPath !== snapshot.canonicalPath || !current.bytes.equals(snapshot.bytes)) throw profileChanged();
+  const handle = await open(snapshot.canonicalPath, constants.O_RDWR | (constants.O_NOFOLLOW ?? 0));
+  let writeAttempted = false;
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (!opened.isFile() || opened.nlink !== 1n || !sameRevision(opened, snapshot.revision)) throw profileChanged();
+    const observed = Buffer.alloc(snapshot.bytes.length + 1);
+    let length = 0;
+    while (length < observed.length) {
+      const result = await handle.read(observed, length, observed.length - length, length);
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    const after = await handle.stat({ bigint: true }), linked = await lstat(snapshot.canonicalPath, { bigint: true });
+    if (length !== snapshot.bytes.length || !observed.subarray(0, length).equals(snapshot.bytes) || !sameRevision(opened, after) || !sameRevision(opened, linked) || await realpath(filename) !== snapshot.canonicalPath) throw profileChanged();
+    writeAttempted = true;
+    await handle.writeFile(bytes);
+    await handle.truncate(bytes.length);
+    await handle.sync();
+    const verified = await readTrustedFile(filename, MAX_PROFILE_BYTES);
+    const final = await lstat(snapshot.canonicalPath, { bigint: true });
+    if (verified.canonicalPath !== snapshot.canonicalPath || !verified.bytes.equals(bytes) || final.dev !== opened.dev || final.ino !== opened.ino) throw profileChanged();
+  } catch (error) {
+    if (writeAttempted) throw new FusionError("PROFILE_UPDATE_UNCONFIRMED", "The enrollment profile write could not be confirmed. Inspect the current file before another enrollment.", "unknown");
+    throw error;
+  } finally {
+    await handle.close();
+  }
+}
 var help = `Autodesk Fusion interoperability CLI
 
   fusionctl status [--profile /absolute/profile.json]
@@ -303,6 +366,7 @@ var help = `Autodesk Fusion interoperability CLI
   fusionctl profile-init --output /absolute/profile.json --mode managed|assisted|fixture
   fusionctl native-discover --url http://127.0.0.1:27182/mcp
   fusionctl native-enroll --profile /absolute/profile.json --tool NAME --argument FIELD --hash TOOL_SCHEMA_SHA256
+    [--url http://127.0.0.1:27182/mcp] [--fixed-arguments-file /absolute/reviewed-values.json]
   fusionctl qualify [--live] [--scenario /absolute/scenario.json] [--profile /absolute/profile.json]
   fusionctl install-addin --output /absolute/new/CodexFusionInterop
   fusionctl auth-login|auth-status|auth-logout --profile /absolute/cloud-profile.json
@@ -314,6 +378,12 @@ var help = `Autodesk Fusion interoperability CLI
 No command starts Fusion, installs packages at runtime, grants broad writes, merges a PR,
 or submits paid compute implicitly. Profile mutation grants must be explicitly scoped
 and expire. Review the setup skill for live qualification and enterprise host controls.
+
+Native enrollment requires a managed or assisted native profile. Fixed arguments are
+an optional trusted UTF-8 JSON object (64 KiB maximum), explicitly reviewed and never inferred.
+They cannot override the script argument. The selected --url is saved with the mapping;
+profiles changed during discovery are rejected. Enrollment does not qualify Fusion or
+execute a tool. Full argument-schema validation remains required at each dispatch.
 `;
 async function runCli(argv = process.argv.slice(2)) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, strict: true, options: {
@@ -331,6 +401,7 @@ async function runCli(argv = process.argv.slice(2)) {
     url: { type: "string" },
     tool: { type: "string" },
     argument: { type: "string" },
+    "fixed-arguments-file": { type: "string" },
     live: { type: "boolean" },
     scenario: { type: "string" },
     job: { type: "string" }
@@ -340,6 +411,7 @@ async function runCli(argv = process.argv.slice(2)) {
     process.stdout.write(help);
     return 0;
   }
+  if (values["fixed-arguments-file"] !== void 0 && command !== "native-enroll") throw new FusionError("INVALID_INPUT", "--fixed-arguments-file is only supported by native-enroll.");
   const emit = (value) => process.stdout.write(JSON.stringify(redact(value), null, 2) + "\n");
   const required = (name) => {
     const value = values[name];
@@ -364,23 +436,34 @@ async function runCli(argv = process.argv.slice(2)) {
     return 0;
   }
   if (command === "native-discover" || command === "native-enroll") {
-    const profile = values.profile ? await loadProfile(values.profile) : void 0;
+    const filename = command === "native-enroll" ? required("profile") : values.profile;
+    const profile = filename ? await loadProfile(filename) : void 0;
+    if (profile && (profile.mode === "fixture" || profile.desktop?.provider !== "native")) throw new FusionError("NATIVE_PROFILE_REQUIRED", "Native discovery and enrollment require a managed or assisted native desktop profile; fixture and add-in profiles are not converted.");
     const url = values.url ?? profile?.desktop?.url;
     if (!url) throw new FusionError("CLI_ARGUMENT_REQUIRED", "--url or a desktop profile is required.");
-    const native = new NativeFusionClient({ url, timeoutMs: 15e3 });
+    const mapping = command === "native-enroll" ? {
+      tool: required("tool"),
+      argument: required("argument"),
+      schemaHash: required("hash"),
+      ...values["fixed-arguments-file"] !== void 0 ? { fixedArguments: await fixedArgumentsFile(required("fixed-arguments-file")) } : {}
+    } : void 0;
+    const snapshot = mapping && filename && profile ? await enrollmentSnapshot(filename, profile) : void 0;
+    const native = new NativeFusionClient({ url, ...mapping ? { mapping } : {}, timeoutMs: 15e3 });
     try {
       const connection = await native.connect();
       const tools = await native.listTools();
-      if (command === "native-discover") emit({ connection, tools: tools.map((tool) => ({ ...tool, schema_sha256: schemaFingerprint(tool) })), next: "Select the actual Python execution tool and its string argument. Enroll its displayed schema hash only after review; no tool name is guessed." });
+      if (command === "native-discover") emit({ connection, tools: tools.map((tool) => ({ ...tool, schema_sha256: schemaFingerprint(tool) })), next: "Select the actual Python execution tool and its string argument. Review every additional required argument and provide its fixed value through --fixed-arguments-file. Enroll the displayed schema hash only after review; no tool name or value is guessed." });
       else {
-        if (!profile || !values.profile || !profile.desktop) throw new FusionError("CLI_ARGUMENT_REQUIRED", "Enrollment requires an existing desktop profile.");
-        const mapping = { tool: required("tool"), argument: required("argument"), schemaHash: required("hash") };
+        if (!profile || !filename || !profile.desktop || !mapping || !snapshot) throw new FusionError("CLI_ARGUMENT_REQUIRED", "Enrollment requires an existing native desktop profile.");
         validateEnrollment(mapping, tools);
-        const updated = parseProfile({ ...profile, desktop: { ...profile.desktop, mapping } });
-        const original = await lstat(values.profile);
-        if (!original.isFile() || original.isSymbolicLink() || original.nlink !== 1) throw new FusionError("UNSAFE_PATH", "Profile must be a regular file without aliases.");
-        await writeFile(values.profile, JSON.stringify(updated, null, 2) + "\n", { mode: 384 });
-        emit({ enrolled: mapping, profile: values.profile, live_qualified: false, next: "Run read-only qualification. Enrollment binds a schema; it does not prove the server is Autodesk or that a workflow works." });
+        const updated = parseProfile({ ...profile, desktop: { ...profile.desktop, url, mapping } });
+        assertJson(updated, MAX_PROFILE_BYTES);
+        const confirmation = redact({ enrolled: mapping, profile: filename, endpoint: url, live_qualified: false, next: "Run read-only qualification. Enrollment binds a schema and explicit fixed values; it does not prove the server is Autodesk or that a workflow works." });
+        assertJson(confirmation, MAX_PROFILE_BYTES);
+        const confirmationJson = JSON.stringify(confirmation, null, 2) + "\n";
+        if (Buffer.byteLength(confirmationJson) > MAX_PROFILE_BYTES) throw new FusionError("INPUT_LIMIT", "The enrollment confirmation exceeds its bounded output limit.");
+        await saveEnrollment(filename, snapshot, updated);
+        process.stdout.write(confirmationJson);
       }
     } finally {
       await native.close();

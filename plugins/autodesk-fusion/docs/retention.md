@@ -66,6 +66,7 @@ Optional document read restrictions also apply to cached records. Out-of-scope o
 | Completed artifact manifests | Existing v1/v2 hashes are checked as stored metadata; no output-byte read or validation-grade upgrade occurs |
 | Qualification reports with remaining documents, jobs, failed cleanup or missing receipts | Retained pending reconciliation |
 | Current engineering handoff drafts | Hash-checked source/plan/artifact references remain protected; creating a package does not complete review or release |
+| Fusion Manage review drafts and their preparation audits | Exact stored bindings are checked without provider reads; expiry never makes the draft removable, and caller source references are not interpreted as verified ledger dependencies |
 | Unknown future handoff, batch or retention schemas | Protected with incomplete dependency coverage; no disposal semantics are guessed |
 | Locks, temporary records, fixture state and credential fences | Never age-deleted by this planner |
 

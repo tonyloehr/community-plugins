@@ -32,6 +32,8 @@ Trusted `propertyRules` constrain product-owned fields, types, null behavior, un
 
 BOM comparison preserves occurrence identity, null/unknown quantities, canonical units, suppression/exclusion, virtual parts, external references, source timestamps and computed/override/product/PLM/ERP authority. Same part numbers do not merge parts. Ownership policies can produce drafts but cannot grant publication. Fusion Manage reads and schema-aware draft preparation are implemented; real tenant-specific field mapping/publication and lifecycle transitions remain separately qualified customer adapters. The plugin has no implicit ERP/MES/QMS credentials or recipient authority.
 
+The callable [Manage draft tools](manage-drafts.md) require an owner-controlled `cloud.manageDraftSchemas` entry for the exact allowed tenant/workspace. They pin schema/item observations and account/profile context to an immutable local receipt, and compare those bindings again during inspection. Caller input cannot provide the schema, authorize a field, extend the expiry or declare approval. The returned sanitized review has a separate hash from the stored SDK draft; neither hash establishes engineering acceptance or a release decision.
+
 [Engineering handoff drafts](handoffs.md) are a separate local evidence workflow. They relate caller-supplied requirements to bounded observations, artifact/producer references and unperformed manual checks. Reviewer assignments and report references remain unverified metadata. A current source comparison, a satisfied numeric criterion or a stored hash does not grant design assurance, compliance, release or publication authority.
 
 ## Manufacturing authority

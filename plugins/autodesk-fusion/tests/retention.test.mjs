@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
-import { RecordStore, RetentionPlanner, HandoffManager, retentionPolicySchema, retentionHoldsSchema, verifyRetentionPlan, hash, hashBytes, cloudHash, newId } from '../dist/index.mjs';
+import { RecordStore, RetentionPlanner, HandoffManager, retentionPolicySchema, retentionHoldsSchema, verifyRetentionPlan, verifyManageDraftRecord, manageDraftRecordBinding, hash, hashBytes, cloudHash, newId } from '../dist/index.mjs';
 
 const NOW = '2026-08-31T20:00:00.000Z';
 const OLD = '2025-01-01T00:00:00.000Z';
@@ -520,4 +520,77 @@ test('read-only qualification evidence uses its final report time and receipt cl
     assert.ok(inventory.entries.every(entry => entry.terminal && entry.age_anchor === OLD));
     assert.doesNotMatch(JSON.stringify(inventory), /PRIVATE_QUALIFICATION_CANARY/);
   }
+});
+
+async function putManageDraft(store) {
+  const trustedSchema = { tenant: 'fixture-tenant', workspaceId: 10, schemaFingerprint: 'e'.repeat(64), fields: [{ fieldId: 'DESCRIPTION', type: 'string', allowNull: false, allowDraftUpdate: true, lifecycle: false }] };
+  const request = { workspace_id: 10, item_id: 3, changes: [{ field_id: 'DESCRIPTION', after: 'Candidate description', source_ref: 'unverified:model-1' }] };
+  const sourceItem = { sections: [{ fields: [{ value: 'PRIVATE_MANAGE_RETENTION_CANARY' }] }] };
+  const draft = { status: 'draft_outbox', tenantId: 'test-tenant-context', manageTenant: trustedSchema.tenant, workspaceId: 10, itemId: 3, schemaFingerprint: trustedSchema.schemaFingerprint, expectedItemFingerprint: cloudHash(sourceItem), expectedEtag: '"test-revision"', changes: [{ fieldId: 'DESCRIPTION', after: 'Candidate description', sourceRef: 'unverified:model-1' }], sourceItem, requiresApproval: true, releaseApproved: false, publicationSupported: false, blocker: 'Synthetic stored review draft; no publication authority.' };
+  const record = { schema_version: 1, id: newId('managedraft'), operation: 'manage.item_draft', profile_id: PROFILE, profile_hash: PROFILE_HASH, scope_hash: 'a'.repeat(64), authorization_binding: 'd'.repeat(64), schema_hash: hash(trustedSchema), request_hash: hash(request), created_at: OLD, observed_at: OLD, expires_at: EXPIRED, trusted_schema: trustedSchema, request, draft: { ...draft, draftHash: cloudHash(draft) }, record_hash: '' };
+  record.record_hash = hash(manageDraftRecordBinding(record));
+  verifyManageDraftRecord(record);
+  await store.put('managedraft', record.id, record);
+  const details = { id: record.id, record_hash: record.record_hash, stored_draft_hash: record.draft.draftHash, workspace_id: 10, item_id: 3, provider_write_performed: false };
+  const audit = { id: newId('event'), event: 'manage_draft_prepared', time: OLD, details, integrity: hash(details) };
+  await store.put('audit', audit.id, audit);
+  return { record, audit };
+}
+
+test('an expired Manage draft and its audit are known protected metadata, without provider reads or renewal', async t => {
+  const { store } = await workspace(t), { record } = await putManageDraft(store);
+  const before = await contents(store), rootBefore = await lstat(store.root);
+  const service = planner(store, configuration({ readDocumentIds: undefined })), inventory = await service.inventory();
+  assert.equal(inventory.complete, true); assert.equal(inventory.dependency_coverage_complete, true);
+  assert.equal(inventory.counts.protected, 2); assert.equal(inventory.counts.archive_review_candidate, 0);
+  const entry = inventory.entries.find(item => item.record_kind === 'managedraft');
+  assert.equal(entry.record_id, record.id); assert.equal(entry.state, 'draft_outbox'); assert.equal(entry.terminal, false);
+  assert.ok(entry.reasons.includes('DRAFT_MANAGE_REQUIRES_REVIEW'));
+  assert.ok(inventory.entries.every(item => item.dependency_count === 1));
+  assert.equal(inventory.provider_state_observed, false);
+  await assert.rejects(service.prepare({ inventory_hash: inventory.inventory_hash, record_refs: [entry.record_ref] }), { code: 'RETENTION_PROTECTED' });
+  assert.deepEqual(await contents(store), before); assert.equal((await lstat(store.root)).mtimeMs, rootBefore.mtimeMs);
+  assert.equal((await store.get('managedraft', record.id)).expires_at, EXPIRED);
+  assert.doesNotMatch(JSON.stringify(inventory), /PRIVATE_MANAGE_RETENTION_CANARY|Candidate description|unverified:model-1|test-revision|sourceItem|authorization_binding/);
+});
+
+test('missing, changed or falsely approved Manage evidence keeps dependency coverage incomplete', async t => {
+  for (const mode of ['missing draft', 'changed source', 'false approval', 'mismatched audit']) await t.test(mode, async t => {
+    const { store } = await workspace(t), { record, audit } = await putManageDraft(store);
+    if (mode === 'missing draft') await rm(path.join(store.root, `managedraft--${record.id}.json`));
+    else if (mode === 'mismatched audit') {
+      audit.details.item_id = 4; audit.integrity = hash(audit.details); await store.put('audit', audit.id, audit);
+    } else {
+      if (mode === 'changed source') record.draft.sourceItem.sections[0].fields[0].value = 'Changed locally';
+      else {
+        record.draft.releaseApproved = true;
+        const { draftHash: _hash, ...draft } = record.draft; record.draft.draftHash = cloudHash(draft);
+        record.record_hash = hash(manageDraftRecordBinding(record));
+      }
+      await store.put('managedraft', record.id, record);
+    }
+    const before = await contents(store), inventory = await planner(store, configuration({ readDocumentIds: undefined })).inventory();
+    assert.equal(inventory.complete, false); assert.equal(inventory.dependency_coverage_complete, false);
+    assert.equal(inventory.counts.archive_review_candidate, 0); assert.equal(inventory.provider_state_observed, false);
+    assert.deepEqual(await contents(store), before);
+  });
+});
+
+test('Manage review metadata obeys cached read restrictions and propagates owner holds to its audit', async t => {
+  const { store } = await workspace(t); await putManageDraft(store);
+  const initial = await planner(store, configuration({ readDocumentIds: undefined })).inventory();
+  const context = configuration(), ref = initial.entries.find(item => item.record_kind === 'managedraft').record_ref;
+  context.holds.holds = [{ id: 'manage-owner-hold', scope: 'records', recordRefs: [ref], reason: 'Test owner hold' }];
+  const before = await contents(store), inventory = await planner(store, context).inventory();
+  assert.equal(inventory.complete, true); assert.equal(inventory.counts.held, 2);
+  assert.ok(inventory.entries.every(item => item.record_kind === 'restricted' && item.record_id === undefined && item.sha256 === undefined));
+  assert.doesNotMatch(JSON.stringify(inventory), /managedraft_|PRIVATE_MANAGE_RETENTION_CANARY|DESCRIPTION|unverified:model-1/);
+  assert.deepEqual(await contents(store), before);
+});
+
+test('historical Manage profile bindings stay protected without regaining current authority', async t => {
+  const { store } = await workspace(t); await putManageDraft(store);
+  const inventory = await planner(store, configuration({ readDocumentIds: undefined, profileHash: 'f'.repeat(64) })).inventory();
+  assert.equal(inventory.complete, true); assert.equal(inventory.counts.archive_review_candidate, 0);
+  assert.ok(inventory.entries.find(item => item.record_kind === 'managedraft').reasons.includes('SOURCE_BINDING_UNREVIEWED'));
 });

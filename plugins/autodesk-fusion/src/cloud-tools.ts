@@ -6,6 +6,7 @@ import type { BomSnapshot, BomFieldOwnership, BomMapping } from './bom.js';
 import type { Runtime } from './runtime.js';
 import { FusionError, assertJson, errorResult, hash, newId, now, redact } from './safety.js';
 import { cloudBatchPrepareSchema } from './cloud-batches.js';
+import { manageDraftInspectSchema, manageDraftPrepareSchema } from './manage-drafts.js';
 
 const ref = z.string().min(1).max(2048), scalar = z.union([z.string().max(8192), z.number().finite(), z.boolean(), z.null()]);
 const page = { page_number: z.number().int().min(0).max(1_000_000).optional(), page_size: z.number().int().min(1).max(200).optional() };
@@ -54,6 +55,8 @@ export function registerCloudTools(server: McpServer, runtime: Runtime): void {
     if (!parsed.success) throw new FusionError('INVALID_INPUT', 'Cloud read arguments do not match the operation contract.', 'none', parsed.error.issues);
     return cloud().read(a.operation, parsed.data);
   });
+  register('fusion_manage_item_draft_prepare', 'Prepare a durable local Manage item review draft from bounded field changes. The exact tenant/workspace schema comes only from the trusted profile; caller source references are unverified metadata. Uses scoped GETs, pins schema/item/account/profile fingerprints and an expiry, and cannot publish, approve or advance lifecycle state.', manageDraftPrepareSchema, false, a => cloud().prepareManageDraft(a));
+  register('fusion_manage_item_draft_inspect', 'Verify an exact local Manage draft ID and recheck its original schema/item with scoped GETs. Rejects stale, expired or changed account/profile bindings without modifying or renewing the draft. Returns a separately hashed redacted review projection, never provider-write or release authority.', manageDraftInspectSchema, true, a => cloud().inspectManageDraft(a.draft_id));
   register('fusion_bom_inspect', 'Inspect desktop occurrence structure or normalize an explicitly provided BOM snapshot. A provided snapshot is not a fresh provider read; quantity overrides, exclusions, configuration and authority must remain explicit.', z.discriminatedUnion('source', [
     z.strictObject({ source: z.literal('desktop'), document_id: z.string().min(1).max(128), expected_state: z.string().min(1).max(128).optional(), limit: z.number().int().min(1).max(100).optional(), offset: z.number().int().min(0).max(10_000).optional(), include_suppressed: z.boolean().optional() }),
     z.strictObject({ source: z.literal('snapshot'), snapshot: bom })

@@ -22,8 +22,9 @@ Sparse paths:
 plugins
 ```
 
-Those two sparse paths load the complete plugin catalog without pulling this
-repo's tests, demo media, or source receipts. To fetch every repository file,
+Those two sparse paths load the complete plugin catalog without pulling the
+top-level test suites or demo media. Package-owned source, contract fixtures,
+licenses and build receipts remain included. To fetch every repository file,
 leave **Sparse paths** blank. To fetch only Grafana Observability, use these two
 paths instead:
 
@@ -131,6 +132,17 @@ read-only parity-planning prompt:
 Use $plan-react-native-port to inspect only the declared React Native feature and propose a SwiftUI parity contract. Do not edit files yet.
 ```
 
+Autodesk Fusion requires Codex and Node.js 22.19 or newer. It declares `Read`
+and `Write` for scoped desktop changes, local evidence and configured Autodesk
+cloud operations. Authentication is `ON_USE`: the initial synthetic fixture
+requires no Autodesk account or running Fusion process. Real desktop, cloud and
+manufacturing use requires the appropriate license, profile, authority and
+independent qualification; installation grants none of these.
+
+```text
+Use $setup-autodesk-fusion to check the synthetic fixture and explain the available connection modes. Do not connect to Autodesk or change a real model.
+```
+
 ## Copy-paste Codex prompts
 
 Browse before installing:
@@ -173,6 +185,7 @@ codex plugin marketplace upgrade community-plugins
 codex plugin add grafana-observability@community-plugins
 codex plugin add reviewops-auditor-benchmark@community-plugins
 codex plugin add react-native-to-swiftui@community-plugins
+codex plugin add autodesk-fusion@community-plugins
 
 # Remove the configured marketplace source.
 codex plugin marketplace remove community-plugins
@@ -183,6 +196,23 @@ make sure Git credentials already work non-interactively. Keep the same
 `.agents/plugins/marketplace.json` and `plugins/<name>/` layout.
 
 ## Repository layout
+
+Plugin master suites follow `npm run test:<plugin-name>` and are discovered by
+`npm run test:marketplace`. Fusion's companion tests live under
+[`tests/autodesk-fusion`](tests/autodesk-fusion/README.md), grouped into unit,
+integration and security checks. The cold package suite needs no development
+dependencies; the full master also rebuilds and runs the deeper Node/Python
+contracts:
+
+```sh
+npm run test:autodesk-fusion:package
+npm --prefix plugins/autodesk-fusion ci --ignore-scripts
+npm run test:autodesk-fusion
+```
+
+Python 3.12 or newer is required for Fusion's development contract suite, not
+for normal Codex startup. The test guide distinguishes synthetic, licensed,
+installed-client and native-credential checks; a skipped gate is not a pass.
 
 ```text
 .agents/plugins/marketplace.json      # Catalog and install policy

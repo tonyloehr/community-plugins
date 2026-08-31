@@ -3,6 +3,7 @@ import { parseOperation } from './catalog.js';
 import { assertCloudBatchConflictIntegrity, assertCloudBatchIntegrity, type CloudBatchConflictRecord, type CloudBatchRecord } from './cloud-batches.js';
 import { cloudHash } from './cloud-http.js';
 import { verifyHandoffManifest } from './handoff.js';
+import { verifyManageDraftRecord } from './manage-drafts.js';
 import { FusionError, assertJson, hash, hashBytes, now } from './safety.js';
 import type { ReadOnlyRecordSnapshot, ReadOnlyRecordSnapshotEntry, ReadOnlyRecordSnapshotOptions, RecordStore } from './storage.js';
 
@@ -93,12 +94,12 @@ export interface RetentionPlan {
   limitations: string[];
 }
 
-const KINDS = ['plan', 'job', 'artifact', 'idempotency', 'createddoc', 'cloudjob', 'cloudbatch', 'cloudbatchconflict', 'dataplan', 'audit', 'qualification', 'qualification_result', 'outbox', 'handoff', 'handoff_v2', 'retention', 'retention_plan', 'retention_inventory', 'batch', 'batch_plan', 'batch_result', 'fixture', 'tmp', 'refresh', 'cleanup'] as const;
+const KINDS = ['plan', 'job', 'artifact', 'idempotency', 'createddoc', 'cloudjob', 'cloudbatch', 'cloudbatchconflict', 'dataplan', 'managedraft', 'audit', 'qualification', 'qualification_result', 'outbox', 'handoff', 'handoff_v2', 'retention', 'retention_plan', 'retention_inventory', 'batch', 'batch_plan', 'batch_result', 'fixture', 'tmp', 'refresh', 'cleanup'] as const;
 const LIVE_STATES = new Set(['executing', 'pending', 'submitting', 'queued', 'running', 'validating', 'cancel_requested', 'outcome_unknown', 'generating']);
 const TERMINAL_STATES = new Set(['succeeded', 'failed', 'cancelled']);
 const UUID = '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}';
 const MAX_EDGES = 10_000;
-const DEPENDENCY_HASH_FIELDS: Readonly<Record<string, string>> = { plan: 'hash', dataplan: 'hash', cloudjob: 'plan_hash', cloudbatch: 'plan_hash', cloudbatchconflict: 'receipt_hash', artifact: 'manifest_sha256' };
+const DEPENDENCY_HASH_FIELDS: Readonly<Record<string, string>> = { plan: 'hash', dataplan: 'hash', managedraft: 'record_hash', cloudjob: 'plan_hash', cloudbatch: 'plan_hash', cloudbatchconflict: 'receipt_hash', artifact: 'manifest_sha256' };
 const object = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const string = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2048;
 const hashString = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
@@ -106,7 +107,7 @@ const timestamp = (value: unknown): value is string => canonicalTime.safeParse(v
 function frozen<T>(value: T): T { if (value && typeof value === 'object') { for (const child of Object.values(value)) frozen(child); Object.freeze(value); } return value; }
 function recordId(kind: string, id: string): boolean {
   if (kind === 'idempotency' || kind === 'createddoc') return /^[a-f0-9]{64}$/u.test(id);
-  const prefixes: Record<string, string> = { plan: 'plan', job: 'job', artifact: 'artifact', cloudjob: 'cloudjob', dataplan: 'data_plan', audit: 'event', qualification: 'qualification' };
+  const prefixes: Record<string, string> = { plan: 'plan', job: 'job', artifact: 'artifact', cloudjob: 'cloudjob', dataplan: 'data_plan', managedraft: 'managedraft', audit: 'event', qualification: 'qualification' };
   if (prefixes[kind]) return new RegExp(`^${prefixes[kind]}_${UUID}$`, 'u').test(id);
   if (kind === 'qualification_result') return new RegExp(`^qualification_${UUID}_[a-z][a-z0-9_-]{0,63}$`, 'u').test(id);
   return /^[A-Za-z0-9_-]{1,120}$/u.test(id);
@@ -351,6 +352,14 @@ function analyzeSnapshot(snapshot: ReadOnlyRecordSnapshot, context: RetentionCon
           if (batch.phase !== 'ready') throw new Error('conflict before ready batch');
         }
         for (const binding of conflict.job_bindings) connect(node, 'cloudjob', binding.job_id, binding.plan_hash);
+      } else if (kind === 'managedraft') {
+        const draft = verifyManageDraftRecord(value);
+        node.view.state = 'draft_outbox';
+        problem(node, 'DRAFT_MANAGE_REQUIRES_REVIEW');
+        if (allowed) node.restricted = true;
+        if (draft.profile_id !== context.profileId || draft.profile_hash !== context.profileHash) problem(node, 'SOURCE_BINDING_UNREVIEWED');
+        // Source references are unverified caller assertions, not typed local
+        // ledger dependencies. This check never contacts Manage or renews expiry.
       } else if (kind === 'dataplan') {
         problem(node, 'CLOUD_DATA_AUTHORITY_REQUIRES_LIVE_LEDGER');
         if (allowed) node.restricted = true;
@@ -374,6 +383,10 @@ function analyzeSnapshot(snapshot: ReadOnlyRecordSnapshot, context: RetentionCon
         const event = value.event;
         if (['plan_prepared', 'execution_intent', 'execution_result'].includes(String(event))) connect(node, 'plan', details.plan_id, event === 'execution_result' ? undefined : details.hash);
         else if (['data_plan_prepared', 'data_write_intent', 'data_write_result'].includes(String(event))) connect(node, 'dataplan', details.id, event === 'data_write_result' ? undefined : details.hash);
+        else if (event === 'manage_draft_prepared') {
+          const target = connect(node, 'managedraft', details.id, details.record_hash), draft = object(target?.data?.draft);
+          if (!draft || details.provider_write_performed !== false || details.stored_draft_hash !== draft.draftHash || details.workspace_id !== draft.workspaceId || details.item_id !== draft.itemId) throw new Error('Manage draft audit binding');
+        }
         else if (['cloud_job_prepared', 'cloud_submission_intent', 'cloud_submission_result', 'cloud_cancel_intent', 'cloud_cancel_requested', 'cloud_output_validation', 'cloud_billing_reconciled'].includes(String(event))) connect(node, 'cloudjob', details.id, details.plan_hash);
         else if (['cloud_batch_prepared', 'cloud_batch_materialized', 'cloud_batch_execution'].includes(String(event))) connect(node, 'cloudbatch', details.id ?? details.batch_id);
         else if (event === 'cloud_batch_output_conflict') {

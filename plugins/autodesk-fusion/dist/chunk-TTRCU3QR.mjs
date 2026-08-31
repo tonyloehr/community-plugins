@@ -206,6 +206,8 @@ import {
   lazy,
   literal,
   looseObject,
+  manageDraftInspectSchema,
+  manageDraftPrepareSchema,
   newId,
   normalizeBom,
   now,
@@ -224,7 +226,7 @@ import {
   union,
   unknown,
   url
-} from "./chunk-JUSHUPR6.mjs";
+} from "./chunk-WDURP6MK.mjs";
 
 // node_modules/@modelcontextprotocol/server/dist/chunk-Br0eD_fh.mjs
 var __create = Object.create;
@@ -14005,6 +14007,8 @@ function registerCloudTools(server, runtime) {
     if (!parsed.success) throw new FusionError("INVALID_INPUT", "Cloud read arguments do not match the operation contract.", "none", parsed.error.issues);
     return cloud().read(a.operation, parsed.data);
   });
+  register2("fusion_manage_item_draft_prepare", "Prepare a durable local Manage item review draft from bounded field changes. The exact tenant/workspace schema comes only from the trusted profile; caller source references are unverified metadata. Uses scoped GETs, pins schema/item/account/profile fingerprints and an expiry, and cannot publish, approve or advance lifecycle state.", manageDraftPrepareSchema, false, (a) => cloud().prepareManageDraft(a));
+  register2("fusion_manage_item_draft_inspect", "Verify an exact local Manage draft ID and recheck its original schema/item with scoped GETs. Rejects stale, expired or changed account/profile bindings without modifying or renewing the draft. Returns a separately hashed redacted review projection, never provider-write or release authority.", manageDraftInspectSchema, true, (a) => cloud().inspectManageDraft(a.draft_id));
   register2("fusion_bom_inspect", "Inspect desktop occurrence structure or normalize an explicitly provided BOM snapshot. A provided snapshot is not a fresh provider read; quantity overrides, exclusions, configuration and authority must remain explicit.", external_exports.discriminatedUnion("source", [
     external_exports.strictObject({ source: external_exports.literal("desktop"), document_id: external_exports.string().min(1).max(128), expected_state: external_exports.string().min(1).max(128).optional(), limit: external_exports.number().int().min(1).max(100).optional(), offset: external_exports.number().int().min(0).max(1e4).optional(), include_suppressed: external_exports.boolean().optional() }),
     external_exports.strictObject({ source: external_exports.literal("snapshot"), snapshot: bom })

@@ -48,6 +48,23 @@ npm run test:grafana
 The deeper provider, authentication, install, and native-platform checks are in
 [the Grafana test guide](tests/grafana-observability/README.md).
 
+For Autodesk Fusion, use the same root master-suite convention:
+
+```sh
+# Cold packaged checks do not need development dependencies or Autodesk access.
+npm run test:autodesk-fusion:package
+# Install only the pinned development dependencies for the complete master.
+npm --prefix plugins/autodesk-fusion ci --ignore-scripts
+npm run test:autodesk-fusion
+```
+
+The [Fusion test guide](tests/autodesk-fusion/README.md) describes its root
+unit/integration/security checks, deeper plugin contracts, Python requirement
+and explicit external qualification gates. Marketplace CI installs packages'
+locked development dependencies without lifecycle scripts before invoking the
+catalog-discovered master suites. Individual plugin CI uses those same masters;
+platform and native-build jobs provide supplemental evidence.
+
 ## Pull requests
 
 Keep pull requests focused. Describe:

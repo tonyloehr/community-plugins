@@ -58,6 +58,31 @@ The recording in [demo media](media/README.md) illustrates a broader local
 workflow and is not installed-plugin test evidence. Review it in full before
 redistribution.
 
+## Autodesk Fusion verification
+
+Use Node.js 22.19 or newer and Python 3.12 or newer for development verification:
+
+```sh
+npm --prefix plugins/autodesk-fusion ci --ignore-scripts
+npm run test:autodesk-fusion
+```
+
+The root master checks the committed distribution before rebuilding, runs the
+repository's cold-package unit/integration/security tests, then runs the deeper
+plugin and Python API contracts and validates the regenerated package. The
+catalog-discovered `npm run test:marketplace` includes this same master. See the
+[Fusion test guide](../tests/autodesk-fusion/README.md) for coverage and process
+cleanup boundaries.
+
+An implementation-preview PR must preserve the explicit limitations in the
+[Fusion status report](autodesk-fusion-implementation-status.md). Synthetic
+geometry, protocol doubles and local package tests do not qualify a licensed
+Fusion build, Autodesk tenant, machine/post/tool combination or installed-Codex
+workflow. Hosted CI, supported-OS/native builds, real credential service checks,
+licensed acceptance scenarios and independent engineering/security review need
+their own evidence. Do not enable real-provider managed writes or the disabled
+Automation recipe just to make a setup or test result appear complete.
+
 ## Publish checklist
 
 1. Review the complete diff, source receipts, media, and test results.

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod/v4';
 import { retentionHoldsSchema, retentionPolicySchema } from './retention.js';
+import { manageDraftRegistrySchema } from './manage-drafts.js';
 import { FusionError, hash, hashBytes } from './safety.js';
 
 const absolute = z.string().max(4096).refine(v => path.isAbsolute(v) && !v.includes('\0') && !/^[/\\]{2}/u.test(v), 'Use an absolute local path without network shares or NUL bytes.');
@@ -54,6 +55,7 @@ const profileSchema = z.strictObject({
     hubIds: z.array(z.string()).default([]), projects: z.array(z.strictObject({ hubId: z.string(), projectId: z.string() })).default([]),
     mfgModels: z.array(z.strictObject({ modelId: z.string(), hubId: z.string(), projectId: z.string(), configurationId: z.string().nullable().optional() })).default([]),
     manage: z.strictObject({ tenant: z.string(), workspaceIds: z.array(z.number().int().positive()) }).optional(),
+    manageDraftSchemas: manageDraftRegistrySchema.optional(),
     recipesFile: absolute.optional(),
     enterpriseAdapter: z.strictObject({ path: absolute, sha256: sha }).optional(),
     propertyRules: z.array(z.strictObject({ propertyDefinitionId: z.string().min(1), type: z.enum(['string', 'number', 'boolean']), allowNull: z.boolean(), maxLength: z.number().int().positive().optional(), minimum: z.number().finite().optional(), maximum: z.number().finite().optional(), unit: z.string().optional(), owner: z.literal('product') })).default([]),
@@ -73,6 +75,9 @@ export function parseProfile(value: unknown): FusionProfile {
   if (p.desktop?.provider === 'native' && p.desktop.tokenFile) throw new FusionError('INVALID_PROFILE', 'Native MCP does not use the add-in token file.');
   if (p.cloud?.enterpriseAdapter && (p.cloud.clientId !== undefined || p.cloud.scopes !== undefined || p.cloud.redirectUri !== undefined)) throw new FusionError('INVALID_PROFILE', 'Enterprise adapters own authorization; omit public-client clientId/scopes/redirectUri fields. Their service grants are not inherited from interactive PKCE.');
   if (p.cloud && !p.cloud.enterpriseAdapter && (!p.cloud.clientId || !p.cloud.scopes || !p.cloud.redirectUri)) throw new FusionError('INVALID_PROFILE', 'Standard cloud profiles require an explicit public clientId, scopes and redirectUri.');
+  for (const schema of p.cloud?.manageDraftSchemas ?? []) {
+    if (!p.cloud?.manage || schema.tenant !== p.cloud.manage.tenant || !p.cloud.manage.workspaceIds.includes(schema.workspaceId)) throw new FusionError('INVALID_PROFILE', 'Every trusted Manage draft schema must belong to the exact configured tenant and an allowlisted workspace.');
+  }
   for (const list of [p.outputs, p.assets.templates, p.assets.posts, p.assets.machines, p.assets.toolLibraries, p.assets.imports, p.manufacturing]) if (new Set(list.map(x => x.id)).size !== list.length) throw new FusionError('INVALID_PROFILE', 'Profile IDs must be unique within each registry.');
   if (p.mode !== 'fixture' && p.policy.operations.includes('*')) throw new FusionError('INVALID_PROFILE', 'Real provider grants must enumerate operations.');
   if (p.mode !== 'fixture' && p.policy.documents.includes('*')) throw new FusionError('INVALID_PROFILE', 'Real provider grants must enumerate document references.');

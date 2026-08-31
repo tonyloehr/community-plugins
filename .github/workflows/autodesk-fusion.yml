@@ -7,8 +7,12 @@ on:
       - ".gitattributes"
       - ".agents/plugins/marketplace.json"
       - "package.json"
+      - "README.md"
       - "plugins/autodesk-fusion/**"
+      - "tests/autodesk-fusion/**"
       - "scripts/validate-autodesk-fusion.mjs"
+      - "scripts/validate-marketplace.mjs"
+      - "scripts/run-marketplace-tests.mjs"
       - "docs/autodesk-fusion*"
   push:
     branches: [main]
@@ -17,8 +21,12 @@ on:
       - ".gitattributes"
       - ".agents/plugins/marketplace.json"
       - "package.json"
+      - "README.md"
       - "plugins/autodesk-fusion/**"
+      - "tests/autodesk-fusion/**"
       - "scripts/validate-autodesk-fusion.mjs"
+      - "scripts/validate-marketplace.mjs"
+      - "scripts/run-marketplace-tests.mjs"
       - "docs/autodesk-fusion*"
   workflow_dispatch:
 
@@ -30,18 +38,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  contracts:
-    name: Contracts / ${{ matrix.os }} / Node ${{ matrix.node }}
+  autodesk-fusion-e2e:
+    name: Autodesk Fusion E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FUSION_TEST_PYTHON: python
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Validate committed bytes and cold package before dependency installation
+        run: npm run validate:autodesk-fusion && npm run test:autodesk-fusion:package
+      - name: Install pinned development dependencies without install scripts
+        run: npm --prefix plugins/autodesk-fusion ci --ignore-scripts
+      - name: Complete root master suite / Node 22.19.0
+        run: npm run test:autodesk-fusion
+      - name: Verify regenerated package / Node 22.19.0
+        run: git diff --exit-code -- plugins/autodesk-fusion
+      - name: Audit runtime dependencies
+        run: npm audit --prefix plugins/autodesk-fusion --omit=dev
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Complete root master suite / Node 24
+        run: npm run test:autodesk-fusion
+      - name: Verify regenerated package / Node 24
+        run: git diff --exit-code -- plugins/autodesk-fusion
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26"
+          package-manager-cache: false
+      - name: Complete root master suite / Node 26
+        run: npm run test:autodesk-fusion
+      - name: Verify regenerated package and marketplace / Node 26
+        run: git diff --exit-code -- plugins/autodesk-fusion && npm run validate:marketplace
+
+  platform-contracts:
+    name: Fusion platform contracts / ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            node: "22.19.0"
-          - os: ubuntu-latest
-            node: "24"
-          - os: ubuntu-latest
-            node: "26"
           - os: macos-latest
             node: "22.19.0"
           - os: windows-latest
@@ -67,13 +116,12 @@ jobs:
         working-directory: plugins/autodesk-fusion
       - name: Validate the committed distribution before rebuilding
         run: npm run validate:autodesk-fusion
-      - name: Build, typecheck, protocol/governance/installed-package tests and Python API contracts
-        run: npm run verify
-        working-directory: plugins/autodesk-fusion
+      - name: Complete root master including packaged security and Python API contracts
+        run: npm run test:autodesk-fusion
       - name: Validate rebuilt distribution and marketplace metadata
         run: npm run validate:autodesk-fusion && npm run validate:marketplace
       - name: Verify regenerated package matches the committed distribution
-        run: git diff --exit-code -- plugins/autodesk-fusion/dist plugins/autodesk-fusion/docs plugins/autodesk-fusion/THIRD_PARTY_NOTICES.txt
+        run: git diff --exit-code -- plugins/autodesk-fusion
 
   # Hosted CI has no licensed Fusion kernel, Autodesk account or qualified machine.
   # Those checks are not represented as green mocks; use the documented local

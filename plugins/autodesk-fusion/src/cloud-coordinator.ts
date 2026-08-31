@@ -10,6 +10,7 @@ import { authorize, loadProfile, profileHash, type FusionProfile } from './profi
 import { FusionError, SerialQueue, errorResult, hash, newId, now, assertJson } from './safety.js';
 import { RecordStore } from './storage.js';
 import { assertCloudBatchConflictIntegrity, assertCloudBatchIntegrity, assertPreparedBatchVariant, batchArtifactConflicts, batchErrorCode, cloudBatchBinding, cloudBatchChildKey, cloudBatchConflictBinding, cloudBatchContext, cloudBatchId, inspectCloudBatch, parseCloudBatchInput, type CloudBatchConflictRecord, type CloudBatchInspection, type CloudBatchOwner, type CloudBatchRecord, type CloudBatchVariant } from './cloud-batches.js';
+import { manageDraftChanges, manageDraftInspectSchema, manageDraftRecordBinding, manageDraftRegistrySchema, parseManageDraftInput, reviewManageDraft, verifyManageDraftRecord, verifyManageSdkDraft, type ManageDraftRecord, type ManageDraftReview } from './manage-drafts.js';
 
 export interface CloudJobRecord {
   id: string; prepared: PreparedAutomationJob; plan_hash: string; profile_hash: string;
@@ -114,6 +115,10 @@ function freshEvidence(value: unknown, createdAt: string) {
 }
 function exactKeys(value: unknown, keys: string[]): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(key => keys.includes(key)) && keys.every(key => Object.hasOwn(value, key));
+}
+interface ManageDraftContext {
+  profile_hash: string; scope_hash: string; authorization_binding: string; tenant_id: string;
+  schema: ManageDraftRecord['trusted_schema']; schema_hash: string;
 }
 
 export class CloudCoordinator {
@@ -649,6 +654,114 @@ export class CloudCoordinator {
     const id = newId('data_draft');
     await this.options.store.put('outbox', id, JSON.parse(JSON.stringify({ id, ...draft, requested_rule_origin: 'Caller-provided comparison policy; this does not authorize publication.', created_at: now() })));
     return { id, ...draft };
+  }
+  private manageSchema(workspaceId: number): ManageDraftRecord['trusted_schema'] {
+    const cloud = this.options.profile.cloud!, manage = cloud.manage;
+    if (!manage || !manage.workspaceIds.includes(workspaceId)) throw new FusionError('SCOPE_DENIED', 'This Manage workspace is outside the trusted profile.');
+    const registry = manageDraftRegistrySchema.safeParse(cloud.manageDraftSchemas ?? []);
+    if (!registry.success) throw new FusionError('UNQUALIFIED_SCHEMA', 'The trusted Manage draft registry is invalid. Restart with a reviewed profile.');
+    const matches = registry.data.filter(schema => schema.tenant === manage.tenant && schema.workspaceId === workspaceId);
+    if (matches.length !== 1) throw new FusionError('UNQUALIFIED_SCHEMA', 'No unique owner-reviewed draft schema is configured for this exact Manage tenant/workspace. Caller-provided schemas cannot supply it.');
+    const actual = this.aps.scope;
+    if (actual.tenantId !== cloud.tenantId || !actual.manage || hash(actual.manage) !== hash(manage)) throw new FusionError('DATA_SCOPE_DENIED', 'The APS client and trusted profile do not have the same Manage tenant/workspace scope.');
+    return matches[0]!;
+  }
+  private async assertManageContext(context: ManageDraftContext): Promise<void> {
+    const unchanged = () => {
+      if (profileHash(this.options.profile) !== context.profile_hash || this.scopeBinding() !== context.scope_hash) throw new FusionError('PROFILE_CHANGED', 'Cloud profile or trusted Manage schema changed during review. Restart and prepare a fresh draft.');
+      if (hash(this.manageSchema(context.schema.workspaceId)) !== context.schema_hash) throw new FusionError('UNQUALIFIED_SCHEMA', 'The selected trusted Manage draft rules changed.');
+    };
+    await this.check(); unchanged();
+    await this.ensureAccount(context.authorization_binding);
+    await this.check(); unchanged();
+  }
+  private assertManageFresh(createdAt: number, expiresAt: number): number {
+    const observed = Date.now();
+    if (!Number.isFinite(observed) || observed < createdAt) throw new FusionError('FRESHNESS_UNAVAILABLE', 'The local clock cannot establish the age of this Manage draft.');
+    if (observed >= expiresAt) throw new FusionError('PLAN_EXPIRED', 'The Manage review draft expired. Inspection never renews its lifetime; prepare a new draft.');
+    return observed;
+  }
+  /** Local outbox only. The caller cannot choose the reviewed schema or grant publication. */
+  async prepareManageDraft(value: unknown): Promise<ManageDraftReview> {
+    const request = parseManageDraftInput(value);
+    let localReceipt: { draft_id: string; record_hash: string; provider_write_performed: false } | undefined;
+    let reportedFailure: FusionError | undefined;
+    let reportedReason: string | undefined;
+    return this.guarded(async () => {
+      const profile = this.options.profile;
+      const beforeProfile = profileHash(profile), scope = this.scopeBinding();
+      const schema = this.manageSchema(request.workspace_id);
+      const changes = manageDraftChanges(schema, request);
+      const context: ManageDraftContext = { profile_hash: beforeProfile, scope_hash: scope, authorization_binding: await this.accountBinding(), tenant_id: profile.cloud!.tenantId, schema, schema_hash: hash(schema) };
+      await this.assertManageContext(context);
+      const started = Date.now(), expires = started + profile.policy.planMaxAgeMs;
+      const draft = verifyManageSdkDraft(await this.aps.prepareManageItemDraft(request.workspace_id, request.item_id, structuredClone(schema), changes), { tenantId: context.tenant_id, schema, request });
+      await this.assertManageContext(context);
+      const observed = this.assertManageFresh(started, expires);
+      const record: ManageDraftRecord = {
+        schema_version: 1, id: newId('managedraft'), operation: 'manage.item_draft', profile_id: profile.id,
+        profile_hash: context.profile_hash, scope_hash: context.scope_hash, authorization_binding: context.authorization_binding,
+        schema_hash: context.schema_hash, request_hash: hash(request), created_at: new Date(started).toISOString(), observed_at: new Date(observed).toISOString(), expires_at: new Date(expires).toISOString(),
+        trusted_schema: schema, request, draft, record_hash: '',
+      };
+      record.record_hash = hash(manageDraftRecordBinding(record));
+      const verified = verifyManageDraftRecord(record);
+      // Check display bounds/redaction before committing a local record.
+      reviewManageDraft(verified, verified.observed_at);
+      if (await this.options.store.get('managedraft', record.id)) throw new FusionError('RECORD_CONFLICT', 'The newly allocated Manage draft ID already exists; no record was overwritten.');
+      await this.assertManageContext(context); this.assertManageFresh(started, expires);
+      try {
+        // put() may fail after committing its rename; retain this identity from
+        // the first persistence attempt, including errors in guarded cleanup.
+        localReceipt = { draft_id: verified.id, record_hash: verified.record_hash, provider_write_performed: false };
+        await this.options.store.put('managedraft', verified.id, verified);
+        await this.options.store.audit('manage_draft_prepared', { id: verified.id, record_hash: verified.record_hash, stored_draft_hash: verified.draft.draftHash, workspace_id: request.workspace_id, item_id: request.item_id, provider_write_performed: false });
+      } catch {
+        reportedFailure = new FusionError('DRAFT_PERSISTENCE_UNCONFIRMED', 'Manage was not changed. Local draft or audit persistence could not be confirmed; inspect the allocated draft ID before preparing another copy.', 'unknown', localReceipt);
+        throw reportedFailure;
+      }
+      try {
+        await this.assertManageContext(context);
+        return reviewManageDraft(verified, new Date(this.assertManageFresh(started, expires)).toISOString());
+      } catch (error) {
+        // Do not return old source data after scope/account drift, or hide the
+        // local copy that already exists behind an outcome:none refusal.
+        reportedReason = error instanceof FusionError ? error.code : 'VERIFICATION_FAILED';
+        reportedFailure = new FusionError('DRAFT_REVIEW_UNCONFIRMED', 'Manage was not changed and the local draft was retained, but its current review context could not be confirmed. Inspect the allocated ID after resolving the reported context; the draft was not renewed.', 'unknown', { ...localReceipt, reason_code: reportedReason });
+        throw reportedFailure;
+      }
+    }).catch(error => {
+      if (!localReceipt || error === reportedFailure) throw error;
+      // guarded() releases its lease outside the callback. Its failure must
+      // not erase a persisted draft's identity or an earlier review refusal.
+      throw new FusionError('DRAFT_COMPLETION_UNCONFIRMED', 'Manage was not changed. Completion of the local draft operation, including lease cleanup, could not be confirmed. Inspect the allocated ID before preparing another copy; no draft was renewed or published.', 'unknown', {
+        ...localReceipt, cleanup_error_code: errorResult(error).code,
+        ...(reportedFailure ? { prior_error_code: reportedFailure.code } : {}),
+        ...(reportedReason ? { prior_reason_code: reportedReason } : {}),
+      });
+    });
+  }
+  /** Recheck an unchanged local record with GETs; never rewrite or renew it. */
+  async inspectManageDraft(id: string): Promise<ManageDraftReview> {
+    const parsed = manageDraftInspectSchema.safeParse({ draft_id: id });
+    if (!parsed.success) throw new FusionError('INVALID_INPUT', 'Use the exact opaque Manage draft ID returned by preparation.');
+    return this.guarded(async () => {
+      const stored = await this.options.store.get<unknown>('managedraft', parsed.data.draft_id);
+      if (!stored) throw new FusionError('NOT_FOUND', 'No Manage draft with this ID exists in the local ledger.');
+      const record = verifyManageDraftRecord(stored);
+      if (record.id !== parsed.data.draft_id) throw new FusionError('DRAFT_TAMPERED', 'The stored Manage draft ID does not match its ledger identity.');
+      if (record.profile_id !== this.options.profile.id || record.scope_hash !== this.scopeBinding()) throw new FusionError('DATA_SCOPE_DENIED', 'This Manage draft belongs to a different profile or cloud scope.');
+      if (record.profile_hash !== profileHash(this.options.profile)) throw new FusionError('PROFILE_CHANGED', 'The profile or trusted Manage schema changed after this draft was prepared.');
+      const schema = this.manageSchema(record.request.workspace_id);
+      const context: ManageDraftContext = { profile_hash: record.profile_hash, scope_hash: record.scope_hash, authorization_binding: record.authorization_binding, tenant_id: this.options.profile.cloud!.tenantId, schema, schema_hash: record.schema_hash };
+      const started = Date.parse(record.created_at), expires = Date.parse(record.expires_at);
+      await this.assertManageContext(context); this.assertManageFresh(started, expires);
+      const current = verifyManageSdkDraft(await this.aps.prepareManageItemDraft(record.request.workspace_id, record.request.item_id, structuredClone(schema), manageDraftChanges(schema, record.request)), { tenantId: context.tenant_id, schema, request: record.request });
+      await this.assertManageContext(context);
+      const observed = this.assertManageFresh(started, expires);
+      if (current.draftHash !== record.draft.draftHash || current.expectedItemFingerprint !== record.draft.expectedItemFingerprint || current.expectedEtag !== record.draft.expectedEtag) throw new FusionError('STALE_PLAN', 'The Manage item or its observed schema changed. The immutable local draft was retained without renewal or publication.');
+      return reviewManageDraft(record, new Date(observed).toISOString());
+    });
   }
   async prepareProperty(context: MfgContext, propertyId: string, after: string | number | boolean | null, requireAtomic = true): Promise<CloudDataPlan> {
     return this.guarded(async () => {

@@ -6,8 +6,7 @@ on:
       - ".github/workflows/marketplace.yml"
       - ".agents/plugins/**"
       - "plugins/**"
-      - "scripts/validate-marketplace.mjs"
-      - "scripts/run-marketplace-tests.mjs"
+      - "scripts/**"
       - "tests/**"
       - "package.json"
       - "README.md"
@@ -19,8 +18,7 @@ on:
       - ".github/workflows/marketplace.yml"
       - ".agents/plugins/**"
       - "plugins/**"
-      - "scripts/validate-marketplace.mjs"
-      - "scripts/run-marketplace-tests.mjs"
+      - "scripts/**"
       - "tests/**"
       - "package.json"
       - "README.md"
@@ -49,3 +47,42 @@ jobs:
           node-version: "22.19.0"
           package-manager-cache: false
       - run: npm run validate:marketplace
+
+  plugin-suites:
+    name: Marketplace plugin suites
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      FUSION_TEST_PYTHON: python
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Validate catalog before selecting package directories
+        run: npm run validate:marketplace
+      - name: Install catalog packages' locked development dependencies without lifecycle scripts
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { spawnSync } from 'node:child_process';
+          const catalog = JSON.parse(fs.readFileSync('.agents/plugins/marketplace.json', 'utf8'));
+          for (const entry of catalog.plugins) {
+            const directory = `plugins/${entry.name}`;
+            if (!fs.existsSync(`${directory}/package-lock.json`)) continue;
+            const result = spawnSync('npm', ['ci', '--ignore-scripts'], { cwd: directory, stdio: 'inherit' });
+            if (result.error || result.status !== 0) process.exit(result.status ?? 1);
+          }
+          NODE
+      - name: Run each catalog entry's root master suite
+        run: npm run test:marketplace
+      - name: Validate the complete marketplace after all suites
+        run: npm run validate

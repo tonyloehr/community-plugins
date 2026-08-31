@@ -9,6 +9,7 @@ export * from './engine.js';
 export * from './handoff.js';
 export * from './retention.js';
 export * from './cloud-batches.js';
+export * from './manage-drafts.js';
 export * from './native.js';
 export * from './addin.js';
 export * from './oauth.js';

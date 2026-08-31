@@ -6,6 +6,7 @@ import { type FusionProfile } from './profile.js';
 import { errorResult } from './safety.js';
 import { RecordStore } from './storage.js';
 import { type CloudBatchInspection, type CloudBatchOwner } from './cloud-batches.js';
+import { type ManageDraftReview } from './manage-drafts.js';
 export interface CloudJobRecord {
     id: string;
     prepared: PreparedAutomationJob;
@@ -338,6 +339,13 @@ export declare class CloudCoordinator {
     private recordOutputConflict;
     settleJob(id: string): Promise<CloudJobRecord>;
     prepareBomSync(source: BomSnapshot, target: BomSnapshot, ownership: BomFieldOwnership[], mappings?: BomMapping[]): Promise<unknown>;
+    private manageSchema;
+    private assertManageContext;
+    private assertManageFresh;
+    /** Local outbox only. The caller cannot choose the reviewed schema or grant publication. */
+    prepareManageDraft(value: unknown): Promise<ManageDraftReview>;
+    /** Recheck an unchanged local record with GETs; never rewrite or renew it. */
+    inspectManageDraft(id: string): Promise<ManageDraftReview>;
     prepareProperty(context: MfgContext, propertyId: string, after: string | number | boolean | null, requireAtomic?: boolean): Promise<CloudDataPlan>;
     inspectDataPlan(id: string): Promise<CloudDataPlan>;
     executeDataPlan(id: string, expectedHash: string, key: string): Promise<CloudDataPlan>;
