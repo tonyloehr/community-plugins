@@ -52,11 +52,37 @@ if (missingScripts.length > 0) {
   process.exit(1);
 }
 
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+// npm.cmd cannot be launched directly by spawnSync on Windows. Reuse npm's
+// existing lifecycle entry point through this Node executable on every OS,
+// without a shell, PATH fallback or changes to inherited npm configuration.
+// These are launch prerequisites, not authentication of the npm installation.
+const npmExecPath = process.env.npm_execpath;
+let npmCli;
+try {
+  if (
+    typeof process.env.npm_lifecycle_event === "string" &&
+    process.env.npm_lifecycle_event.trim() !== "" &&
+    typeof npmExecPath === "string" &&
+    path.isAbsolute(npmExecPath)
+  ) {
+    const resolved = fs.realpathSync(npmExecPath);
+    if (path.basename(resolved) === "npm-cli.js" && fs.statSync(resolved).isFile()) {
+      npmCli = resolved;
+    }
+  }
+} catch {
+  // Report the same actionable diagnostic for a missing or unusable path.
+}
+if (!npmCli) {
+  console.error(
+    "ERROR this runner requires an npm lifecycle with an absolute npm_execpath resolving to a regular npm-cli.js. Run npm run test:marketplace (or npm test) from the repository root; direct Node launch and PATH fallback are not supported.",
+  );
+  process.exit(1);
+}
 
 for (const scriptName of testScripts) {
   console.log(`\n> Running ${scriptName}`);
-  const result = spawnSync(npmCommand, ["run", scriptName], {
+  const result = spawnSync(process.execPath, [npmCli, "run", scriptName], {
     cwd: repoRoot,
     stdio: "inherit",
   });
