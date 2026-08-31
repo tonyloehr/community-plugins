@@ -24,7 +24,7 @@ import {
   redact,
   schemaFingerprint,
   validateEnrollment
-} from "./chunk-YNPH7WC2.mjs";
+} from "./chunk-JUSHUPR6.mjs";
 
 // src/cli.ts
 import { cp, lstat, readFile, writeFile } from "node:fs/promises";

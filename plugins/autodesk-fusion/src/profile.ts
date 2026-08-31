@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod/v4';
+import { retentionHoldsSchema, retentionPolicySchema } from './retention.js';
 import { FusionError, hash, hashBytes } from './safety.js';
 
 const absolute = z.string().max(4096).refine(v => path.isAbsolute(v) && !v.includes('\0') && !/^[/\\]{2}/u.test(v), 'Use an absolute local path without network shares or NUL bytes.');
@@ -47,6 +48,7 @@ const profileSchema = z.strictObject({
     qualificationEvidence: z.string().min(1),
     reviewRecords: z.array(z.strictObject({ id, sourceState: sha, method: z.string().min(1), reviewedBy: z.string().min(1), expiresAt: z.string().datetime() })).default([])
   })).default([]),
+  retention: z.strictObject({ policy: retentionPolicySchema.optional(), holds: retentionHoldsSchema.optional() }).optional(),
   cloud: z.strictObject({
     clientId: z.string().min(1).optional(), tenantId: z.string().min(1), scopes: z.array(z.string()).min(1).optional(), redirectUri: z.string().url().optional(),
     hubIds: z.array(z.string()).default([]), projects: z.array(z.strictObject({ hubId: z.string(), projectId: z.string() })).default([]),

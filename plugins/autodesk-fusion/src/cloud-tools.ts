@@ -5,6 +5,7 @@ import { redactCloudData } from './cloud.js';
 import type { BomSnapshot, BomFieldOwnership, BomMapping } from './bom.js';
 import type { Runtime } from './runtime.js';
 import { FusionError, assertJson, errorResult, hash, newId, now, redact } from './safety.js';
+import { cloudBatchPrepareSchema } from './cloud-batches.js';
 
 const ref = z.string().min(1).max(2048), scalar = z.union([z.string().max(8192), z.number().finite(), z.boolean(), z.null()]);
 const page = { page_number: z.number().int().min(0).max(1_000_000).optional(), page_size: z.number().int().min(1).max(200).optional() };
@@ -36,7 +37,7 @@ const ownership = z.array(z.strictObject({ field: ref, sourceOfTruth: z.enum(['c
 export function registerCloudTools(server: McpServer, runtime: Runtime): void {
   const cloud = () => { if (!runtime.cloud) throw new FusionError('CLOUD_NOT_CONFIGURED', 'Configure a scoped direct APS profile and sign in separately; the synthetic fixture and native Data MCP credentials do not grant cloud access.'); return runtime.cloud; };
   const register = <S extends z.ZodType<Record<string, unknown>>>(name: string, description: string, schema: S, readOnly: boolean, callback: (args: z.infer<S>) => unknown | Promise<unknown>): void => {
-    server.registerTool(name, { description, inputSchema: fromJsonSchema<z.infer<S>>(z.toJSONSchema(schema) as unknown as JsonSchemaType), annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, idempotentHint: readOnly, openWorldHint: true } }, async input => {
+    server.registerTool(name, { description, inputSchema: fromJsonSchema<z.infer<S>>(z.toJSONSchema(schema, { io: 'input' }) as unknown as JsonSchemaType), annotations: { readOnlyHint: readOnly, destructiveHint: !readOnly, idempotentHint: readOnly, openWorldHint: true } }, async input => {
       try {
         assertJson(input, 2_097_152);
         const result = await callback(schema.parse(input) as z.infer<S>);
@@ -47,7 +48,7 @@ export function registerCloudTools(server: McpServer, runtime: Runtime): void {
     });
   };
   register('fusion_cloud_status', 'Inspect direct APS authentication metadata, scoped hubs/projects, reviewed recipes and admission budget. Never returns tokens or reads Codex credential caches.', z.strictObject({}), true, () => cloud().status());
-  register('fusion_data_operations_list', 'Discover exact scoped data-read contracts. APIs and native Fusion Data MCP have separate authorization and coverage.', z.strictObject({}), true, () => ({ operations: Object.entries(cloudReads).map(([operation, schema]) => ({ operation, input_schema: z.toJSONSchema(schema) })), generic_url_or_graphql_execution: false }));
+  register('fusion_data_operations_list', 'Discover exact scoped data-read contracts. APIs and native Fusion Data MCP have separate authorization and coverage.', z.strictObject({}), true, () => ({ operations: Object.entries(cloudReads).map(([operation, schema]) => ({ operation, input_schema: z.toJSONSchema(schema, { io: 'input' }) })), generic_url_or_graphql_execution: false }));
   register('fusion_data_search', 'Execute a reviewed bounded Autodesk data read. Follow returned page/cursor values explicitly. Read semantics preserve incomplete GraphQL results and do not turn file hierarchy or assembly relations into a released BOM.', z.strictObject({ operation: z.enum(Object.keys(cloudReads) as [keyof typeof cloudReads, ...(keyof typeof cloudReads)[]]), args: z.record(z.string(), z.unknown()) }), true, a => {
     const parsed = cloudReads[a.operation].safeParse(a.args);
     if (!parsed.success) throw new FusionError('INVALID_INPUT', 'Cloud read arguments do not match the operation contract.', 'none', parsed.error.issues);
@@ -74,6 +75,9 @@ export function registerCloudTools(server: McpServer, runtime: Runtime): void {
     await runtime.engine.store.put('outbox', id, JSON.parse(JSON.stringify(draft))); return draft;
   });
   register('fusion_cloud_job_prepare', 'Prepare a reviewed Fusion Automation recipe, exact input versions, destination and cost reservation. Does not submit compute. A signed generic activity alone does not constrain code or scope.', z.strictObject({ recipe_id: ref, inputs: z.record(z.string(), z.union([z.string().max(8192), z.number().finite(), z.boolean()])), context: z.strictObject({ tenantId: ref, sources: z.array(z.strictObject({ hubId: ref, projectId: ref, itemId: ref, versionId: ref, configurationId: ref.nullable(), resourceHash: z.string().regex(/^[a-f0-9]{64}$/) })).max(100), destinationAlias: ref, variantCount: z.number().int().positive().max(100_000), requireHardCap: z.boolean().optional(), requireImmutableEngine: z.boolean().optional(), requireImmutableDependencies: z.boolean().optional() }) }), false, a => cloud().prepareJob(a.recipe_id, a.inputs, a.context));
+  register('fusion_cloud_batch_prepare', 'Validate every variant of one reviewed recipe before preparing any compute submission. Requires a unique request key, 1–100 explicit variant identities, frozen common source context and approved object-storage staging. Preserves one immutable child job per variant; consumes no workitem and reserves no capacity.', cloudBatchPrepareSchema, false, a => cloud().prepareBatch(a));
+  register('fusion_cloud_batch_inspect', 'Read the durable batch manifest and exact per-variant job outcomes without provider polling. Exposes missing child records, uncertain work, validation and billing gaps; never treats provider completion as engineering success or releases staged outputs.', z.strictObject({ batch_id: ref }), true, a => cloud().inspectBatch(a.batch_id));
+  register('fusion_cloud_batch_resume', 'Admit a bounded sequential wave of unattempted children from an unchanged reviewed batch. Existing grant, tenant/account, source, expiry, concurrency and cost checks apply to each workitem. Never resubmits attempted or uncertain children, recreates a missing ready child, refreshes plans or publishes results.', z.strictObject({ batch_id: ref, plan_hash: z.string().regex(/^[a-f0-9]{64}$/), max_submissions: z.number().int().min(1).max(100) }), false, a => cloud().resumeBatch(a.batch_id, a.plan_hash, a.max_submissions));
   register('fusion_cloud_job_submit', 'Submit an unchanged reviewed cloud plan with an existing scoped compute grant and budget. Persist intent/reservation first; uncertain outcomes are never resubmitted automatically.', z.strictObject({ job_id: ref, plan_hash: z.string().regex(/^[a-f0-9]{64}$/), idempotency_key: z.string().min(8).max(160) }), false, a => cloud().submitJob(a.job_id, a.plan_hash, a.idempotency_key));
   register('fusion_cloud_job_inspect', 'Inspect a durable cloud plan without provider polling. Successful provider processing remains validating until the recipe output checks are completed.', z.strictObject({ job_id: ref }), true, a => cloud().inspectJob(a.job_id));
   register('fusion_cloud_job_validate', 'Run the trusted enterprise output validator for a completed provider job. Accepts only its stored ID; no model-provided success flag, artifact URL or validation receipt grants authority.', z.strictObject({ job_id: ref }), false, a => cloud().validateJob(a.job_id));

@@ -303,9 +303,6 @@
             "maximum": 100
           }
         },
-        "required": [
-          "kind"
-        ],
         "additionalProperties": false
       }
     },

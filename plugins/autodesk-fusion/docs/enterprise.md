@@ -1,5 +1,7 @@
 # Enterprise configuration and integration
 
+Cloud services require a `managed` or `assisted` profile. A `fixture` profile returns the synthetic runtime without constructing cloud services, even if it contains cloud settings. Cloud-only profiles can omit `desktop` configuration; a running Fusion desktop is not required for those cloud routes.
+
 Public PKCE profiles work directly with approved Autodesk hubs/projects/models. An enterprise may instead use an administrator-installed ESM adapter for service credentials, delegated user credentials, artifact transfer, output validation and billing reconciliation. The facade remains typed and its local plans, scopes, leases and accounting remain active.
 
 ## Trusted extension contract
@@ -20,6 +22,8 @@ The adapter resolves actual activity and bundle metadata before preparation and 
 
 Default runtime public PKCE can use qualified Fusion-project destinations. Object-storage recipes need the trusted stager; service `app_only`/`app_with_user` routes need enterprise credential providers. Open Network availability means the cloud engine is not implicitly network isolated. A declared recipe or script syntax check is not engine/runtime qualification. Verify the actual Autodesk engine type definitions, source/save/export semantics and output validators on the target account.
 
+The [bounded batch layer](batches.md) uses these same single-job contracts with one frozen recipe/source/destination context and explicit variant IDs. It validates the whole request before workitem submission, retains exact child mappings, and supports bounded admission waves after restart. It requires an object-storage stager; batches do not publish directly into Fusion projects or enterprise systems. Unknown submission or validation outcomes and output-identity collisions remain durable blockers. Final storage-key isolation must be established by the qualified stager; receipt identity checks alone cannot prove it.
+
 ## Data authority and consistency
 
 Scopes bind tenant context, allowed hubs, project-to-hub membership and model-to-project/configuration relationships. MFGDM observations require explicit timestamps/AS_SAVED composition and report partial data/cursors. A file version, MFG model timestamp, unsaved design and PLM revision must not be substituted for each other.
@@ -27,6 +31,8 @@ Scopes bind tenant context, allowed hubs, project-to-hub membership and model-to
 Trusted `propertyRules` constrain product-owned fields, types, null behavior, units and bounds. Built-in current-property observation uses a fixed authenticated schema gate, current model identity/value and a hash checked immediately before mutation; read-back reports whether the new value is confirmed. This is not atomic compare-and-set. Both `policy.allowNonAtomicCloudWrites` and the prepared request's explicit acceptance are needed for the non-atomic route. Do not bypass a workflow that requires atomic concurrency.
 
 BOM comparison preserves occurrence identity, null/unknown quantities, canonical units, suppression/exclusion, virtual parts, external references, source timestamps and computed/override/product/PLM/ERP authority. Same part numbers do not merge parts. Ownership policies can produce drafts but cannot grant publication. Fusion Manage reads and schema-aware draft preparation are implemented; real tenant-specific field mapping/publication and lifecycle transitions remain separately qualified customer adapters. The plugin has no implicit ERP/MES/QMS credentials or recipient authority.
+
+[Engineering handoff drafts](handoffs.md) are a separate local evidence workflow. They relate caller-supplied requirements to bounded observations, artifact/producer references and unperformed manual checks. Reviewer assignments and report references remain unverified metadata. A current source comparison, a satisfied numeric criterion or a stored hash does not grant design assurance, compliance, release or publication authority.
 
 ## Manufacturing authority
 
@@ -41,5 +47,7 @@ For managed desktop writes, the trusted profile must contain `policy.desktopQual
 `qualifiedOperations` applies to complete operation IDs and all their admitted argument variants. Customer policy cannot claim that only a tested `new_body` extrude is enabled when the same ID also accepts cut/join/intersect. Qualify the entire contract, restrict work to a narrower already qualified operation, or keep the ID disabled until a reviewed argument-level policy is implemented. Manufacturing asset/profile and product-property ownership rules provide their own separate constraints.
 
 Choose region, data eligibility, supported OS/build, extension/license, identity, quota, retention and egress controls before enabling a production lane. Do not infer Automation/MFGDM residency from a Data Management hub's region. Current account billing and service limits require live verification; an admission budget cannot stop unknown provider work or guarantee a hard spend ceiling.
+
+The optional trusted `retention.policy` and `retention.holds` fields support [local retention inventory and copy-review planning](retention.md). Actual periods and complete expiring hold observations belong to the customer owner. The tools do not accept policy overrides, initialize missing state, read credential subtrees, archive or delete. They preserve uncertain work, replay fences, cloud accounting and draft evidence. Artifact bytes, remote staging, support bundles and cross-system deletion obligations require separately authorized and qualified collection/cleanup processes.
 
 Use progressive deployment rings, a controlled profile/recipe/module registry, source and runtime receipts, dependency review, rollback packages and operator recovery playbooks. The default catalog authentication policy does not authenticate a Fusion account: fixture/desktop pairing and cloud sign-in are separate setup steps. No subscription, credential, entitlement, region certification or production signoff is bundled with this plugin.

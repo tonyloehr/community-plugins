@@ -11,7 +11,7 @@ const {
 
 const DOCUMENT = 'fixture:bracket';
 const SECRET_DOCUMENT = 'private:production';
-const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aNkwAAAAASUVORK5CYII=', 'base64');
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAGwAAABsCAYAAACPZlfNAAAARElEQVR4nO3BMQEAAADCoPVPbQhfoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHgNtqwAARHUcZkAAAAASUVORK5CYII=', 'base64');
 const STEP = 'ISO-10303-21;\nHEADER;\n/* PROTOCOL DOUBLE: NO AUTODESK GEOMETRY */\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n';
 const HANDLER = hashBytes('reviewed test handler, not Autodesk');
 const change = (document = DOCUMENT) => ({ operation: 'parameters.set', document_id: document, args: { changes: [{ parameter_id: 'fixture:parameter:width', expression: '45 mm' }] } });

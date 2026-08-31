@@ -88,3 +88,94 @@ test('bounded error details preserve shared evidence, original outcomes and safe
   assert.deepEqual(result.details.cause, { job_id: 'synthetic-job-reference', access_token: '[REDACTED]' });
   assertJson({ audit: { details: { result: { error: result } } } });
 });
+
+test('signed transfer URLs and URL userinfo are redacted in repeated untrusted references', () => {
+  const evidence = {
+    references: [
+      'https://files.example.invalid/file?X-Amz-Credential=SYNTHETIC_AWS_ID&X-Amz-Signature=SYNTHETIC_AWS_SIGNATURE&X-Amz-Security-Token=SYNTHETIC_AWS_TOKEN',
+      'https://files.example.invalid/file?GoogleAccessId=SYNTHETIC_GOOGLE_ID&Signature=SYNTHETIC_GOOGLE_SIGNATURE',
+      'https://files.example.invalid/file?X-Goog-Credential=SYNTHETIC_GOOGLE_CREDENTIAL&X-Goog-Signature=SYNTHETIC_GOOGLE_SIGNED',
+      'https://files.example.invalid/file?sv=2025-01-05&sig=SYNTHETIC_SAS_SIGNATURE',
+      'An external reference: https://SYNTHETIC_USER:SYNTHETIC_PASSWORD@files.example.invalid/private.',
+      'https://SYNTHETIC_USER_ONLY@files.example.invalid/private'
+    ]
+  };
+  const result = redact({ external_evidence: evidence, repeated: evidence });
+  assert.deepEqual(result.external_evidence, result.repeated);
+  assert.doesNotMatch(JSON.stringify(result), /SYNTHETIC_/u);
+  assert.match(result.external_evidence.references[0], /X-Amz-Signature=\[REDACTED\]/u);
+  assert.match(result.external_evidence.references[3], /sv=2025-01-05&sig=\[REDACTED\]/u);
+  assert.match(result.external_evidence.references[4], /\[REDACTED\]@files\.example\.invalid/u);
+  assert.match(evidence.references[0], /SYNTHETIC_AWS_SIGNATURE/u);
+  assertJson(result);
+});
+
+test('credential-bearing query names are recognized after bounded decoding and in fragments', () => {
+  const values = [
+    'https://files.example.invalid/?%58-Amz-Signature=SYNTHETIC_ENCODED',
+    'https://files.example.invalid/?%2573ig=SYNTHETIC_DOUBLE_ENCODED',
+    'https://files.example.invalid/#access_token=SYNTHETIC_FRAGMENT',
+    '?api_key=SYNTHETIC_QUERY_KEY&safe=public',
+    'Authentication failed: Basic SYNTHETIC_BASIC_VALUE',
+    'https://files.example.invalid/?AWSAccessKeyId=SYNTHETIC_LEGACY_ID&Signature=SYNTHETIC_LEGACY_SIGNATURE'
+  ];
+  assert.doesNotMatch(JSON.stringify(redact(values)), /SYNTHETIC_/u);
+  assert.equal(redact(values[4]), 'Authentication failed: Basic [REDACTED]');
+  assert.equal(redact(values[3]), '?api_key=[REDACTED]&safe=public');
+});
+
+test('credential fields are filtered without changing public engineering identity and ordinary links', () => {
+  const output = redact({
+    apiKey: 'SYNTHETIC_API_KEY', secretKey: 'SYNTHETIC_SECRET_KEY', idToken: 'SYNTHETIC_ID_TOKEN',
+    'Proxy-Authorization': 'SYNTHETIC_PROXY_AUTH', 'Set-Cookie': 'SYNTHETIC_COOKIE',
+    awsAccessKeyId: 'SYNTHETIC_AWS_ID', awsSecretAccessKey: 'SYNTHETIC_AWS_SECRET', awsSessionToken: 'SYNTHETIC_AWS_TOKEN',
+    normal: { source_state: 'state-1', volume: { value: 4000, unit: 'mm^3' }, signature: 'public-cryptographic-receipt', link: 'https://help.autodesk.com/view/fusion360/ENU/?guid=PUBLIC_GUID&lang=en', name: 'A bracket with a 40 mm width.' }
+  });
+  assert.doesNotMatch(JSON.stringify(output), /SYNTHETIC_/u);
+  assert.deepEqual(output.normal, { source_state: 'state-1', volume: { value: 4000, unit: 'mm^3' }, signature: 'public-cryptographic-receipt', link: 'https://help.autodesk.com/view/fusion360/ENU/?guid=PUBLIC_GUID&lang=en', name: 'A bracket with a 40 mm width.' });
+});
+
+test('redacted signed-URL diagnostics preserve the original partial outcome and recovery identity', () => {
+  const output = errorResult(new FusionError('OUTPUT_UNCERTAIN', 'Inspect https://files.example.invalid/?sig=SYNTHETIC_SIGNATURE before retrying.', 'partial', { job_id: 'job-test', link: 'https://files.example.invalid/?X-Amz-Credential=SYNTHETIC_CREDENTIAL', expected_output_count: 1 }));
+  assert.equal(output.code, 'OUTPUT_UNCERTAIN'); assert.equal(output.outcome, 'partial');
+  assert.equal(output.details.job_id, 'job-test'); assert.equal(output.details.expected_output_count, 1);
+  assert.doesNotMatch(JSON.stringify(output), /SYNTHETIC_/u);
+  assertJson(output);
+});
+
+test('ordinary redirect values cannot conceal credential query prefixes and separator runs stay bounded', () => {
+  const reference = 'https://example.invalid/redirect?destination=https://files.example.invalid/?sig=SYNTHETIC_REDIRECT&safe=public';
+  const result = redact(reference);
+  assert.doesNotMatch(result, /SYNTHETIC_REDIRECT/u);
+  assert.match(result, /sig=\[REDACTED\]&safe=public$/u);
+  const separators = '?'.repeat(100_000);
+  assert.equal(redact(separators), separators);
+  const ordinaryNames = 'component.'.repeat(10_000);
+  assert.equal(redact(ordinaryNames), ordinaryNames);
+});
+
+test('URL redaction removes userinfo through the final authority delimiter', () => {
+  const reference = 'https://test-user:SYNTHETIC_LEFT@SYNTHETIC_RIGHT@files.example.invalid/path?public=1';
+  assert.match(new URL(reference).password, /SYNTHETIC_LEFT.*SYNTHETIC_RIGHT/u);
+  assert.equal(redact(reference), 'https://[REDACTED]@files.example.invalid/path?public=1');
+  const result = errorResult(new FusionError('REFERENCE_UNAVAILABLE', `Inspect ${reference}`, 'partial', { reference }));
+  assert.doesNotMatch(JSON.stringify(result), /SYNTHETIC_/u);
+  assert.equal(result.outcome, 'partial');
+});
+
+test('encoded nested credential URLs are omitted without rewriting ordinary public encoded URLs', () => {
+  const secret = 'https://files.example.invalid/path?X-Amz-Signature=SYNTHETIC_NESTED_SIGNATURE';
+  for (const levels of [1, 2, 3, 8]) {
+    let encoded = secret;
+    for (let index = 0; index < levels; index++) encoded = encodeURIComponent(encoded);
+    const reference = `https://example.invalid/redirect?url=${encoded}&safe=public`;
+    assert.equal(redact(reference), 'https://example.invalid/redirect?url=[REDACTED]&safe=public');
+    const result = errorResult(new FusionError('REFERENCE_UNAVAILABLE', reference, 'unknown', { reference }));
+    assert.doesNotMatch(JSON.stringify(result), /SYNTHETIC_NESTED_SIGNATURE/u);
+    assert.equal(result.outcome, 'unknown');
+  }
+  const publicReference = `https://example.invalid/redirect?url=${encodeURIComponent('https://help.autodesk.com/view/fusion360/?guid=PUBLIC_GUID&lang=en')}&label=40%20mm`;
+  assert.equal(redact(publicReference), publicReference);
+  const overlapping = '?redirect='.repeat(10_000) + 'public%20value';
+  assert.match(redact(overlapping), /^\[REDACTED parameter expansion limit\]$/u);
+});

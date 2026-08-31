@@ -16,6 +16,9 @@ Keep a private state root per administered profile and approved private artifact
 | Provider job succeeded but no validator | Install/qualify the trusted output-validation integration; processing success remains separate from engineering success. |
 | Billing unknown or reservation exhausted | Reconcile through final trusted billing evidence. Cancel requests do not imply zero charge or free the reservation. |
 | Missing/unknown feature or API representation | Treat as a capability/qualification gap. Do not use arbitrary reflection or silently downgrade an engineering requirement. |
+| Batch validation intent or output-identity conflict | Inspect the exact batch and implicated child receipts. Preserve the fence and reservations; do not resume other variants or rerun validation to erase an unknown/colliding result. |
+| Handoff source/producer/artifact changed | Inspect the original draft and current evidence. Prepare a new draft when authorized; do not rewrite old checks or infer reviewer approval. |
+| Incomplete retention inventory or stale holds | Obtain a complete current owner observation and resolve scope/dependency/record problems. A partial inventory never authorizes cleanup. |
 
 Read-only status and inspection are bounded. Retry/backoff applies only to qualified safe cloud reads; a submitted write is not blindly replayed on token errors, rate limits, disconnects, schema continuation or timeout. Profile grants expire and profile/module/handler changes invalidate preparation. Restart deliberately after a deployment change.
 
@@ -27,7 +30,9 @@ A disabled mutation policy prevents new execution but does not revoke an existin
 
 ## Retention and uninstall
 
-Preserve unresolved plans, execution intents, job ownership, idempotency keys, credential-rotation fences and budget exposure until reconciliation. Do not use broad directory deletion or automatic TTL cleanup to erase an uncertain operation. Archive completed evidence according to project policy, preserving hashes and source/contract references. Automatic destructive retention is intentionally not enabled in this implementation; an enterprise retention adapter must prove terminal-state selection and meet legal/project obligations before deletion.
+Preserve unresolved plans, execution intents, job ownership, idempotency keys, credential-rotation fences, batch conflicts and budget exposure until reconciliation. Do not use broad directory deletion or automatic TTL cleanup to erase an uncertain operation. Archive completed evidence according to project policy, preserving hashes and source/contract references. Automatic destructive retention is intentionally not enabled in this implementation; an enterprise retention adapter must prove terminal-state selection and meet legal/project obligations before deletion.
+
+Use `fusion_retention_inventory` for bounded existing-ledger metadata and `fusion_retention_prepare` for a dependency-complete copy-review plan. Trusted owner periods and complete unexpired holds come from profile configuration, never the model request. The retention methods are read-only: no absent-root creation, audit/plan persistence, archive copy, move or deletion. Normal MCP/CLI startup initializes the runtime first and can create its state root; the methods' absence-preserving guarantee does not apply to launching the server. Keep the returned JSON through an independently authorized process if needed. See [retention planning](retention.md) for scope, limits, protected records and the missing cross-system executor boundary.
 
 Revoke direct APS authorization with the CLI or the enterprise owner; stop the Fusion add-in in the Scripts and Add-Ins UI; remove only its installed directory and profile-specific pairing/configuration. Removing the Codex plugin does not uninstall Fusion, delete CAD files, revoke unrelated Data MCP grants or stop Autodesk's separate native MCP server. Preserve or deliberately archive plugin state/artifacts rather than silently erasing them.
 

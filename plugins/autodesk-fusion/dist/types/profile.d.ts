@@ -117,6 +117,36 @@ declare const profileSchema: z.ZodObject<{
             expiresAt: z.ZodString;
         }, z.core.$strict>>>;
     }, z.core.$strict>>>;
+    retention: z.ZodOptional<z.ZodObject<{
+        policy: z.ZodOptional<z.ZodObject<{
+            version: z.ZodLiteral<1>;
+            ownerRef: z.ZodString;
+            policyRef: z.ZodString;
+            periods: z.ZodObject<{
+                expiredPreparationMs: z.ZodOptional<z.ZodNumber>;
+                terminalEvidenceMs: z.ZodOptional<z.ZodNumber>;
+                auditMs: z.ZodOptional<z.ZodNumber>;
+            }, z.core.$strict>;
+        }, z.core.$strict>>;
+        holds: z.ZodOptional<z.ZodObject<{
+            version: z.ZodLiteral<1>;
+            ownerRef: z.ZodString;
+            evidenceRef: z.ZodString;
+            reviewedAt: z.ZodString;
+            expiresAt: z.ZodString;
+            complete: z.ZodBoolean;
+            holds: z.ZodArray<z.ZodDiscriminatedUnion<[z.ZodObject<{
+                id: z.ZodString;
+                scope: z.ZodLiteral<"profile">;
+                reason: z.ZodString;
+            }, z.core.$strict>, z.ZodObject<{
+                id: z.ZodString;
+                scope: z.ZodLiteral<"records">;
+                recordRefs: z.ZodArray<z.ZodString>;
+                reason: z.ZodString;
+            }, z.core.$strict>], "scope">>;
+        }, z.core.$strict>>;
+    }, z.core.$strict>>;
     cloud: z.ZodOptional<z.ZodObject<{
         clientId: z.ZodOptional<z.ZodString>;
         tenantId: z.ZodString;

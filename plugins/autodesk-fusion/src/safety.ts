@@ -44,12 +44,75 @@ export const hashBytes = (value: string | Buffer): string => createHash('sha256'
 export const newId = (prefix: string): string => `${prefix}_${randomUUID()}`;
 export const now = (): string => new Date().toISOString();
 
+const SECRET_PROPERTY = /^(access.?token|refresh.?token|id.?token|client.?secret|secret.?key|api.?key|x-api-key|authorization|proxy-authorization|cookie|set-cookie|password|code_verifier|adsk3LeggedToken|awsAccessKeyId|awsSecretAccessKey|awsSessionToken)$/i;
+function credentialQueryName(name: string): boolean {
+  // URL parameter names may be percent encoded. Bound decoding work and keep
+  // malformed names conservative; this is redaction, never URL execution.
+  let decoded = name.replaceAll('+', ' ');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { const next = decodeURIComponent(decoded); if (next === decoded) break; decoded = next; }
+    catch { return true; }
+  }
+  return /^(access.?token|refresh.?token|id.?token|token|code|client.?secret|secret|secret.?key|api.?key|password|authorization|credential|signature|sig|x-amz-.+|x-goog-.+|awsaccesskeyid|googleaccessid)$/i.test(decoded);
+}
+function credentialStructure(value: string): boolean {
+  if (/\b(?:https?|ftps?|sftp|ssh):\/\/[^/\\\s"'<>?#]*@/i.test(value) || /\b(?:Bearer|Basic)\s|\beyJ[A-Za-z0-9_-]{10}/i.test(value)) return true;
+  for (const match of value.matchAll(/[?&#]([^=?&#\s"'<>]+)=/g)) if (credentialQueryName(match[1]!)) return true;
+  return false;
+}
+function redactQueryValues(value: string): string {
+  const parts: string[] = [];
+  let copied = 0, work = 0;
+  const workLimit = Math.max(16_384, value.length * 8);
+  // Match only prefixes: an ordinary redirect parameter must not consume and
+  // hide a credential-bearing URL inside its value. Excluding all separators
+  // also prevents repeated '?' text from causing quadratic backtracking.
+  for (const match of value.matchAll(/([?&#])([^=?&#\s"'<>]+)=/g)) {
+    if (match.index < copied) continue;
+    const start = match.index + match[0].length;
+    let end = start;
+    while (end < value.length && !/[&#\s"'<>]/u.test(value[end]!)) {
+      if (++work > workLimit) return '[REDACTED parameter expansion limit]';
+      end++;
+    }
+    let sensitive = credentialQueryName(match[2]!);
+    if (!sensitive) {
+      let decoded = value.slice(start, end);
+      if (decoded.includes('%') || decoded.includes('+')) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          work += decoded.length;
+          if (work > workLimit) return '[REDACTED parameter expansion limit]';
+          try {
+            const next = decodeURIComponent(decoded.replaceAll('+', ' '));
+            if (next === decoded) break;
+            decoded = next;
+          } catch { sensitive = true; break; }
+          if (credentialStructure(decoded)) { sensitive = true; break; }
+        }
+        // Do not decode indefinitely or return an opaque deeper encoding as if
+        // it had been inspected. Ordinary public encoded values remain intact.
+        if (/%[a-f0-9]{2}/i.test(decoded)) sensitive = true;
+      }
+    }
+    if (!sensitive) continue;
+    parts.push(value.slice(copied, start), '[REDACTED]');
+    copied = end;
+  }
+  return parts.length ? parts.join('') + value.slice(copied) : value;
+}
+function redactText(value: string): string {
+  return redactQueryValues(value
+    .replace(/\b(Bearer|Basic)\s+[^\s"']+/gi, '$1 [REDACTED]')
+    .replace(/(\b(?:https?|ftps?|sftp|ssh):\/\/)[^/\\\s"'<>?#]+@/gi, '$1[REDACTED]@')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED JWT]'));
+}
+
 function redactBounded(value: unknown, maxDepth: number, maxNodes: number): unknown {
   const ancestors = new WeakSet<object>();
   let nodes = 0;
   const walk = (v: unknown, depth = 0): unknown => {
     if (++nodes > maxNodes || depth > maxDepth) throw new FusionError('INPUT_LIMIT', 'Redacted data exceeds the structural limit.');
-    if (typeof v === 'string') return v.replace(/Bearer\s+[^\s"']+/gi, 'Bearer [REDACTED]').replace(/([?&](?:access_token|refresh_token|token|code|client_secret)=)[^&#\s]+/gi, '$1[REDACTED]').replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED JWT]');
+    if (typeof v === 'string') return redactText(v);
     if (v && typeof v === 'object') {
       if (ancestors.has(v)) return '[circular]';
       ancestors.add(v);
@@ -57,7 +120,7 @@ function redactBounded(value: unknown, maxDepth: number, maxNodes: number): unkn
         // Plans share selection arrays between their public operation and the
         // reviewed provider arguments. Only an ancestor reference is a cycle.
         if (Array.isArray(v)) return v.map(x => walk(x, depth + 1));
-        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(/^(access.?token|refresh.?token|client.?secret|authorization|cookie|password|code_verifier|adsk3LeggedToken)$/i.test(k) ? '[REDACTED]' : x, depth + 1)]));
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(SECRET_PROPERTY.test(k) ? '[REDACTED]' : x, depth + 1)]));
       } finally {
         ancestors.delete(v);
       }

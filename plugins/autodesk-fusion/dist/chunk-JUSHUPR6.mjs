@@ -54,18 +54,81 @@ var hash = (value) => createHash("sha256").update(canonicalJson(value)).digest("
 var hashBytes = (value) => createHash("sha256").update(value).digest("hex");
 var newId = (prefix) => `${prefix}_${randomUUID()}`;
 var now = () => (/* @__PURE__ */ new Date()).toISOString();
+var SECRET_PROPERTY = /^(access.?token|refresh.?token|id.?token|client.?secret|secret.?key|api.?key|x-api-key|authorization|proxy-authorization|cookie|set-cookie|password|code_verifier|adsk3LeggedToken|awsAccessKeyId|awsSecretAccessKey|awsSessionToken)$/i;
+function credentialQueryName(name2) {
+  let decoded = name2.replaceAll("+", " ");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      return true;
+    }
+  }
+  return /^(access.?token|refresh.?token|id.?token|token|code|client.?secret|secret|secret.?key|api.?key|password|authorization|credential|signature|sig|x-amz-.+|x-goog-.+|awsaccesskeyid|googleaccessid)$/i.test(decoded);
+}
+function credentialStructure(value) {
+  if (/\b(?:https?|ftps?|sftp|ssh):\/\/[^/\\\s"'<>?#]*@/i.test(value) || /\b(?:Bearer|Basic)\s|\beyJ[A-Za-z0-9_-]{10}/i.test(value)) return true;
+  for (const match of value.matchAll(/[?&#]([^=?&#\s"'<>]+)=/g)) if (credentialQueryName(match[1])) return true;
+  return false;
+}
+function redactQueryValues(value) {
+  const parts = [];
+  let copied = 0, work = 0;
+  const workLimit = Math.max(16384, value.length * 8);
+  for (const match of value.matchAll(/([?&#])([^=?&#\s"'<>]+)=/g)) {
+    if (match.index < copied) continue;
+    const start = match.index + match[0].length;
+    let end = start;
+    while (end < value.length && !/[&#\s"'<>]/u.test(value[end])) {
+      if (++work > workLimit) return "[REDACTED parameter expansion limit]";
+      end++;
+    }
+    let sensitive = credentialQueryName(match[2]);
+    if (!sensitive) {
+      let decoded = value.slice(start, end);
+      if (decoded.includes("%") || decoded.includes("+")) {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          work += decoded.length;
+          if (work > workLimit) return "[REDACTED parameter expansion limit]";
+          try {
+            const next = decodeURIComponent(decoded.replaceAll("+", " "));
+            if (next === decoded) break;
+            decoded = next;
+          } catch {
+            sensitive = true;
+            break;
+          }
+          if (credentialStructure(decoded)) {
+            sensitive = true;
+            break;
+          }
+        }
+        if (/%[a-f0-9]{2}/i.test(decoded)) sensitive = true;
+      }
+    }
+    if (!sensitive) continue;
+    parts.push(value.slice(copied, start), "[REDACTED]");
+    copied = end;
+  }
+  return parts.length ? parts.join("") + value.slice(copied) : value;
+}
+function redactText(value) {
+  return redactQueryValues(value.replace(/\b(Bearer|Basic)\s+[^\s"']+/gi, "$1 [REDACTED]").replace(/(\b(?:https?|ftps?|sftp|ssh):\/\/)[^/\\\s"'<>?#]+@/gi, "$1[REDACTED]@").replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED JWT]"));
+}
 function redactBounded(value, maxDepth, maxNodes) {
   const ancestors = /* @__PURE__ */ new WeakSet();
   let nodes = 0;
   const walk = (v, depth = 0) => {
     if (++nodes > maxNodes || depth > maxDepth) throw new FusionError("INPUT_LIMIT", "Redacted data exceeds the structural limit.");
-    if (typeof v === "string") return v.replace(/Bearer\s+[^\s"']+/gi, "Bearer [REDACTED]").replace(/([?&](?:access_token|refresh_token|token|code|client_secret)=)[^&#\s]+/gi, "$1[REDACTED]").replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[REDACTED JWT]");
+    if (typeof v === "string") return redactText(v);
     if (v && typeof v === "object") {
       if (ancestors.has(v)) return "[circular]";
       ancestors.add(v);
       try {
         if (Array.isArray(v)) return v.map((x) => walk(x, depth + 1));
-        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(/^(access.?token|refresh.?token|client.?secret|authorization|cookie|password|code_verifier|adsk3LeggedToken)$/i.test(k) ? "[REDACTED]" : x, depth + 1)]));
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(SECRET_PROPERTY.test(k) ? "[REDACTED]" : x, depth + 1)]));
       } finally {
         ancestors.delete(v);
       }
@@ -106,11 +169,46 @@ var SerialQueue = class {
 // src/storage.ts
 import { execFile } from "node:child_process";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, realpath, rename, readdir, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, opendir, readFile, realpath, rename, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var MAX_RECORD_BYTES = 16777216;
+function snapshotIdentity(info) {
+  return hash({ dev: String(info.dev), ino: String(info.ino), size: String(info.size), mtime: String(info.mtimeNs), ctime: String(info.ctimeNs), mode: String(info.mode), uid: String(info.uid), links: String(info.nlink) });
+}
+async function snapshotRoot(root, expected) {
+  if (process.platform === "win32") return windowsRootIdentity(root, expected);
+  const info = await lstat(root, { bigint: true });
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== BigInt(process.getuid()) || (info.mode & 0o077n) !== 0n || expected && !sameIdentity(info, expected) || await realpath(root) !== root) throw new FusionError("UNSAFE_PATH", "A read-only snapshot requires an existing private unchanged directory.");
+  return info;
+}
+async function readSnapshotRecord(root, filename, rootIdentity, expected) {
+  if (process.platform === "win32") {
+    await checkWindowsStorage(root, { file: filename });
+    await windowsFileIdentity(filename, MAX_RECORD_BYTES, expected);
+  }
+  if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1n || expected.size > BigInt(MAX_RECORD_BYTES) || process.platform !== "win32" && (expected.uid !== BigInt(process.getuid()) || (expected.mode & 0o077n) !== 0n)) throw new FusionError("UNSAFE_RECORD", "Read-only inventory does not read shared, linked or oversized records.");
+  const handle = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (snapshotIdentity(opened) !== snapshotIdentity(expected)) throw new FusionError("SNAPSHOT_CHANGED", "A record changed while opening.");
+    await snapshotRoot(root, rootIdentity);
+    const bytes = Buffer.alloc(Number(opened.size) + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const result = await handle.read(bytes, length, bytes.length - length, length);
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    const after = await handle.stat({ bigint: true }), linked = await lstat(filename, { bigint: true });
+    if (length !== Number(opened.size) || snapshotIdentity(after) !== snapshotIdentity(opened) || snapshotIdentity(linked) !== snapshotIdentity(opened) || linked.isSymbolicLink()) throw new FusionError("SNAPSHOT_CHANGED", "A record changed while reading.");
+    await snapshotRoot(root, rootIdentity);
+    return bytes.subarray(0, length);
+  } finally {
+    await handle.close();
+  }
+}
 var WINDOWS_STORAGE_CHECK = String.raw`
 $ErrorActionPreference = 'Stop'
 $request = ConvertFrom-Json $env:CODEX_FUSION_STORAGE_REQUEST
@@ -367,6 +465,159 @@ var RecordStore = class {
       if (value) values.push(value);
     }
     return values;
+  }
+  /** Observes existing top-level ledger records only; never initializes, repairs or removes storage. */
+  async snapshotReadOnly(options) {
+    const maxEntries = options.maxEntries ?? 1e4, maxTotalBytes = options.maxTotalBytes ?? 67108864, maxDurationMs = options.maxDurationMs ?? 3e4;
+    if (!Array.isArray(options.readKinds) || options.readKinds.length > 64 || options.readKinds.some((kind) => !/^[a-z][a-z0-9_-]{0,40}$/.test(kind)) || !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 1e4 || !Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 || maxTotalBytes > 268435456 || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > 6e4) throw new FusionError("INVALID_SNAPSHOT_LIMIT", "Read-only inventory requires bounded explicit record kinds and limits.");
+    const result = { schema_version: 1, scope: "top_level_local_state_records", root_hash: hash(this.root), observed_at: now(), complete: true, entries: [], entry_count_lower_bound: 0, total_entry_count: null, issues: [], excluded_subtrees: [] };
+    const issue2 = (code) => {
+      result.complete = false;
+      if (!result.issues.includes(code)) result.issues.push(code);
+    };
+    const deadline = Date.now() + maxDurationMs, kinds = new Set(options.readKinds);
+    let root, rootIdentity;
+    try {
+      if (!path.isAbsolute(this.root)) throw new Error("absolute root required");
+      const named = await lstat(this.root, { bigint: true });
+      if (named.isSymbolicLink() || !named.isDirectory()) throw new Error("ordinary root required");
+      root = await realpath(this.root);
+      if (root.split(/[\\/]/u).some((part) => ["credential-locks", "native-credentials"].includes(part.toLowerCase()))) {
+        issue2("CREDENTIAL_OR_NATIVE_ROOT_EXCLUDED");
+        return result;
+      }
+      if (process.platform === "win32") await checkWindowsStorage(root);
+      rootIdentity = await snapshotRoot(root);
+      if (!sameIdentity(named, rootIdentity)) throw new Error("root changed");
+      result.root_hash = hash({ path: root, dev: String(rootIdentity.dev), ino: String(rootIdentity.ino) });
+    } catch {
+      issue2("ROOT_UNAVAILABLE_OR_UNSAFE");
+      return result;
+    }
+    const enumerate = async () => {
+      const names2 = [];
+      const directory = await opendir(root);
+      for await (const entry of directory) {
+        names2.push(entry.name);
+        if (names2.length > maxEntries) return { names: names2, complete: false };
+        if (Date.now() > deadline) return { names: names2, complete: false };
+      }
+      names2.sort();
+      return { names: names2, complete: true };
+    };
+    const identities = /* @__PURE__ */ new Map();
+    let names = [], totalBytes = 0;
+    try {
+      const first = await enumerate();
+      names = first.names;
+      result.entry_count_lower_bound = names.length;
+      if (!first.complete) issue2(Date.now() > deadline ? "SNAPSHOT_TIME_LIMIT" : "SNAPSHOT_ENTRY_LIMIT");
+      else result.total_entry_count = names.length;
+      for (const name2 of names.slice(0, maxEntries)) {
+        const entry = { ref: `entry:${hash(name2)}`, entry_type: "other", status: "unknown" };
+        result.entries.push(entry);
+        if (Date.now() > deadline) {
+          entry.issue = "SNAPSHOT_TIME_LIMIT";
+          issue2(entry.issue);
+          continue;
+        }
+        const filename = path.join(root, name2);
+        try {
+          const info = await lstat(filename, { bigint: true });
+          identities.set(name2, snapshotIdentity(info));
+          entry.entry_type = info.isSymbolicLink() ? "symlink" : info.isDirectory() ? "directory" : info.isFile() ? "file" : "other";
+          if (info.size <= BigInt(Number.MAX_SAFE_INTEGER)) entry.bytes = Number(info.size);
+          if (name2 === "credential-locks" && entry.entry_type === "directory") {
+            entry.status = "protected";
+            entry.issue = "CREDENTIAL_SUBTREE_EXCLUDED";
+            result.excluded_subtrees.push("credential-locks");
+            continue;
+          }
+          if (name2 === ".execution.lock") {
+            entry.status = "protected";
+            entry.issue = "EXECUTION_LOCK_PRESENT";
+            issue2(entry.issue);
+            continue;
+          }
+          const match = /^([a-z][a-z0-9_-]{0,40})--([a-zA-Z0-9_-]{1,120})\.json$/u.exec(name2);
+          if (!match || !kinds.has(match[1])) {
+            entry.issue = "UNKNOWN_ENTRY_NOT_READ";
+            issue2(entry.issue);
+            continue;
+          }
+          entry.kind = match[1];
+          entry.id = match[2];
+          if (entry.entry_type !== "file" || info.nlink !== 1n || process.platform !== "win32" && (info.uid !== BigInt(process.getuid()) || (info.mode & 0o077n) !== 0n)) {
+            entry.issue = "UNSAFE_RECORD_TYPE_OR_ACCESS";
+            issue2(entry.issue);
+            continue;
+          }
+          if (["refresh", "cleanup", "fixture"].includes(entry.kind)) {
+            entry.status = "protected";
+            entry.issue = "RUNTIME_STATE_NOT_READ";
+            continue;
+          }
+          if (entry.kind === "tmp") {
+            entry.status = "protected";
+            entry.issue = "UNFINISHED_WRITE_RECORD";
+            issue2(entry.issue);
+            continue;
+          }
+          if (entry.entry_type !== "file" || info.size > BigInt(MAX_RECORD_BYTES) || totalBytes + Number(info.size) > maxTotalBytes) {
+            entry.issue = entry.entry_type !== "file" ? "UNSAFE_RECORD_TYPE" : "SNAPSHOT_BYTE_LIMIT";
+            issue2(entry.issue);
+            continue;
+          }
+          totalBytes += Number(info.size);
+          const bytes = await readSnapshotRecord(root, filename, rootIdentity, info);
+          entry.sha256 = hashBytes(bytes);
+          entry.bytes = bytes.length;
+          try {
+            const text4 = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+            const value = JSON.parse(text4);
+            assertJson(value, MAX_RECORD_BYTES);
+            entry.value = value;
+            entry.status = "read";
+          } catch {
+            entry.issue = "INVALID_RECORD_JSON";
+            issue2(entry.issue);
+          }
+        } catch {
+          entry.issue = "RECORD_UNAVAILABLE_UNSAFE_OR_CHANGED";
+          issue2(entry.issue);
+        }
+      }
+      const last = await enumerate();
+      if (!last.complete || first.complete !== last.complete || JSON.stringify(names) !== JSON.stringify(last.names)) {
+        result.entry_count_lower_bound = Math.max(result.entry_count_lower_bound, last.names.length);
+        result.total_entry_count = null;
+        issue2("SNAPSHOT_DIRECTORY_CHANGED_OR_INCOMPLETE");
+      }
+      for (const [name2, expected] of identities) {
+        if (Date.now() > deadline) {
+          issue2("SNAPSHOT_TIME_LIMIT");
+          break;
+        }
+        try {
+          if (snapshotIdentity(await lstat(path.join(root, name2), { bigint: true })) !== expected) issue2("SNAPSHOT_RECORD_CHANGED");
+        } catch {
+          issue2("SNAPSHOT_RECORD_CHANGED");
+        }
+      }
+      if (process.platform === "win32") await checkWindowsStorage(root);
+      const after = await snapshotRoot(root, rootIdentity);
+      if (snapshotIdentity(after) !== snapshotIdentity(rootIdentity) || await realpath(this.root) !== root) {
+        result.total_entry_count = null;
+        issue2("SNAPSHOT_ROOT_CHANGED");
+      }
+    } catch {
+      result.total_entry_count = null;
+      issue2("SNAPSHOT_UNAVAILABLE_OR_CHANGED");
+    }
+    result.entries.sort((left, right) => left.ref < right.ref ? -1 : left.ref > right.ref ? 1 : 0);
+    result.issues.sort();
+    result.excluded_subtrees.sort();
+    return result;
   }
   async acquireLease() {
     await this.init();
@@ -1140,8 +1391,8 @@ function cached(getter) {
     }
   };
 }
-function nullish(input) {
-  return input === null || input === void 0;
+function nullish(input2) {
+  return input2 === null || input2 === void 0;
 }
 function cleanRegex(source) {
   const start = source.startsWith("^") ? 1 : 0;
@@ -1157,9 +1408,9 @@ function floatSafeRemainder(val, step) {
   return ratio - roundedRatio;
 }
 var EVALUATING = /* @__PURE__ */ Symbol("evaluating");
-function defineLazy(object2, key, getter) {
+function defineLazy(object4, key, getter) {
   let value = void 0;
-  Object.defineProperty(object2, key, {
+  Object.defineProperty(object4, key, {
     get() {
       if (value === EVALUATING) {
         return void 0;
@@ -1171,7 +1422,7 @@ function defineLazy(object2, key, getter) {
       return value;
     },
     set(v) {
-      Object.defineProperty(object2, key, {
+      Object.defineProperty(object4, key, {
         value: v
         // configurable: true,
       });
@@ -1228,8 +1479,8 @@ function randomString(length = 10) {
 function esc(str) {
   return JSON.stringify(str);
 }
-function slugify(input) {
-  return input.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-").replace(/^-+|-+$/g, "");
+function slugify(input2) {
+  return input2.toLowerCase().trim().replace(/[^\w\s-]/g, "").replace(/[\s_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 var captureStackTrace = "captureStackTrace" in Error ? Error.captureStackTrace : (..._args) => {
 };
@@ -1634,19 +1885,19 @@ function finalizeIssue(iss, ctx, config2) {
   }
   return rest;
 }
-function getSizableOrigin(input) {
-  if (input instanceof Set)
+function getSizableOrigin(input2) {
+  if (input2 instanceof Set)
     return "set";
-  if (input instanceof Map)
+  if (input2 instanceof Map)
     return "map";
-  if (input instanceof File)
+  if (input2 instanceof File)
     return "file";
   return "unknown";
 }
-function getLengthableOrigin(input) {
-  if (Array.isArray(input))
+function getLengthableOrigin(input2) {
+  if (Array.isArray(input2))
     return "array";
-  if (typeof input === "string")
+  if (typeof input2 === "string")
     return "string";
   return "unknown";
 }
@@ -1672,12 +1923,12 @@ function parsedType(data) {
   return t;
 }
 function issue(...args) {
-  const [iss, input, inst] = args;
+  const [iss, input2, inst] = args;
   if (typeof iss === "string") {
     return {
       message: iss,
       code: "custom",
-      input,
+      input: input2,
       inst
     };
   }
@@ -2029,10 +2280,10 @@ var nanoid = /^[a-zA-Z0-9_-]{21}$/;
 var duration = /^P(?:(\d+W)|(?!.*W)(?=\d|T\d)(\d+Y)?(\d+M)?(\d+D)?(T(?=\d)(\d+H)?(\d+M)?(\d+([.,]\d+)?S)?)?)$/;
 var extendedDuration = /^[-+]?P(?!$)(?:(?:[-+]?\d+Y)|(?:[-+]?\d+[.,]\d+Y$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:(?:[-+]?\d+W)|(?:[-+]?\d+[.,]\d+W$))?(?:(?:[-+]?\d+D)|(?:[-+]?\d+[.,]\d+D$))?(?:T(?=[\d+-])(?:(?:[-+]?\d+H)|(?:[-+]?\d+[.,]\d+H$))?(?:(?:[-+]?\d+M)|(?:[-+]?\d+[.,]\d+M$))?(?:[-+]?\d+(?:[.,]\d+)?S)?)??$/;
 var guid = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
-var uuid = (version2) => {
-  if (!version2)
+var uuid = (version3) => {
+  if (!version3)
     return /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
-  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version2}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
+  return new RegExp(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-${version3}[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$`);
 };
 var uuid4 = /* @__PURE__ */ uuid(4);
 var uuid6 = /* @__PURE__ */ uuid(6);
@@ -2221,23 +2472,23 @@ var $ZodCheckNumberFormat = /* @__PURE__ */ $constructor("$ZodCheckNumberFormat"
       bag.pattern = integer;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
+    const input2 = payload.value;
     if (isInt) {
-      if (!Number.isInteger(input)) {
+      if (!Number.isInteger(input2)) {
         payload.issues.push({
           expected: origin,
           format: def.format,
           code: "invalid_type",
           continue: false,
-          input,
+          input: input2,
           inst
         });
         return;
       }
-      if (!Number.isSafeInteger(input)) {
-        if (input > 0) {
+      if (!Number.isSafeInteger(input2)) {
+        if (input2 > 0) {
           payload.issues.push({
-            input,
+            input: input2,
             code: "too_big",
             maximum: Number.MAX_SAFE_INTEGER,
             note: "Integers must be within the safe integer range.",
@@ -2248,7 +2499,7 @@ var $ZodCheckNumberFormat = /* @__PURE__ */ $constructor("$ZodCheckNumberFormat"
           });
         } else {
           payload.issues.push({
-            input,
+            input: input2,
             code: "too_small",
             minimum: Number.MIN_SAFE_INTEGER,
             note: "Integers must be within the safe integer range.",
@@ -2261,10 +2512,10 @@ var $ZodCheckNumberFormat = /* @__PURE__ */ $constructor("$ZodCheckNumberFormat"
         return;
       }
     }
-    if (input < minimum) {
+    if (input2 < minimum) {
       payload.issues.push({
         origin: "number",
-        input,
+        input: input2,
         code: "too_small",
         minimum,
         inclusive: true,
@@ -2272,10 +2523,10 @@ var $ZodCheckNumberFormat = /* @__PURE__ */ $constructor("$ZodCheckNumberFormat"
         continue: !def.abort
       });
     }
-    if (input > maximum) {
+    if (input2 > maximum) {
       payload.issues.push({
         origin: "number",
-        input,
+        input: input2,
         code: "too_big",
         maximum,
         inclusive: true,
@@ -2295,11 +2546,11 @@ var $ZodCheckBigIntFormat = /* @__PURE__ */ $constructor("$ZodCheckBigIntFormat"
     bag.maximum = maximum;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    if (input < minimum) {
+    const input2 = payload.value;
+    if (input2 < minimum) {
       payload.issues.push({
         origin: "bigint",
-        input,
+        input: input2,
         code: "too_small",
         minimum,
         inclusive: true,
@@ -2307,10 +2558,10 @@ var $ZodCheckBigIntFormat = /* @__PURE__ */ $constructor("$ZodCheckBigIntFormat"
         continue: !def.abort
       });
     }
-    if (input > maximum) {
+    if (input2 > maximum) {
       payload.issues.push({
         origin: "bigint",
-        input,
+        input: input2,
         code: "too_big",
         maximum,
         inclusive: true,
@@ -2333,16 +2584,16 @@ var $ZodCheckMaxSize = /* @__PURE__ */ $constructor("$ZodCheckMaxSize", (inst, d
       inst2._zod.bag.maximum = def.maximum;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const size = input.size;
+    const input2 = payload.value;
+    const size = input2.size;
     if (size <= def.maximum)
       return;
     payload.issues.push({
-      origin: getSizableOrigin(input),
+      origin: getSizableOrigin(input2),
       code: "too_big",
       maximum: def.maximum,
       inclusive: true,
-      input,
+      input: input2,
       inst,
       continue: !def.abort
     });
@@ -2361,16 +2612,16 @@ var $ZodCheckMinSize = /* @__PURE__ */ $constructor("$ZodCheckMinSize", (inst, d
       inst2._zod.bag.minimum = def.minimum;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const size = input.size;
+    const input2 = payload.value;
+    const size = input2.size;
     if (size >= def.minimum)
       return;
     payload.issues.push({
-      origin: getSizableOrigin(input),
+      origin: getSizableOrigin(input2),
       code: "too_small",
       minimum: def.minimum,
       inclusive: true,
-      input,
+      input: input2,
       inst,
       continue: !def.abort
     });
@@ -2390,13 +2641,13 @@ var $ZodCheckSizeEquals = /* @__PURE__ */ $constructor("$ZodCheckSizeEquals", (i
     bag.size = def.size;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const size = input.size;
+    const input2 = payload.value;
+    const size = input2.size;
     if (size === def.size)
       return;
     const tooBig = size > def.size;
     payload.issues.push({
-      origin: getSizableOrigin(input),
+      origin: getSizableOrigin(input2),
       ...tooBig ? { code: "too_big", maximum: def.size } : { code: "too_small", minimum: def.size },
       inclusive: true,
       exact: true,
@@ -2419,17 +2670,17 @@ var $ZodCheckMaxLength = /* @__PURE__ */ $constructor("$ZodCheckMaxLength", (ins
       inst2._zod.bag.maximum = def.maximum;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const length = input.length;
+    const input2 = payload.value;
+    const length = input2.length;
     if (length <= def.maximum)
       return;
-    const origin = getLengthableOrigin(input);
+    const origin = getLengthableOrigin(input2);
     payload.issues.push({
       origin,
       code: "too_big",
       maximum: def.maximum,
       inclusive: true,
-      input,
+      input: input2,
       inst,
       continue: !def.abort
     });
@@ -2448,17 +2699,17 @@ var $ZodCheckMinLength = /* @__PURE__ */ $constructor("$ZodCheckMinLength", (ins
       inst2._zod.bag.minimum = def.minimum;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const length = input.length;
+    const input2 = payload.value;
+    const length = input2.length;
     if (length >= def.minimum)
       return;
-    const origin = getLengthableOrigin(input);
+    const origin = getLengthableOrigin(input2);
     payload.issues.push({
       origin,
       code: "too_small",
       minimum: def.minimum,
       inclusive: true,
-      input,
+      input: input2,
       inst,
       continue: !def.abort
     });
@@ -2478,11 +2729,11 @@ var $ZodCheckLengthEquals = /* @__PURE__ */ $constructor("$ZodCheckLengthEquals"
     bag.length = def.length;
   });
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const length = input.length;
+    const input2 = payload.value;
+    const length = input2.length;
     if (length === def.length)
       return;
-    const origin = getLengthableOrigin(input);
+    const origin = getLengthableOrigin(input2);
     const tooBig = length > def.length;
     payload.issues.push({
       origin,
@@ -3153,15 +3404,15 @@ var $ZodNumber = /* @__PURE__ */ $constructor("$ZodNumber", (inst, def) => {
         payload.value = Number(payload.value);
       } catch (_) {
       }
-    const input = payload.value;
-    if (typeof input === "number" && !Number.isNaN(input) && Number.isFinite(input)) {
+    const input2 = payload.value;
+    if (typeof input2 === "number" && !Number.isNaN(input2) && Number.isFinite(input2)) {
       return payload;
     }
-    const received = typeof input === "number" ? Number.isNaN(input) ? "NaN" : !Number.isFinite(input) ? "Infinity" : void 0 : void 0;
+    const received = typeof input2 === "number" ? Number.isNaN(input2) ? "NaN" : !Number.isFinite(input2) ? "Infinity" : void 0 : void 0;
     payload.issues.push({
       expected: "number",
       code: "invalid_type",
-      input,
+      input: input2,
       inst,
       ...received ? { received } : {}
     });
@@ -3181,13 +3432,13 @@ var $ZodBoolean = /* @__PURE__ */ $constructor("$ZodBoolean", (inst, def) => {
         payload.value = Boolean(payload.value);
       } catch (_) {
       }
-    const input = payload.value;
-    if (typeof input === "boolean")
+    const input2 = payload.value;
+    if (typeof input2 === "boolean")
       return payload;
     payload.issues.push({
       expected: "boolean",
       code: "invalid_type",
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -3220,13 +3471,13 @@ var $ZodBigIntFormat = /* @__PURE__ */ $constructor("$ZodBigIntFormat", (inst, d
 var $ZodSymbol = /* @__PURE__ */ $constructor("$ZodSymbol", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (typeof input === "symbol")
+    const input2 = payload.value;
+    if (typeof input2 === "symbol")
       return payload;
     payload.issues.push({
       expected: "symbol",
       code: "invalid_type",
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -3237,13 +3488,13 @@ var $ZodUndefined = /* @__PURE__ */ $constructor("$ZodUndefined", (inst, def) =>
   inst._zod.pattern = _undefined;
   inst._zod.values = /* @__PURE__ */ new Set([void 0]);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (typeof input === "undefined")
+    const input2 = payload.value;
+    if (typeof input2 === "undefined")
       return payload;
     payload.issues.push({
       expected: "undefined",
       code: "invalid_type",
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -3254,13 +3505,13 @@ var $ZodNull = /* @__PURE__ */ $constructor("$ZodNull", (inst, def) => {
   inst._zod.pattern = _null;
   inst._zod.values = /* @__PURE__ */ new Set([null]);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (input === null)
+    const input2 = payload.value;
+    if (input2 === null)
       return payload;
     payload.issues.push({
       expected: "null",
       code: "invalid_type",
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -3289,13 +3540,13 @@ var $ZodNever = /* @__PURE__ */ $constructor("$ZodNever", (inst, def) => {
 var $ZodVoid = /* @__PURE__ */ $constructor("$ZodVoid", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (typeof input === "undefined")
+    const input2 = payload.value;
+    if (typeof input2 === "undefined")
       return payload;
     payload.issues.push({
       expected: "void",
       code: "invalid_type",
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -3310,15 +3561,15 @@ var $ZodDate = /* @__PURE__ */ $constructor("$ZodDate", (inst, def) => {
       } catch (_err) {
       }
     }
-    const input = payload.value;
-    const isDate = input instanceof Date;
-    const isValidDate = isDate && !Number.isNaN(input.getTime());
+    const input2 = payload.value;
+    const isDate = input2 instanceof Date;
+    const isValidDate = isDate && !Number.isNaN(input2.getTime());
     if (isValidDate)
       return payload;
     payload.issues.push({
       expected: "date",
       code: "invalid_type",
-      input,
+      input: input2,
       ...isDate ? { received: "Invalid Date" } : {},
       inst
     });
@@ -3334,20 +3585,20 @@ function handleArrayResult(result, final, index) {
 var $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    if (!Array.isArray(input)) {
+    const input2 = payload.value;
+    if (!Array.isArray(input2)) {
       payload.issues.push({
         expected: "array",
         code: "invalid_type",
-        input,
+        input: input2,
         inst
       });
       return payload;
     }
-    payload.value = Array(input.length);
+    payload.value = Array(input2.length);
     const proms = [];
-    for (let i = 0; i < input.length; i++) {
-      const item = input[i];
+    for (let i = 0; i < input2.length; i++) {
+      const item = input2[i];
       const result = def.element._zod.run({
         value: item,
         issues: []
@@ -3364,8 +3615,8 @@ var $ZodArray = /* @__PURE__ */ $constructor("$ZodArray", (inst, def) => {
     return payload;
   };
 });
-function handlePropertyResult(result, final, key, input, isOptionalIn, isOptionalOut) {
-  const isPresent = key in input;
+function handlePropertyResult(result, final, key, input2, isOptionalIn, isOptionalOut) {
+  const isPresent = key in input2;
   if (result.issues.length) {
     if (isOptionalIn && isOptionalOut && !isPresent) {
       return;
@@ -3407,14 +3658,14 @@ function normalizeDef(def) {
     optionalKeys: new Set(okeys)
   };
 }
-function handleCatchall(proms, input, payload, ctx, def, inst) {
+function handleCatchall(proms, input2, payload, ctx, def, inst) {
   const unrecognized = [];
   const keySet = def.keySet;
   const _catchall = def.catchall._zod;
   const t = _catchall.def.type;
   const isOptionalIn = _catchall.optin === "optional";
   const isOptionalOut = _catchall.optout === "optional";
-  for (const key in input) {
+  for (const key in input2) {
     if (key === "__proto__")
       continue;
     if (keySet.has(key))
@@ -3423,18 +3674,18 @@ function handleCatchall(proms, input, payload, ctx, def, inst) {
       unrecognized.push(key);
       continue;
     }
-    const r = _catchall.run({ value: input[key], issues: [] }, ctx);
+    const r = _catchall.run({ value: input2[key], issues: [] }, ctx);
     if (r instanceof Promise) {
-      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input, isOptionalIn, isOptionalOut)));
+      proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input2, isOptionalIn, isOptionalOut)));
     } else {
-      handlePropertyResult(r, payload, key, input, isOptionalIn, isOptionalOut);
+      handlePropertyResult(r, payload, key, input2, isOptionalIn, isOptionalOut);
     }
   }
   if (unrecognized.length) {
     payload.issues.push({
       code: "unrecognized_keys",
       keys: unrecognized,
-      input,
+      input: input2,
       inst
     });
   }
@@ -3478,12 +3729,12 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
   let value;
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
-    const input = payload.value;
-    if (!isObject2(input)) {
+    const input2 = payload.value;
+    if (!isObject2(input2)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
-        input,
+        input: input2,
         inst
       });
       return payload;
@@ -3495,17 +3746,17 @@ var $ZodObject = /* @__PURE__ */ $constructor("$ZodObject", (inst, def) => {
       const el = shape[key];
       const isOptionalIn = el._zod.optin === "optional";
       const isOptionalOut = el._zod.optout === "optional";
-      const r = el._zod.run({ value: input[key], issues: [] }, ctx);
+      const r = el._zod.run({ value: input2[key], issues: [] }, ctx);
       if (r instanceof Promise) {
-        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input, isOptionalIn, isOptionalOut)));
+        proms.push(r.then((r2) => handlePropertyResult(r2, payload, key, input2, isOptionalIn, isOptionalOut)));
       } else {
-        handlePropertyResult(r, payload, key, input, isOptionalIn, isOptionalOut);
+        handlePropertyResult(r, payload, key, input2, isOptionalIn, isOptionalOut);
       }
     }
     if (!catchall) {
       return proms.length ? Promise.all(proms).then(() => payload) : payload;
     }
-    return handleCatchall(proms, input, payload, ctx, _normalized.value, inst);
+    return handleCatchall(proms, input2, payload, ctx, _normalized.value, inst);
   };
 });
 var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) => {
@@ -3614,12 +3865,12 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
   let value;
   inst._zod.parse = (payload, ctx) => {
     value ?? (value = _normalized.value);
-    const input = payload.value;
-    if (!isObject2(input)) {
+    const input2 = payload.value;
+    if (!isObject2(input2)) {
       payload.issues.push({
         expected: "object",
         code: "invalid_type",
-        input,
+        input: input2,
         inst
       });
       return payload;
@@ -3630,7 +3881,7 @@ var $ZodObjectJIT = /* @__PURE__ */ $constructor("$ZodObjectJIT", (inst, def) =>
       payload = fastpass(payload, ctx);
       if (!catchall)
         return payload;
-      return handleCatchall([], input, payload, ctx, value, inst);
+      return handleCatchall([], input2, payload, ctx, value, inst);
     }
     return superParse(payload, ctx);
   };
@@ -3790,17 +4041,17 @@ var $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUnio
     return map2;
   });
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    if (!isObject(input)) {
+    const input2 = payload.value;
+    if (!isObject(input2)) {
       payload.issues.push({
         code: "invalid_type",
         expected: "object",
-        input,
+        input: input2,
         inst
       });
       return payload;
     }
-    const opt = disc.value.get(input?.[def.discriminator]);
+    const opt = disc.value.get(input2?.[def.discriminator]);
     if (opt) {
       return opt._zod.run(payload, ctx);
     }
@@ -3813,7 +4064,7 @@ var $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUnio
       note: "No matching discriminator",
       discriminator: def.discriminator,
       options: Array.from(disc.value.keys()),
-      input,
+      input: input2,
       path: [def.discriminator],
       inst
     });
@@ -3823,9 +4074,9 @@ var $ZodDiscriminatedUnion = /* @__PURE__ */ $constructor("$ZodDiscriminatedUnio
 var $ZodIntersection = /* @__PURE__ */ $constructor("$ZodIntersection", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    const left = def.left._zod.run({ value: input, issues: [] }, ctx);
-    const right = def.right._zod.run({ value: input, issues: [] }, ctx);
+    const input2 = payload.value;
+    const left = def.left._zod.run({ value: input2, issues: [] }, ctx);
+    const right = def.right._zod.run({ value: input2, issues: [] }, ctx);
     const async = left instanceof Promise || right instanceof Promise;
     if (async) {
       return Promise.all([left, right]).then(([left2, right2]) => {
@@ -3922,10 +4173,10 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
   $ZodType.init(inst, def);
   const items = def.items;
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    if (!Array.isArray(input)) {
+    const input2 = payload.value;
+    if (!Array.isArray(input2)) {
       payload.issues.push({
-        input,
+        input: input2,
         inst,
         expected: "tuple",
         code: "invalid_type"
@@ -3937,23 +4188,23 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     const optinStart = getTupleOptStart(items, "optin");
     const optoutStart = getTupleOptStart(items, "optout");
     if (!def.rest) {
-      if (input.length < optinStart) {
+      if (input2.length < optinStart) {
         payload.issues.push({
           code: "too_small",
           minimum: optinStart,
           inclusive: true,
-          input,
+          input: input2,
           inst,
           origin: "array"
         });
         return payload;
       }
-      if (input.length > items.length) {
+      if (input2.length > items.length) {
         payload.issues.push({
           code: "too_big",
           maximum: items.length,
           inclusive: true,
-          input,
+          input: input2,
           inst,
           origin: "array"
         });
@@ -3961,7 +4212,7 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     }
     const itemResults = new Array(items.length);
     for (let i = 0; i < items.length; i++) {
-      const r = items[i]._zod.run({ value: input[i], issues: [] }, ctx);
+      const r = items[i]._zod.run({ value: input2[i], issues: [] }, ctx);
       if (r instanceof Promise) {
         proms.push(r.then((rr) => {
           itemResults[i] = rr;
@@ -3972,7 +4223,7 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
     }
     if (def.rest) {
       let i = items.length - 1;
-      const rest = input.slice(items.length);
+      const rest = input2.slice(items.length);
       for (const el of rest) {
         i++;
         const result = def.rest._zod.run({ value: el, issues: [] }, ctx);
@@ -3984,9 +4235,9 @@ var $ZodTuple = /* @__PURE__ */ $constructor("$ZodTuple", (inst, def) => {
       }
     }
     if (proms.length) {
-      return Promise.all(proms).then(() => handleTupleResults(itemResults, payload, items, input, optoutStart));
+      return Promise.all(proms).then(() => handleTupleResults(itemResults, payload, items, input2, optoutStart));
     }
-    return handleTupleResults(itemResults, payload, items, input, optoutStart);
+    return handleTupleResults(itemResults, payload, items, input2, optoutStart);
   };
 });
 function getTupleOptStart(items, key) {
@@ -4002,10 +4253,10 @@ function handleTupleResult(result, final, index) {
   }
   final.value[index] = result.value;
 }
-function handleTupleResults(itemResults, final, items, input, optoutStart) {
+function handleTupleResults(itemResults, final, items, input2, optoutStart) {
   for (let i = 0; i < items.length; i++) {
     const r = itemResults[i];
-    const isPresent = i < input.length;
+    const isPresent = i < input2.length;
     if (r.issues.length) {
       if (!isPresent && i >= optoutStart) {
         final.value.length = i;
@@ -4015,7 +4266,7 @@ function handleTupleResults(itemResults, final, items, input, optoutStart) {
     }
     final.value[i] = r.value;
   }
-  for (let i = final.value.length - 1; i >= input.length; i--) {
+  for (let i = final.value.length - 1; i >= input2.length; i--) {
     if (items[i]._zod.optout === "optional" && final.value[i] === void 0) {
       final.value.length = i;
     } else {
@@ -4027,12 +4278,12 @@ function handleTupleResults(itemResults, final, items, input, optoutStart) {
 var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    if (!isPlainObject(input)) {
+    const input2 = payload.value;
+    if (!isPlainObject(input2)) {
       payload.issues.push({
         expected: "record",
         code: "invalid_type",
-        input,
+        input: input2,
         inst
       });
       return payload;
@@ -4061,7 +4312,7 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
             continue;
           }
           const outKey = keyResult.value;
-          const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+          const result = def.valueType._zod.run({ value: input2[key], issues: [] }, ctx);
           if (result instanceof Promise) {
             proms.push(result.then((result2) => {
               if (result2.issues.length) {
@@ -4078,7 +4329,7 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
         }
       }
       let unrecognized;
-      for (const key in input) {
+      for (const key in input2) {
         if (!recordKeys.has(key)) {
           unrecognized = unrecognized ?? [];
           unrecognized.push(key);
@@ -4087,17 +4338,17 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
       if (unrecognized && unrecognized.length > 0) {
         payload.issues.push({
           code: "unrecognized_keys",
-          input,
+          input: input2,
           inst,
           keys: unrecognized
         });
       }
     } else {
       payload.value = {};
-      for (const key of Reflect.ownKeys(input)) {
+      for (const key of Reflect.ownKeys(input2)) {
         if (key === "__proto__")
           continue;
-        if (!Object.prototype.propertyIsEnumerable.call(input, key))
+        if (!Object.prototype.propertyIsEnumerable.call(input2, key))
           continue;
         let keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
         if (keyResult instanceof Promise) {
@@ -4115,7 +4366,7 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
         }
         if (keyResult.issues.length) {
           if (def.mode === "loose") {
-            payload.value[key] = input[key];
+            payload.value[key] = input2[key];
           } else {
             payload.issues.push({
               code: "invalid_key",
@@ -4128,7 +4379,7 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
           }
           continue;
         }
-        const result = def.valueType._zod.run({ value: input[key], issues: [] }, ctx);
+        const result = def.valueType._zod.run({ value: input2[key], issues: [] }, ctx);
         if (result instanceof Promise) {
           proms.push(result.then((result2) => {
             if (result2.issues.length) {
@@ -4153,27 +4404,27 @@ var $ZodRecord = /* @__PURE__ */ $constructor("$ZodRecord", (inst, def) => {
 var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    if (!(input instanceof Map)) {
+    const input2 = payload.value;
+    if (!(input2 instanceof Map)) {
       payload.issues.push({
         expected: "map",
         code: "invalid_type",
-        input,
+        input: input2,
         inst
       });
       return payload;
     }
     const proms = [];
     payload.value = /* @__PURE__ */ new Map();
-    for (const [key, value] of input) {
+    for (const [key, value] of input2) {
       const keyResult = def.keyType._zod.run({ value: key, issues: [] }, ctx);
       const valueResult = def.valueType._zod.run({ value, issues: [] }, ctx);
       if (keyResult instanceof Promise || valueResult instanceof Promise) {
         proms.push(Promise.all([keyResult, valueResult]).then(([keyResult2, valueResult2]) => {
-          handleMapResult(keyResult2, valueResult2, payload, key, input, inst, ctx);
+          handleMapResult(keyResult2, valueResult2, payload, key, input2, inst, ctx);
         }));
       } else {
-        handleMapResult(keyResult, valueResult, payload, key, input, inst, ctx);
+        handleMapResult(keyResult, valueResult, payload, key, input2, inst, ctx);
       }
     }
     if (proms.length)
@@ -4181,7 +4432,7 @@ var $ZodMap = /* @__PURE__ */ $constructor("$ZodMap", (inst, def) => {
     return payload;
   };
 });
-function handleMapResult(keyResult, valueResult, final, key, input, inst, ctx) {
+function handleMapResult(keyResult, valueResult, final, key, input2, inst, ctx) {
   if (keyResult.issues.length) {
     if (propertyKeyTypes.has(typeof key)) {
       final.issues.push(...prefixIssues(key, keyResult.issues));
@@ -4189,7 +4440,7 @@ function handleMapResult(keyResult, valueResult, final, key, input, inst, ctx) {
       final.issues.push({
         code: "invalid_key",
         origin: "map",
-        input,
+        input: input2,
         inst,
         issues: keyResult.issues.map((iss) => finalizeIssue(iss, ctx, config()))
       });
@@ -4202,7 +4453,7 @@ function handleMapResult(keyResult, valueResult, final, key, input, inst, ctx) {
       final.issues.push({
         origin: "map",
         code: "invalid_element",
-        input,
+        input: input2,
         inst,
         key,
         issues: valueResult.issues.map((iss) => finalizeIssue(iss, ctx, config()))
@@ -4214,10 +4465,10 @@ function handleMapResult(keyResult, valueResult, final, key, input, inst, ctx) {
 var $ZodSet = /* @__PURE__ */ $constructor("$ZodSet", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, ctx) => {
-    const input = payload.value;
-    if (!(input instanceof Set)) {
+    const input2 = payload.value;
+    if (!(input2 instanceof Set)) {
       payload.issues.push({
-        input,
+        input: input2,
         inst,
         expected: "set",
         code: "invalid_type"
@@ -4226,7 +4477,7 @@ var $ZodSet = /* @__PURE__ */ $constructor("$ZodSet", (inst, def) => {
     }
     const proms = [];
     payload.value = /* @__PURE__ */ new Set();
-    for (const item of input) {
+    for (const item of input2) {
       const result = def.valueType._zod.run({ value: item, issues: [] }, ctx);
       if (result instanceof Promise) {
         proms.push(result.then((result2) => handleSetResult(result2, payload)));
@@ -4251,14 +4502,14 @@ var $ZodEnum = /* @__PURE__ */ $constructor("$ZodEnum", (inst, def) => {
   inst._zod.values = valuesSet;
   inst._zod.pattern = new RegExp(`^(${values.filter((k) => propertyKeyTypes.has(typeof k)).map((o) => typeof o === "string" ? escapeRegex(o) : o.toString()).join("|")})$`);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (valuesSet.has(input)) {
+    const input2 = payload.value;
+    if (valuesSet.has(input2)) {
       return payload;
     }
     payload.issues.push({
       code: "invalid_value",
       values,
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -4273,14 +4524,14 @@ var $ZodLiteral = /* @__PURE__ */ $constructor("$ZodLiteral", (inst, def) => {
   inst._zod.values = values;
   inst._zod.pattern = new RegExp(`^(${def.values.map((o) => typeof o === "string" ? escapeRegex(o) : o ? escapeRegex(o.toString()) : String(o)).join("|")})$`);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (values.has(input)) {
+    const input2 = payload.value;
+    if (values.has(input2)) {
       return payload;
     }
     payload.issues.push({
       code: "invalid_value",
       values: def.values,
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -4289,13 +4540,13 @@ var $ZodLiteral = /* @__PURE__ */ $constructor("$ZodLiteral", (inst, def) => {
 var $ZodFile = /* @__PURE__ */ $constructor("$ZodFile", (inst, def) => {
   $ZodType.init(inst, def);
   inst._zod.parse = (payload, _ctx) => {
-    const input = payload.value;
-    if (input instanceof File)
+    const input2 = payload.value;
+    if (input2 instanceof File)
       return payload;
     payload.issues.push({
       expected: "file",
       code: "invalid_type",
-      input,
+      input: input2,
       inst
     });
     return payload;
@@ -4325,8 +4576,8 @@ var $ZodTransform = /* @__PURE__ */ $constructor("$ZodTransform", (inst, def) =>
     return payload;
   };
 });
-function handleOptionalResult(result, input) {
-  if (input === void 0 && (result.issues.length || result.fallback)) {
+function handleOptionalResult(result, input2) {
+  if (input2 === void 0 && (result.issues.length || result.fallback)) {
     return { issues: [], value: void 0 };
   }
   return result;
@@ -4344,11 +4595,11 @@ var $ZodOptional = /* @__PURE__ */ $constructor("$ZodOptional", (inst, def) => {
   });
   inst._zod.parse = (payload, ctx) => {
     if (def.innerType._zod.optin === "optional") {
-      const input = payload.value;
+      const input2 = payload.value;
       const result = def.innerType._zod.run(payload, ctx);
       if (result instanceof Promise)
-        return result.then((r) => handleOptionalResult(r, input));
-      return handleOptionalResult(result, input);
+        return result.then((r) => handleOptionalResult(r, input2));
+      return handleOptionalResult(result, input2);
     }
     if (payload.value === void 0) {
       return payload;
@@ -4773,20 +5024,20 @@ var $ZodCustom = /* @__PURE__ */ $constructor("$ZodCustom", (inst, def) => {
     return payload;
   };
   inst._zod.check = (payload) => {
-    const input = payload.value;
-    const r = def.fn(input);
+    const input2 = payload.value;
+    const r = def.fn(input2);
     if (r instanceof Promise) {
-      return r.then((r2) => handleRefineResult(r2, payload, input, inst));
+      return r.then((r2) => handleRefineResult(r2, payload, input2, inst));
     }
-    handleRefineResult(r, payload, input, inst);
+    handleRefineResult(r, payload, input2, inst);
     return;
   };
 });
-function handleRefineResult(result, payload, input, inst) {
+function handleRefineResult(result, payload, input2, inst) {
   if (!result) {
     const _iss = {
       code: "custom",
-      input,
+      input: input2,
       inst,
       // incorporates params.error into issue reporting
       path: [...inst._zod.def.path ?? []],
@@ -8073,8 +8324,8 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text2) => {
-  return text2.charAt(0).toUpperCase() + text2.slice(1);
+var capitalizeFirstCharacter = (text4) => {
+  return text4.charAt(0).toUpperCase() + text4.slice(1);
 };
 function getUnitTypeFromNumber(number4) {
   const abs = Math.abs(number4);
@@ -11474,23 +11725,23 @@ function _overwrite(tx) {
 }
 // @__NO_SIDE_EFFECTS__
 function _normalize(form) {
-  return /* @__PURE__ */ _overwrite((input) => input.normalize(form));
+  return /* @__PURE__ */ _overwrite((input2) => input2.normalize(form));
 }
 // @__NO_SIDE_EFFECTS__
 function _trim() {
-  return /* @__PURE__ */ _overwrite((input) => input.trim());
+  return /* @__PURE__ */ _overwrite((input2) => input2.trim());
 }
 // @__NO_SIDE_EFFECTS__
 function _toLowerCase() {
-  return /* @__PURE__ */ _overwrite((input) => input.toLowerCase());
+  return /* @__PURE__ */ _overwrite((input2) => input2.toLowerCase());
 }
 // @__NO_SIDE_EFFECTS__
 function _toUpperCase() {
-  return /* @__PURE__ */ _overwrite((input) => input.toUpperCase());
+  return /* @__PURE__ */ _overwrite((input2) => input2.toUpperCase());
 }
 // @__NO_SIDE_EFFECTS__
 function _slugify() {
-  return /* @__PURE__ */ _overwrite((input) => slugify(input));
+  return /* @__PURE__ */ _overwrite((input2) => slugify(input2));
 }
 // @__NO_SIDE_EFFECTS__
 function _array(Class2, element, params) {
@@ -11795,8 +12046,8 @@ function _stringbool(Classes, _params) {
     type: "pipe",
     in: stringSchema,
     out: booleanSchema,
-    transform: ((input, payload) => {
-      let data = input;
+    transform: ((input2, payload) => {
+      let data = input2;
       if (params.case !== "sensitive")
         data = data.toLowerCase();
       if (truthySet.has(data)) {
@@ -11815,8 +12066,8 @@ function _stringbool(Classes, _params) {
         return {};
       }
     }),
-    reverseTransform: ((input, _payload) => {
-      if (input === true) {
+    reverseTransform: ((input2, _payload) => {
+      if (input2 === true) {
         return truthyArray[0] || "true";
       } else {
         return falsyArray[0] || "false";
@@ -11960,7 +12211,7 @@ function extractDefs(ctx, schema) {
       return;
     }
     const seen = entry[1];
-    const { ref: ref2, defId } = makeURI(entry);
+    const { ref: ref4, defId } = makeURI(entry);
     seen.def = { ...seen.schema };
     if (defId)
       seen.defId = defId;
@@ -11968,7 +12219,7 @@ function extractDefs(ctx, schema) {
     for (const key in schema2) {
       delete schema2[key];
     }
-    schema2.$ref = ref2;
+    schema2.$ref = ref4;
   };
   if (ctx.cycles === "throw") {
     for (const entry of ctx.seen.entries()) {
@@ -12020,11 +12271,11 @@ function finalize(ctx, schema) {
       return;
     const schema2 = seen.def ?? seen.schema;
     const _cached = { ...schema2 };
-    const ref2 = seen.ref;
+    const ref4 = seen.ref;
     seen.ref = null;
-    if (ref2) {
-      flattenRef(ref2);
-      const refSeen = ctx.seen.get(ref2);
+    if (ref4) {
+      flattenRef(ref4);
+      const refSeen = ctx.seen.get(ref4);
       const refSchema = refSeen.schema;
       if (refSchema.$ref && (ctx.target === "draft-07" || ctx.target === "draft-04" || ctx.target === "openapi-3.0")) {
         schema2.allOf = schema2.allOf ?? [];
@@ -12033,7 +12284,7 @@ function finalize(ctx, schema) {
         Object.assign(schema2, refSchema);
       }
       Object.assign(schema2, _cached);
-      const isParentRef = zodSchema._zod.parent === ref2;
+      const isParentRef = zodSchema._zod.parent === ref4;
       if (isParentRef) {
         for (const key in schema2) {
           if (key === "$ref" || key === "allOf")
@@ -12054,7 +12305,7 @@ function finalize(ctx, schema) {
       }
     }
     const parent = zodSchema._zod.parent;
-    if (parent && parent !== ref2) {
+    if (parent && parent !== ref4) {
       flattenRef(parent);
       const parentSeen = ctx.seen.get(parent);
       if (parentSeen?.schema.$ref) {
@@ -12712,9 +12963,9 @@ var allProcessors = {
   optional: optionalProcessor,
   lazy: lazyProcessor
 };
-function toJSONSchema(input, params) {
-  if ("_idmap" in input) {
-    const registry2 = input;
+function toJSONSchema(input2, params) {
+  if ("_idmap" in input2) {
+    const registry2 = input2;
     const ctx2 = initializeContext({ ...params, processors: allProcessors });
     const defs = {};
     for (const entry of registry2._idmap.entries()) {
@@ -12742,9 +12993,9 @@ function toJSONSchema(input, params) {
     return { schemas };
   }
   const ctx = initializeContext({ ...params, processors: allProcessors });
-  process2(input, ctx);
-  extractDefs(ctx, input);
-  return finalize(ctx, input);
+  process2(input2, ctx);
+  extractDefs(ctx, input2);
+  return finalize(ctx, input2);
 }
 
 // node_modules/zod/v4/core/json-schema-generator.js
@@ -14531,11 +14782,11 @@ function detectVersion(schema, defaultTarget) {
   }
   return defaultTarget ?? "draft-2020-12";
 }
-function resolveRef(ref2, ctx) {
-  if (!ref2.startsWith("#")) {
+function resolveRef(ref4, ctx) {
+  if (!ref4.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path9 = ref2.slice(1).split("/").filter(Boolean);
+  const path9 = ref4.slice(1).split("/").filter(Boolean);
   if (path9.length === 0) {
     return ctx.rootSchema;
   }
@@ -14543,11 +14794,11 @@ function resolveRef(ref2, ctx) {
   if (path9[0] === defsKey) {
     const key = path9[1];
     if (!key || !ctx.defs[key]) {
-      throw new Error(`Reference not found: ${ref2}`);
+      throw new Error(`Reference not found: ${ref4}`);
     }
     return ctx.defs[key];
   }
-  throw new Error(`Reference not found: ${ref2}`);
+  throw new Error(`Reference not found: ${ref4}`);
 }
 function convertBaseSchema(schema, ctx) {
   if (schema.not !== void 0) {
@@ -14908,10 +15159,10 @@ function fromJSONSchema(schema, params) {
   } catch {
     throw new Error("fromJSONSchema input is not valid JSON (possibly cyclic); use $defs/$ref for recursive schemas");
   }
-  const version2 = detectVersion(normalized, params?.defaultTarget);
+  const version3 = detectVersion(normalized, params?.defaultTarget);
   const defs = normalized.$defs || normalized.definitions || {};
   const ctx = {
-    version: version2,
+    version: version3,
     defs,
     refs: /* @__PURE__ */ new Map(),
     processing: /* @__PURE__ */ new Set(),
@@ -14948,202 +15199,6 @@ function date4(params) {
 
 // node_modules/zod/v4/classic/external.js
 config(en_default());
-
-// src/profile.ts
-import { constants as constants2 } from "node:fs";
-import { lstat as lstat2, open as open2, realpath as realpath2 } from "node:fs/promises";
-import { execFile as execFile2 } from "node:child_process";
-import { promisify as promisify2 } from "node:util";
-import os from "node:os";
-import path2 from "node:path";
-var absolute = external_exports.string().max(4096).refine((v) => path2.isAbsolute(v) && !v.includes("\0") && !/^[/\\]{2}/u.test(v), "Use an absolute local path without network shares or NUL bytes.");
-var id = external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/);
-var sha = external_exports.string().regex(/^[a-f0-9]{64}$/);
-var asset = external_exports.strictObject({ id, path: absolute, sha256: sha });
-var profileSchema = external_exports.strictObject({
-  version: external_exports.literal(1),
-  id,
-  mode: external_exports.enum(["fixture", "managed", "assisted"]),
-  stateRoot: absolute,
-  desktop: external_exports.strictObject({ provider: external_exports.enum(["native", "addin"]).default("native"), url: external_exports.string().url(), tokenFile: absolute.optional(), mapping: external_exports.strictObject({ tool: external_exports.string().min(1), argument: external_exports.string().min(1), schemaHash: sha, fixedArguments: external_exports.record(external_exports.string(), external_exports.unknown()).optional() }).optional(), timeoutMs: external_exports.number().int().min(100).max(12e4).default(12e4) }).optional(),
-  policy: external_exports.strictObject({
-    mutationsEnabled: external_exports.boolean().default(false),
-    effects: external_exports.array(external_exports.enum(["local_edit", "local_artifact", "cloud_write", "cloud_compute", "administration"])).default([]),
-    operations: external_exports.array(external_exports.string().min(1)).default([]),
-    documents: external_exports.array(external_exports.string().min(1)).default([]),
-    readDocuments: external_exports.array(external_exports.string().min(1)).optional(),
-    planMaxAgeMs: external_exports.number().int().min(1e3).max(36e5).default(9e5),
-    grantExpiresAt: external_exports.string().datetime().optional(),
-    allowUnsavedCreation: external_exports.boolean().default(false),
-    allowCreatedDocuments: external_exports.boolean().default(false),
-    qualificationDocuments: external_exports.array(external_exports.string().min(1)).default([]),
-    allowNonAtomicCloudWrites: external_exports.boolean().default(false),
-    allowedDataFiles: external_exports.array(external_exports.strictObject({ id: external_exports.string(), versionId: external_exports.string() })).default([]),
-    saveFolders: external_exports.array(external_exports.string()).default([]),
-    qualifiedOperations: external_exports.array(external_exports.string()).default([]),
-    qualificationEvidence: external_exports.string().max(4096).optional(),
-    desktopQualification: external_exports.strictObject({
-      version: external_exports.literal(1),
-      provider: external_exports.enum(["native", "addin"]),
-      fusionVersion: external_exports.string().min(1).max(256),
-      platform: external_exports.string().min(1).max(32),
-      arch: external_exports.string().min(1).max(32),
-      osRelease: external_exports.string().min(1).max(256),
-      handlerSha256: sha,
-      executionContractSha256: sha,
-      expiresAt: external_exports.string().datetime(),
-      evidence: external_exports.string().min(1).max(4096),
-      reviewer: external_exports.string().min(1).max(256)
-    }).optional(),
-    maxPlansPerMinute: external_exports.number().int().min(1).max(600).default(60)
-  }),
-  outputs: external_exports.array(external_exports.strictObject({ id, path: absolute })).default([]),
-  assets: external_exports.strictObject({ templates: external_exports.array(asset).default([]), posts: external_exports.array(asset).default([]), machines: external_exports.array(asset).default([]), toolLibraries: external_exports.array(asset).default([]), imports: external_exports.array(asset.extend({ trusted: external_exports.literal(true) })).default([]) }).default(() => ({ templates: [], posts: [], machines: [], toolLibraries: [], imports: [] })),
-  manufacturing: external_exports.array(external_exports.strictObject({
-    id,
-    postId: id,
-    machineId: id,
-    toolLibrarySha256: sha,
-    strategyIds: external_exports.array(external_exports.string()).min(1),
-    units: external_exports.enum(["mm", "in"]),
-    qualificationEvidence: external_exports.string().min(1),
-    reviewRecords: external_exports.array(external_exports.strictObject({ id, sourceState: sha, method: external_exports.string().min(1), reviewedBy: external_exports.string().min(1), expiresAt: external_exports.string().datetime() })).default([])
-  })).default([]),
-  cloud: external_exports.strictObject({
-    clientId: external_exports.string().min(1).optional(),
-    tenantId: external_exports.string().min(1),
-    scopes: external_exports.array(external_exports.string()).min(1).optional(),
-    redirectUri: external_exports.string().url().optional(),
-    hubIds: external_exports.array(external_exports.string()).default([]),
-    projects: external_exports.array(external_exports.strictObject({ hubId: external_exports.string(), projectId: external_exports.string() })).default([]),
-    mfgModels: external_exports.array(external_exports.strictObject({ modelId: external_exports.string(), hubId: external_exports.string(), projectId: external_exports.string(), configurationId: external_exports.string().nullable().optional() })).default([]),
-    manage: external_exports.strictObject({ tenant: external_exports.string(), workspaceIds: external_exports.array(external_exports.number().int().positive()) }).optional(),
-    recipesFile: absolute.optional(),
-    enterpriseAdapter: external_exports.strictObject({ path: absolute, sha256: sha }).optional(),
-    propertyRules: external_exports.array(external_exports.strictObject({ propertyDefinitionId: external_exports.string().min(1), type: external_exports.enum(["string", "number", "boolean"]), allowNull: external_exports.boolean(), maxLength: external_exports.number().int().positive().optional(), minimum: external_exports.number().finite().optional(), maximum: external_exports.number().finite().optional(), unit: external_exports.string().optional(), owner: external_exports.literal("product") })).default([]),
-    budget: external_exports.strictObject({ maxConcurrentJobs: external_exports.number().int().min(1).max(100), maxSubmissions: external_exports.number().int().min(1), maxReservedUnits: external_exports.number().positive(), currency: external_exports.string().min(1).max(32), period: external_exports.string().min(1) }).optional()
-  }).optional()
-});
-var defaultStateRoot = () => path2.join(os.homedir(), ".local", "state", "codex-fusion");
-function fixtureProfile(stateRoot = path2.join(defaultStateRoot(), "fixture")) {
-  return profileSchema.parse({ version: 1, id: "fixture", mode: "fixture", stateRoot, policy: { mutationsEnabled: true, effects: ["local_edit", "local_artifact"], operations: ["*"], documents: ["fixture:bracket"], qualifiedOperations: [], allowUnsavedCreation: false }, outputs: [{ id: "artifacts", path: path2.join(stateRoot, "artifacts") }] });
-}
-function parseProfile(value) {
-  const result = profileSchema.safeParse(value);
-  if (!result.success) throw new FusionError("INVALID_PROFILE", "Profile does not match the versioned schema.", "none", result.error.issues.map((x) => ({ path: x.path, message: x.message })));
-  const p = result.data;
-  if (p.desktop?.provider === "addin" && (!p.desktop.tokenFile || p.desktop.mapping)) throw new FusionError("INVALID_PROFILE", "Add-in profiles require an explicit tokenFile and must not include a native script mapping.");
-  if (p.desktop?.provider === "native" && p.desktop.tokenFile) throw new FusionError("INVALID_PROFILE", "Native MCP does not use the add-in token file.");
-  if (p.cloud?.enterpriseAdapter && (p.cloud.clientId !== void 0 || p.cloud.scopes !== void 0 || p.cloud.redirectUri !== void 0)) throw new FusionError("INVALID_PROFILE", "Enterprise adapters own authorization; omit public-client clientId/scopes/redirectUri fields. Their service grants are not inherited from interactive PKCE.");
-  if (p.cloud && !p.cloud.enterpriseAdapter && (!p.cloud.clientId || !p.cloud.scopes || !p.cloud.redirectUri)) throw new FusionError("INVALID_PROFILE", "Standard cloud profiles require an explicit public clientId, scopes and redirectUri.");
-  for (const list of [p.outputs, p.assets.templates, p.assets.posts, p.assets.machines, p.assets.toolLibraries, p.assets.imports, p.manufacturing]) if (new Set(list.map((x) => x.id)).size !== list.length) throw new FusionError("INVALID_PROFILE", "Profile IDs must be unique within each registry.");
-  if (p.mode !== "fixture" && p.policy.operations.includes("*")) throw new FusionError("INVALID_PROFILE", "Real provider grants must enumerate operations.");
-  if (p.mode !== "fixture" && p.policy.documents.includes("*")) throw new FusionError("INVALID_PROFILE", "Real provider grants must enumerate document references.");
-  if (p.policy.readDocuments?.includes("*")) throw new FusionError("INVALID_PROFILE", "Restricted read scope must enumerate document references; omit readDocuments to explicitly use all current-user open documents.");
-  if (p.mode !== "fixture" && p.policy.mutationsEnabled && !p.policy.grantExpiresAt) throw new FusionError("INVALID_PROFILE", "Real provider mutation grants require an expiry.");
-  return p;
-}
-async function loadProfile(filename) {
-  if (!filename) return fixtureProfile();
-  if (!path2.isAbsolute(filename)) throw new FusionError("INVALID_PROFILE", "FUSION_PROFILE must be an explicit absolute path.");
-  const { bytes } = await readTrustedFile(filename, 1048576);
-  let value;
-  try {
-    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw new FusionError("INVALID_PROFILE", "Profile must contain valid bounded UTF-8 JSON.");
-  }
-  const profile = parseProfile(value);
-  if (profile.cloud?.enterpriseAdapter) await verifyTrustedExecutableAsset(profile.cloud.enterpriseAdapter);
-  return profile;
-}
-var profileHash = (profile) => hash(profile);
-var execFileAsync2 = promisify2(execFile2);
-var WINDOWS_TRUST_CHECK = String.raw`
-$ErrorActionPreference = 'Stop'
-$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$trusted = @($sid, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-$paths = ConvertFrom-Json $env:CODEX_FUSION_TRUST_PATHS
-foreach ($item in $paths) {
-  $acl = Get-Acl -LiteralPath $item
-  if ($trusted -notcontains $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
-  foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
-    if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
-    if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
-    $write = [int][System.Security.AccessControl.FileSystemRights]::Delete -bor [int][System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [int][System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor [int][System.Security.AccessControl.FileSystemRights]::TakeOwnership
-    if ($item -eq $paths[0]) { $write = $write -bor [int][System.Security.AccessControl.FileSystemRights]::Write }
-    if (([int]$rule.FileSystemRights -band $write) -ne 0 -and $trusted -notcontains $rule.IdentityReference.Value) { exit 3 }
-  }
-}
-Write-Output 'TRUSTED'
-`;
-async function readTrustedFile(filename, maxBytes = 32e6) {
-  if (!absolute.safeParse(filename).success || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 256e6) throw new FusionError("UNTRUSTED_ASSET", "Trusted file paths and byte limits must be explicit and bounded.");
-  const before = await lstat2(filename);
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > maxBytes) throw new FusionError("UNTRUSTED_ASSET", "Trusted configuration/code must be a bounded regular file without aliases.");
-  const canonicalPath = await realpath2(filename);
-  const paths = [canonicalPath];
-  let parent = path2.dirname(canonicalPath);
-  for (let depth = 0; ; depth++) {
-    if (depth > 64) throw new FusionError("UNTRUSTED_ASSET", "Trusted path nesting exceeds its limit.");
-    paths.push(parent);
-    const next = path2.dirname(parent);
-    if (next === parent) break;
-    parent = next;
-  }
-  if (process.platform === "win32") {
-    const systemRoot = process.env.SystemRoot;
-    if (!systemRoot || !path2.isAbsolute(systemRoot)) throw new FusionError("ACL_UNVERIFIED", "Windows configuration/code ownership cannot be verified.");
-    try {
-      const result = await execFileAsync2(path2.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_TRUST_CHECK, "utf16le").toString("base64")], { env: { ...process.env, CODEX_FUSION_TRUST_PATHS: JSON.stringify(paths) }, timeout: 15e3, maxBuffer: 16384, windowsHide: true });
-      if (result.stdout.trim() !== "TRUSTED") throw new Error("untrusted ACL");
-    } catch {
-      throw new FusionError("ACL_UNVERIFIED", "Configuration/code and its canonical parent paths must be writable only by this user, SYSTEM or administrators. Windows qualification is required.");
-    }
-  } else {
-    for (const [index, candidate] of paths.entries()) {
-      const info = await lstat2(candidate);
-      const sharedStickyParent = index > 0 && info.uid === 0 && (info.mode & 512) !== 0;
-      if (info.isSymbolicLink() || (index ? !info.isDirectory() : !info.isFile()) || info.uid !== process.getuid?.() && info.uid !== 0 || (info.mode & 18) !== 0 && !sharedStickyParent) throw new FusionError("UNTRUSTED_PROFILE", "Configuration/code and parent paths must be owned by this user or an administrator and not writable by group/others.");
-    }
-  }
-  const handle = await open2(canonicalPath, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
-  try {
-    const opened = await handle.stat();
-    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size || opened.mtimeMs !== before.mtimeMs || opened.size > maxBytes) throw new FusionError("ASSET_CHANGED", "Trusted file changed while being opened.");
-    const bytes = Buffer.alloc(opened.size + 1);
-    let length = 0;
-    while (length < bytes.length) {
-      const result = await handle.read(bytes, length, bytes.length - length, length);
-      if (!result.bytesRead) break;
-      length += result.bytesRead;
-    }
-    const after = await handle.stat(), linked = await lstat2(canonicalPath);
-    if (length !== opened.size || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || after.nlink !== 1 || linked.isSymbolicLink() || linked.dev !== opened.dev || linked.ino !== opened.ino || await realpath2(filename) !== canonicalPath) throw new FusionError("ASSET_CHANGED", "Trusted file changed while its bytes were read.");
-    return { bytes: bytes.subarray(0, length), canonicalPath };
-  } finally {
-    await handle.close();
-  }
-}
-async function verifyTrustedExecutableAsset(asset2) {
-  if (path2.extname(asset2.path).toLowerCase() !== ".mjs" || !sha.safeParse(asset2.sha256).success) throw new FusionError("UNTRUSTED_ADAPTER", "Enterprise adapters require an explicit .mjs module and reviewed SHA-256.");
-  const result = await readTrustedFile(asset2.path);
-  if (hashBytes(result.bytes) !== asset2.sha256) throw new FusionError("ADAPTER_CHANGED", "The trusted enterprise adapter bytes changed. Restart and review the exact new module before use.");
-  return result.canonicalPath;
-}
-function authorize(profile, operation2, effect, documentId) {
-  if (effect === "read") {
-    if (documentId && profile.policy.readDocuments && !profile.policy.readDocuments.includes(documentId)) throw new FusionError("READ_DOCUMENT_DENIED", "Document is outside the trusted read scope.");
-    return;
-  }
-  const p = profile.policy;
-  if (!p.mutationsEnabled) throw new FusionError("MUTATIONS_DISABLED", "Mutations are disabled by the active profile.");
-  if (p.grantExpiresAt && Date.parse(p.grantExpiresAt) <= Date.now()) throw new FusionError("GRANT_EXPIRED", "The trusted scoped grant has expired.");
-  if (!p.effects.includes(effect)) throw new FusionError("EFFECT_DENIED", `The profile does not authorize ${effect}.`);
-  if (!p.operations.includes(operation2) && !(profile.mode === "fixture" && p.operations.includes("*"))) throw new FusionError("OPERATION_DENIED", `The profile does not authorize ${operation2}.`);
-  if (documentId && !p.documents.includes(documentId)) throw new FusionError("DOCUMENT_DENIED", "The document is outside the trusted grant.");
-  if (profile.mode === "managed" && (!p.qualifiedOperations.includes(operation2) || !p.qualificationEvidence)) throw new FusionError("QUALIFICATION_REQUIRED", "Managed writes require operation-specific live qualification evidence in the trusted profile. Use assisted mode only with its disclosed limits.");
-}
 
 // src/catalog.ts
 var text = external_exports.string().min(1).max(4096);
@@ -15250,7 +15305,7 @@ add("flatpattern.create", "Create a flat pattern from a stationary face", "local
 add("flatpattern.export", "Export an existing sheet-metal flat pattern as DXF", "local_artifact", external_exports.strictObject({ component_id: ref.optional(), output }), "ExportManager_createDXFFlatPatternExportOptions");
 var operationCatalog = new Map(entries.map((entry) => [entry.id, entry]));
 function describeOperations(family, includeSchema = false) {
-  return entries.filter((e) => !family || e.family === family).map(({ schema, document, ...entry }) => ({ ...entry, document_required: document, ...includeSchema ? { input_schema: external_exports.toJSONSchema(schema) } : {} }));
+  return entries.filter((e) => !family || e.family === family).map(({ schema, document, ...entry }) => ({ ...entry, document_required: document, ...includeSchema ? { input_schema: external_exports.toJSONSchema(schema, { io: "input" }) } : {} }));
 }
 function getOperation(id2) {
   const entry = operationCatalog.get(id2);
@@ -15284,10 +15339,2155 @@ var capabilityBoundaries = [
   { family: "ui.arbitrary", maturity: "unverified", status: "assisted_only", reason: "Native raw tools are outside the typed managed facade. They cannot provide managed-policy guarantees." }
 ];
 
+// src/cloud-http.ts
+import { createHash as createHash2 } from "node:crypto";
+var APS_ORIGIN = "https://developer.api.autodesk.com";
+var CloudError = class extends Error {
+  constructor(code, message, outcome = "none", retryable = false, httpStatus, retryAfterMs) {
+    super(message);
+    this.code = code;
+    this.outcome = outcome;
+    this.retryable = retryable;
+    this.httpStatus = httpStatus;
+    this.retryAfterMs = retryAfterMs;
+    this.name = "CloudError";
+  }
+  code;
+  outcome;
+  retryable;
+  httpStatus;
+  retryAfterMs;
+  toJSON() {
+    return { code: this.code, message: this.message, outcome: this.outcome, retryable: this.retryable, httpStatus: this.httpStatus, retryAfterMs: this.retryAfterMs };
+  }
+};
+function isCloudObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+}
+function cloudString(value, name2, max = 2048) {
+  if (typeof value !== "string" || !value.length || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new CloudError("INVALID_ARGUMENT", `${name2} must be a bounded nonempty string.`);
+}
+function cloudId(value) {
+  cloudString(value, "Identifier");
+  if (/[\\/]/.test(value) || value === "." || value === "..") throw new CloudError("INVALID_ARGUMENT", "Identifier cannot contain path navigation.");
+  return encodeURIComponent(value);
+}
+function cloudTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) throw new CloudError("INVALID_ARGUMENT", "An explicit ISO timestamp with timezone is required.");
+}
+function cloudCanonical(value) {
+  if (Array.isArray(value)) return `[${value.map(cloudCanonical).join(",")}]`;
+  if (isCloudObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${cloudCanonical(value[key])}`).join(",")}}`;
+  if (value === void 0 || typeof value === "number" && !Number.isFinite(value)) throw new CloudError("INVALID_ARGUMENT", "Only finite JSON values can be fingerprinted.");
+  const result = JSON.stringify(value);
+  if (result === void 0) throw new CloudError("INVALID_ARGUMENT", "Only JSON values can be fingerprinted.");
+  return result;
+}
+function cloudHash(value) {
+  return createHash2("sha256").update(cloudCanonical(value)).digest("hex");
+}
+function cloudSourceHash(source) {
+  return createHash2("sha256").update(source).digest("hex");
+}
+function redactCloudData(value, depth = 0) {
+  if (depth > 40) return "[depth limit]";
+  if (typeof value === "string") {
+    if (/\b(?:Bearer|Basic)\s+\S+/i.test(value)) return "[redacted credential]";
+    if (/^https?:\/\//i.test(value)) {
+      try {
+        const url2 = new URL(value);
+        if (url2.username || url2.password || [...url2.searchParams.keys()].some((key) => /token|secret|signature|credential|x-amz-|x-goog-|^sig$|^code$/i.test(key))) return "[redacted credential URL]";
+      } catch {
+        return "[invalid URL]";
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map((item) => redactCloudData(item, depth + 1));
+  if (isCloudObject(value)) {
+    const out = /* @__PURE__ */ Object.create(null);
+    for (const [key, item] of Object.entries(value)) {
+      if (/token|authorization|password|secret|cookie|signature|signedurl|reporturl/i.test(key)) out[key] = "[redacted]";
+      else if (!["__proto__", "prototype", "constructor"].includes(key)) out[key] = redactCloudData(item, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+async function readBoundedJson(response, maxBytes) {
+  const length = response.headers.get("content-length");
+  if (length !== null && Number(length) > maxBytes) {
+    await response.body?.cancel();
+    throw new CloudError("RESPONSE_TOO_LARGE", "Provider response exceeds the configured byte limit.");
+  }
+  if (response.status === 204) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) throw new CloudError("INVALID_RESPONSE", "Provider returned an empty response.");
+  const reader = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    for (; ; ) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel();
+        throw new CloudError("RESPONSE_TOO_LARGE", "Provider response exceeds the configured byte limit.");
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new CloudError("INVALID_RESPONSE", "Provider did not return valid JSON.");
+  }
+}
+function validateAutodeskOrigin(origin, manageTenant) {
+  let url2;
+  try {
+    url2 = new URL(origin);
+  } catch {
+    throw new CloudError("INVALID_ENDPOINT", "Invalid Autodesk endpoint.");
+  }
+  const allowed = [APS_ORIGIN];
+  if (manageTenant !== void 0) {
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(manageTenant)) throw new CloudError("INVALID_ENDPOINT", "Fusion Manage tenant must be an exact DNS label.");
+    allowed.push(`https://${manageTenant}.autodeskplm360.net`);
+  }
+  if (url2.protocol !== "https:" || url2.username || url2.password || url2.port || url2.pathname !== "/" || url2.search || url2.hash || !allowed.includes(url2.origin) || origin !== url2.origin) throw new CloudError("INVALID_ENDPOINT", "Only the exact approved HTTPS Autodesk origin is allowed.");
+  return url2.origin;
+}
+var CloudRateLimiter = class {
+  constructor(intervalMs = 500, now2 = Date.now, sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+    this.intervalMs = intervalMs;
+    this.now = now2;
+    this.sleep = sleep2;
+    if (!Number.isFinite(intervalMs) || intervalMs < 400 || intervalMs > 6e4) throw new CloudError("INVALID_ARGUMENT", "Rate-limit interval must be between 400 and 60000 milliseconds.");
+  }
+  intervalMs;
+  now;
+  sleep;
+  #tail = Promise.resolve();
+  #next = 0;
+  async acquire() {
+    const pending = this.#tail.then(async () => {
+      const delay = Math.max(0, this.#next - this.now());
+      if (delay) await this.sleep(delay);
+      this.#next = this.now() + this.intervalMs;
+    });
+    this.#tail = pending.catch(() => {
+    });
+    return pending;
+  }
+};
+var ApsTransport = class {
+  #fetch;
+  #limiter;
+  #maxBytes;
+  #timeout;
+  #retries;
+  #now;
+  #sleep;
+  #random;
+  #opts;
+  constructor(options) {
+    cloudString(options.tenantId, "Tenant context", 256);
+    if (!options.tokenProvider || typeof options.tokenProvider.getToken !== "function") throw new CloudError("NOT_AUTHENTICATED", "An independently authorized APS token provider is required.");
+    if (options.manageTenant) validateAutodeskOrigin(`https://${options.manageTenant}.autodeskplm360.net`, options.manageTenant);
+    this.#opts = { ...options };
+    this.#fetch = options.fetch ?? globalThis.fetch;
+    this.#limiter = options.limiter ?? new CloudRateLimiter();
+    this.#maxBytes = options.maxResponseBytes ?? 2e6;
+    this.#timeout = options.timeoutMs ?? 3e4;
+    this.#retries = options.readRetries ?? 2;
+    this.#now = options.now ?? Date.now;
+    this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.#random = options.random ?? Math.random;
+    if (!Number.isSafeInteger(this.#maxBytes) || this.#maxBytes < 128 || this.#maxBytes > 2e7 || !Number.isSafeInteger(this.#retries) || this.#retries < 0 || this.#retries > 5 || !Number.isFinite(this.#timeout) || this.#timeout < 1 || this.#timeout > 12e4) throw new CloudError("INVALID_ARGUMENT", "Invalid cloud transport limits.");
+  }
+  async token(scopes, minValidityMs = 3e4) {
+    let grant;
+    try {
+      grant = await this.#opts.tokenProvider.getToken({ tenantId: this.#opts.tenantId, resource: APS_ORIGIN, scopes, minValidityMs });
+    } catch (error51) {
+      const safeCodes = /* @__PURE__ */ new Set(["NOT_AUTHENTICATED", "TOKEN_EXPIRED", "SCOPE_DENIED", "TENANT_MISMATCH", "REAUTHENTICATION_REQUIRED", "RATE_LIMITED", "OAUTH_TRANSPORT_ERROR", "OAUTH_PROVIDER_ERROR", "INVALID_OAUTH_RESPONSE"]);
+      const code = error51 instanceof CloudError && safeCodes.has(error51.code) ? error51.code : "NOT_AUTHENTICATED";
+      throw new CloudError(code, "APS credentials are unavailable or do not satisfy this request. Complete the configured Autodesk authorization flow; credential-provider diagnostics were withheld.");
+    }
+    if (!grant || grant.tenantId !== this.#opts.tenantId || grant.resource !== APS_ORIGIN || grant.issuer !== APS_ORIGIN) throw new CloudError("TENANT_MISMATCH", "Credential tenant, issuer or API resource does not match the configured scope.");
+    if (!Number.isFinite(grant.expiresAt) || grant.expiresAt < this.#now() + minValidityMs) throw new CloudError("TOKEN_EXPIRED", "APS authorization expires too soon for this operation.");
+    if (!Array.isArray(grant.scopes) || scopes.some((scope) => !grant.scopes.includes(scope))) throw new CloudError("SCOPE_DENIED", "APS authorization lacks a required direct API scope.");
+    if (typeof grant.accessToken !== "string" || !grant.accessToken.length || grant.accessToken.length > 32768 || /[\r\n\s]/.test(grant.accessToken)) throw new CloudError("INVALID_TOKEN", "The credential provider returned an invalid access token.");
+    if (!["authorization_code", "client_credentials"].includes(grant.grantType)) throw new CloudError("INVALID_TOKEN", "Unsupported APS authorization grant.");
+    return grant;
+  }
+  async send(request) {
+    const origin = validateAutodeskOrigin(request.origin ?? APS_ORIGIN, this.#opts.manageTenant);
+    if (!request.path.startsWith("/") || request.path.startsWith("//") || /[\\\r\n#]/.test(request.path)) throw new CloudError("INVALID_ENDPOINT", "Invalid API path.");
+    const url2 = new URL(request.path, origin);
+    if (url2.origin !== origin || url2.username || url2.password || /(?:^|\/)\.\.?(?:\/|$)/.test(decodeURIComponent(url2.pathname))) throw new CloudError("INVALID_ENDPOINT", "API path cannot escape its approved origin.");
+    const extra = request.headers ?? {};
+    if (Object.keys(extra).some((key) => !["x-tenant", "if-match"].includes(key.toLowerCase())) || Object.values(extra).some((value) => /[\r\n]/.test(value))) throw new CloudError("INVALID_ARGUMENT", "Unapproved cloud request header.");
+    if (!request.safeRead && request.method === "GET") throw new CloudError("INVALID_ARGUMENT", "Mutation cannot use GET.");
+    const body = request.body === void 0 ? void 0 : JSON.stringify(request.body);
+    if (body && Buffer.byteLength(body) > 2e6) throw new CloudError("REQUEST_TOO_LARGE", "Cloud request exceeds the configured byte limit.");
+    for (let attempt = 0; ; attempt++) {
+      await this.#limiter.acquire();
+      const grant = await this.token(request.scopes, request.minValidityMs);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), this.#timeout);
+      try {
+        let response;
+        try {
+          response = await this.#fetch(url2, { method: request.method, redirect: "error", signal: controller.signal, headers: { accept: "application/json", ...body ? { "content-type": "application/json" } : {}, ...extra, authorization: `Bearer ${grant.accessToken}` }, ...body ? { body } : {} });
+        } catch {
+          if (request.safeRead && attempt < this.#retries) {
+            clearTimeout(timeout);
+            await this.#backoff(attempt);
+            continue;
+          }
+          throw new CloudError(request.safeRead ? "NETWORK_ERROR" : "OUTCOME_UNKNOWN", request.safeRead ? "Autodesk request failed before a response could be read." : "The mutation acknowledgement was lost. Reconcile provider state before retrying; the operation may have taken effect.", request.safeRead ? "none" : "unknown", request.safeRead);
+        }
+        const retryAfter = parseRetryAfter(response.headers.get("retry-after"), this.#now());
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => {
+          });
+          const isTransient = response.status === 429 || [408, 500, 502, 503, 504].includes(response.status);
+          if (request.safeRead && isTransient && attempt < this.#retries && (retryAfter ?? 0) <= 6e4) {
+            clearTimeout(timeout);
+            await this.#backoff(attempt, retryAfter);
+            continue;
+          }
+          const outcome = !request.safeRead && (response.status === 408 || response.status >= 500) ? "unknown" : "none";
+          const code = outcome === "unknown" ? "OUTCOME_UNKNOWN" : response.status === 429 ? "RATE_LIMITED" : response.status === 401 ? "TOKEN_EXPIRED" : response.status === 403 ? "ACCESS_DENIED" : response.status === 404 ? "NOT_FOUND" : response.status === 409 || response.status === 412 ? "STALE_PLAN" : "PROVIDER_ERROR";
+          throw new CloudError(code, outcome === "unknown" ? "Autodesk returned an uncertain mutation result; reconcile it before any retry." : `Autodesk returned HTTP ${response.status}. Provider response content was withheld to protect credentials and customer data.`, outcome, request.safeRead && isTransient, response.status, retryAfter);
+        }
+        let data;
+        try {
+          data = await readBoundedJson(response, this.#maxBytes);
+        } catch (error51) {
+          if (!request.safeRead) throw new CloudError("OUTCOME_UNKNOWN", "Autodesk accepted the request but its response could not be safely read; reconcile before retrying.", "unknown");
+          if (error51 instanceof CloudError) throw error51;
+          throw new CloudError("NETWORK_ERROR", "The Autodesk response stream was interrupted.", "none", true);
+        }
+        const etag = response.headers.get("etag") ?? void 0;
+        return { data, status: response.status, ...etag ? { etag } : {} };
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+  }
+  async #backoff(attempt, retryAfter) {
+    const jitter = Math.max(0, Math.min(1, this.#random()));
+    await this.#sleep(Math.min(6e4, Math.max(retryAfter ?? 0, 500 * 2 ** attempt * (0.75 + jitter * 0.5))));
+  }
+};
+function parseRetryAfter(value, now2 = Date.now()) {
+  if (value === null) return void 0;
+  if (/^\d+(?:\.\d+)?$/.test(value.trim())) return Math.max(0, Number(value) * 1e3);
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed - now2) : void 0;
+}
+
+// src/cloud-batches.ts
+var ref2 = external_exports.string().min(1).max(2048);
+var sha = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var variantId = external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/);
+var inputs = external_exports.record(external_exports.string().min(1).max(256), external_exports.union([external_exports.string().max(8192), external_exports.number().finite(), external_exports.boolean()]));
+var cloudBatchPrepareSchema = external_exports.strictObject({
+  request_key: external_exports.string().regex(/^[A-Za-z0-9._:-]{8,160}$/),
+  recipe_id: ref2,
+  context: external_exports.strictObject({
+    tenantId: ref2,
+    sources: external_exports.array(external_exports.strictObject({ hubId: ref2, projectId: ref2, itemId: ref2, versionId: ref2, configurationId: ref2.nullable(), resourceHash: sha })).max(100),
+    destinationAlias: ref2,
+    requireHardCap: external_exports.boolean().optional(),
+    requireImmutableEngine: external_exports.boolean().optional(),
+    requireImmutableDependencies: external_exports.boolean().optional()
+  }),
+  variants: external_exports.array(external_exports.strictObject({ variant_id: variantId, inputs })).min(1).max(100)
+});
+function cloudBatchConflictBinding(record3) {
+  const { receipt_hash: _receiptHash, ...fields } = record3;
+  return fields;
+}
+function assertCloudBatchConflictIntegrity(record3, batch) {
+  try {
+    assertJson(record3, 2097152);
+    const digest2 = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+    const jobId = (value) => typeof value === "string" && /^cloudjob_[a-f0-9-]{36}$/.test(value);
+    if (record3.schema_version !== 1 || !/^cloudbatch_[a-f0-9]{64}$/.test(record3.id) || record3.id !== record3.batch_id || !digest2(record3.batch_plan_hash) || !digest2(record3.request_hash) || !digest2(record3.candidate_receipt_sha256) || !jobId(record3.trigger_job_id) || record3.code !== "OUTPUT_IDENTITY_CONFLICT" || record3.source !== "trusted_output_validator" || record3.resolution !== "blocked_no_reconciliation_api" || !Number.isFinite(Date.parse(record3.detected_at)) || hash(cloudBatchConflictBinding(record3)) !== record3.receipt_hash) throw new FusionError("BATCH_CONFLICT_TAMPERED", "The durable output-conflict receipt changed or has an invalid binding.");
+    if (!Array.isArray(record3.conflicts) || record3.conflicts.length < 1 || record3.conflicts.length > 100 || new Set(record3.conflicts.map((conflict) => conflict.artifact_id)).size !== record3.conflicts.length || record3.conflicts.some((conflict) => typeof conflict.artifact_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,2047}$/.test(conflict.artifact_id) || conflict.artifact_id.includes("://") || /token|secret|bearer/i.test(conflict.artifact_id) || !Array.isArray(conflict.job_ids) || conflict.job_ids.length < 2 || conflict.job_ids.length > 100 || new Set(conflict.job_ids).size !== conflict.job_ids.length || !conflict.job_ids.every(jobId) || !conflict.job_ids.includes(record3.trigger_job_id))) throw new FusionError("BATCH_CONFLICT_TAMPERED", "Output-conflict identities are incomplete or unbounded.");
+    const involved = new Set(record3.conflicts.flatMap((conflict) => conflict.job_ids));
+    if (!Array.isArray(record3.job_bindings) || record3.job_bindings.length !== involved.size || new Set(record3.job_bindings.map((job) => job.job_id)).size !== involved.size || record3.job_bindings.some((job) => !involved.has(job.job_id) || !digest2(job.plan_hash) || !digest2(job.validation_receipt_sha256)) || record3.job_bindings.find((job) => job.job_id === record3.trigger_job_id)?.validation_receipt_sha256 !== record3.candidate_receipt_sha256) throw new FusionError("BATCH_CONFLICT_TAMPERED", "Output-conflict job/evidence bindings are incomplete.");
+    if (batch && (record3.batch_id !== batch.id || record3.batch_plan_hash !== batch.plan_hash || record3.request_hash !== batch.request_hash || record3.job_bindings.some((job) => !batch.variants.some((variant) => variant.initial_job.id === job.job_id && variant.initial_job.plan_hash === job.plan_hash)))) throw new FusionError("BATCH_CONFLICT_TAMPERED", "Output-conflict evidence belongs to another immutable batch or child plan.");
+  } catch (error51) {
+    if (error51 instanceof FusionError) throw error51;
+    throw new FusionError("BATCH_CONFLICT_TAMPERED", "The durable output-conflict receipt is incomplete.");
+  }
+}
+function parseCloudBatchInput(value) {
+  assertJson(value, 2097152);
+  const parsed = cloudBatchPrepareSchema.safeParse(value);
+  if (!parsed.success) throw new FusionError("INVALID_BATCH_INPUT", "A batch requires a bounded reviewed recipe, frozen context, unique variant IDs and scalar input sets.");
+  if (new Set(parsed.data.variants.map((variant) => variant.variant_id)).size !== parsed.data.variants.length) throw new FusionError("DUPLICATE_VARIANT", "Every batch variant requires a distinct explicit identity.");
+  return parsed.data;
+}
+function cloudBatchId(profileId, requestKeyHash) {
+  return `cloudbatch_${hash({ profile_id: profileId, request_key_hash: requestKeyHash })}`;
+}
+function cloudBatchChildKey(batchId, variant) {
+  return `batch:${hash({ batch_id: batchId, variant_id: variant })}`;
+}
+function cloudBatchBinding(batch) {
+  const { plan_hash: _planHash, phase: _phase, ...immutable } = batch;
+  return immutable;
+}
+function cloudBatchContext(request) {
+  return { ...structuredClone(request.context), variantCount: 1 };
+}
+function assertPreparedBatchVariant(request, variant, prepared) {
+  assertJson(prepared, 2097152);
+  const { requestHash, ...fields } = prepared;
+  if (cloudHash(fields) !== requestHash || prepared.recipeId !== request.recipe_id || hash(prepared.inputs) !== hash(variant.inputs) || hash(prepared.context) !== hash(cloudBatchContext(request))) throw new FusionError("BATCH_BINDING_CHANGED", "A prepared child does not match the exact requested recipe, parameters or frozen source context.");
+  if (prepared.destination.kind !== "object_storage" || prepared.destination.alias !== request.context.destinationAlias) throw new FusionError("BATCH_STAGING_REQUIRED", "Batches require a reviewed object-storage staging destination; saving or publishing Fusion project results is outside this batch contract.");
+  if (typeof prepared.reservation.currency !== "string" || !Number.isFinite(prepared.reservation.amount) || prepared.reservation.amount < 0 || !["estimated", "provider_enforced"].includes(prepared.reservation.kind) || prepared.reservation.hardCap !== (prepared.reservation.kind === "provider_enforced")) throw new FusionError("INVALID_JOB_RECORD", "The prepared batch cost evidence is invalid.");
+  if (request.context.requireHardCap && !prepared.reservation.hardCap) throw new FusionError("BUDGET_UNENFORCEABLE", "A required hard cap cannot be replaced with an estimated batch admission budget.");
+  if (request.context.requireImmutableEngine && (prepared.activity.rollingEngine || prepared.activity.engine.endsWith("+Latest")) || request.context.requireImmutableDependencies && prepared.activity.aliasRacePossible) throw new FusionError("IMMUTABILITY_UNAVAILABLE", "Prepared activity evidence does not satisfy the batch's required immutable engine or dependency binding.");
+  if (typeof prepared.id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(prepared.id) || !/^[a-f0-9]{64}$/.test(prepared.recipeHash)) throw new FusionError("BATCH_IDENTITY_CONFLICT", "The prepared provider request or recipe identity is invalid.");
+  if (!Number.isFinite(Date.parse(prepared.createdAt)) || !Number.isFinite(Date.parse(prepared.expiresAt))) throw new FusionError("PLAN_EXPIRED", "Prepared batch evidence has no usable freshness interval.");
+}
+function activityBinding(prepared) {
+  const { observedAt: _observed, ...identity } = prepared.activity;
+  return identity;
+}
+function assertCloudBatchIntegrity(batch) {
+  try {
+    assertJson(batch, 4194304);
+    if (!batch || batch.schema_version !== 1 || !["materializing", "ready"].includes(batch.phase) || !/^[a-f0-9]{64}$/.test(batch.request_key_hash) || cloudBatchId(batch.profile_id, batch.request_key_hash) !== batch.id || hash(cloudBatchBinding(batch)) !== batch.plan_hash || hash(batch.request) !== batch.request_hash) throw new FusionError("BATCH_TAMPERED", "The stored batch identity or immutable plan hash changed.");
+    const request = parseCloudBatchInput({ ...batch.request, request_key: "record-validation" });
+    if (batch.variants.length !== request.variants.length || !Number.isFinite(Date.parse(batch.created_at)) || !Number.isFinite(Date.parse(batch.expires_at))) throw new FusionError("BATCH_TAMPERED", "The batch variant count or freshness interval changed.");
+    const jobIds = /* @__PURE__ */ new Set(), requestIds = /* @__PURE__ */ new Set(), requestHashes = /* @__PURE__ */ new Set();
+    let amount = 0;
+    const first = batch.variants[0].initial_job;
+    for (const [index, variant] of batch.variants.entries()) {
+      const requested = request.variants[index], job = variant.initial_job;
+      if (variant.variant_id !== requested.variant_id || variant.idempotency_key !== cloudBatchChildKey(batch.id, variant.variant_id) || job.status !== "prepared" || job.submitted !== false || job.reserved_units !== 0 || job.idempotency_key !== void 0 || job.provider_id !== void 0 || job.provider !== void 0 || job.validation !== void 0 || job.settlement !== void 0 || job.cancellation !== void 0 || job.error !== void 0 || job.validation_in_progress !== void 0 || job.output_identity_conflict !== void 0 || job.validation_usable !== void 0 || hash(job.batch) !== hash({ batch_id: batch.id, variant_id: variant.variant_id, request_hash: batch.request_hash })) throw new FusionError("BATCH_TAMPERED", "The immutable variant/job mapping or initial child state changed.");
+      if (job.profile_id !== batch.profile_id || job.profile_hash !== batch.profile_hash || job.scope_hash !== batch.scope_hash || job.authorization_binding !== batch.authorization_binding || job.budget_period !== batch.budget_period || job.prepared.reservation.currency !== batch.currency) throw new FusionError("BATCH_TAMPERED", "A child has a different profile, account or cost scope.");
+      assertPreparedBatchVariant(batch.request, requested, job.prepared);
+      if (job.prepared.recipeVersion !== first.prepared.recipeVersion || job.prepared.recipeHash !== first.prepared.recipeHash || hash(job.prepared.destination) !== hash(first.prepared.destination) || hash(activityBinding(job.prepared)) !== hash(activityBinding(first.prepared))) throw new FusionError("BATCH_BINDING_CHANGED", "The reviewed recipe, activity, dependencies or staging destination changed during whole-batch preparation.");
+      if (jobIds.has(job.id) || requestIds.has(job.prepared.id) || requestHashes.has(job.prepared.requestHash)) throw new FusionError("BATCH_IDENTITY_CONFLICT", "Each variant requires its own immutable job and provider request identity.");
+      jobIds.add(job.id);
+      requestIds.add(job.prepared.id);
+      requestHashes.add(job.prepared.requestHash);
+      amount += job.prepared.reservation.amount;
+    }
+    if (!Number.isFinite(amount) || amount !== batch.estimated_reservation) throw new FusionError("BATCH_TAMPERED", "The aggregate batch reservation differs from its child plans.");
+  } catch (error51) {
+    if (error51 instanceof FusionError) throw error51;
+    throw new FusionError("BATCH_TAMPERED", "The stored batch is not a complete valid immutable manifest.");
+  }
+}
+function batchArtifactConflicts(jobs) {
+  const owners = /* @__PURE__ */ new Map();
+  for (const job of jobs) for (const artifact of job?.validation?.artifacts ?? []) {
+    const ids = owners.get(artifact.artifact_id) ?? /* @__PURE__ */ new Set();
+    ids.add(job.id);
+    owners.set(artifact.artifact_id, ids);
+  }
+  return [...owners].filter(([, ids]) => ids.size > 1).map(([artifact_id, ids]) => ({ artifact_id, job_ids: [...ids] }));
+}
+function batchErrorCode(error51) {
+  const candidate = error51;
+  return { code: typeof candidate?.code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(candidate.code) ? candidate.code : "CLOUD_OPERATION_FAILED", outcome: typeof candidate?.outcome === "string" && ["none", "partial", "unknown"].includes(candidate.outcome) ? candidate.outcome : "unknown" };
+}
+function inlineWithin(value, bytes, maximumNodes) {
+  if (Buffer.byteLength(JSON.stringify(value)) > bytes) return false;
+  let nodes = 0;
+  const visit = (current) => {
+    if (++nodes > maximumNodes) return false;
+    return current === null || typeof current !== "object" || Object.values(current).every(visit);
+  };
+  return visit(value);
+}
+function shortText(value, maximumBytes = 2048) {
+  return typeof value === "string" && Buffer.byteLength(value) <= maximumBytes ? value : null;
+}
+function validationSummary(job, usable) {
+  const receipt = job?.validation;
+  if (!job || !receipt) return null;
+  const passed = receipt.checks.filter((check2) => check2.outcome === "passed").length;
+  const failed = receipt.checks.filter((check2) => check2.outcome === "failed").length;
+  return {
+    kind: "validation_receipt_summary",
+    receipt_hash: receipt.receipt_hash,
+    observed_at: shortText(receipt.observed_at, 128),
+    outcome: receipt.checks.length > 0 && passed === receipt.checks.length ? "passed" : failed > 0 ? "failed" : "unresolved",
+    usable_for_acceptance: usable,
+    check_counts: { total: receipt.checks.length, passed, failed },
+    artifact_count: receipt.artifacts.length,
+    artifact_bytes: receipt.artifacts.reduce((sum, artifact) => sum + artifact.bytes, 0),
+    full_receipt_included: false,
+    inspect_job_id: job.id
+  };
+}
+function billingSummary(job) {
+  const receipt = job?.settlement;
+  if (!job || !receipt) return null;
+  return { kind: "billing_receipt_summary", receipt_hash: receipt.receipt_hash, observed_at: shortText(receipt.observed_at, 128), actual_amount: receipt.actual_amount, currency: receipt.currency, source: receipt.source, final: receipt.final, full_receipt_included: false, inspect_job_id: job.id };
+}
+function inspectCloudBatch(batch, jobs, conflict) {
+  const artifactConflicts = conflict?.conflicts ?? batchArtifactConflicts(jobs);
+  const validationUnknown = jobs.some((job) => job?.validation_in_progress);
+  const variants = batch.variants.map((variant, index) => {
+    const job = jobs[index];
+    const inputs2 = variant.initial_job.prepared.inputs;
+    const inputComplete = Object.keys(inputs2).length <= 32 && inlineWithin(inputs2, 8192, 33);
+    const usable = job?.status === "succeeded" && !!job.validation && !job.output_identity_conflict && !validationUnknown;
+    const reservation = variant.initial_job.prepared.reservation;
+    return {
+      variant_id: variant.variant_id,
+      job_id: variant.initial_job.id,
+      plan_hash: variant.initial_job.plan_hash,
+      request_hash: variant.initial_job.prepared.requestHash,
+      inputs: inputComplete ? inputs2 : null,
+      input_summary: { sha256: hash(inputs2), field_count: Object.keys(inputs2).length, inline_complete: inputComplete, inspect_job_id: variant.initial_job.id },
+      status: job?.status ?? "not_materialized",
+      submitted: job?.submitted ?? false,
+      provider_id: job?.provider_id ?? null,
+      reservation: { amount: reservation.amount, currency: reservation.currency, kind: reservation.kind, hardCap: reservation.hardCap },
+      reserved_units: job?.reserved_units ?? 0,
+      validation: validationSummary(job, usable),
+      settlement: billingSummary(job),
+      cancellation: job?.cancellation ? { attempted_at: shortText(job.cancellation.attempted_at, 128), acknowledgement: job.cancellation.acknowledgement } : null,
+      validation_usable: usable,
+      validation_disposition: job?.output_identity_conflict ? "historical_conflicted" : job?.validation ? "accepted_receipt" : "not_recorded",
+      validation_outcome_unknown: !!job?.validation_in_progress,
+      output_identity_conflict: job?.output_identity_conflict ?? null,
+      // Raw provider messages can contain secrets and URLs outside the adapter contract.
+      error: job?.error ? batchErrorCode(job.error) : null
+    };
+  });
+  const count = (...states) => variants.filter((variant) => states.includes(variant.status)).length;
+  const allValidated = jobs.length === batch.variants.length && jobs.every((job) => job?.status === "succeeded" && job.validation?.checks.every((check2) => check2.outcome === "passed") && !job.output_identity_conflict && !job.validation_in_progress) && artifactConflicts.length === 0;
+  const unsettled = jobs.filter((job) => job?.submitted && !job.settlement).length;
+  const initial2 = batch.variants[0].initial_job;
+  const contextComplete = inlineWithin(batch.request.context, 32768, 1024);
+  const destinationComplete = inlineWithin(initial2.prepared.destination, 8192, 64);
+  const preparedWarnings = initial2.prepared.warnings;
+  const inlineWarnings = preparedWarnings.filter((warning) => typeof warning === "string" && Buffer.byteLength(warning) <= 1024).slice(0, 8);
+  const view = {
+    schema_version: 1,
+    id: batch.id,
+    plan_hash: batch.plan_hash,
+    request_hash: batch.request_hash,
+    phase: batch.phase,
+    recipe_id: batch.request.recipe_id,
+    recipe_version: shortText(initial2.prepared.recipeVersion),
+    recipe_version_sha256: hash(initial2.prepared.recipeVersion),
+    recipe_hash: initial2.prepared.recipeHash,
+    profile_id: batch.profile_id,
+    created_at: batch.created_at,
+    expires_at: batch.expires_at,
+    context: contextComplete ? batch.request.context : null,
+    context_summary: { sha256: hash(batch.request.context), hash_basis: "batch_context_without_variantCount", source_count: batch.request.context.sources.length, inline_complete: contextComplete, inspect_job_id: initial2.id },
+    destination: destinationComplete ? initial2.prepared.destination : null,
+    destination_summary: { sha256: hash(initial2.prepared.destination), inline_complete: destinationComplete, inspect_job_id: initial2.id },
+    admission_estimate: { amount: batch.estimated_reservation, currency: batch.currency, budget_period: batch.budget_period, reserved_at_preparation: false, all_child_caps_provider_enforced: batch.variants.every((variant) => variant.initial_job.prepared.reservation.hardCap) },
+    variants,
+    progress: { total: variants.length, not_materialized: count("not_materialized"), prepared: count("prepared"), active: count("submitting", "queued", "running", "cancel_requested"), uncertain: variants.filter((variant) => ["submitting", "outcome_unknown"].includes(variant.status) || variant.validation_outcome_unknown).length, validating: count("validating"), succeeded: count("succeeded"), failed: count("failed"), cancelled: count("cancelled"), unsettled_submitted_jobs: unsettled },
+    all_outputs_validated: allValidated,
+    billing_settled: unsettled === 0 && variants.every((variant) => variant.status !== "prepared" && variant.status !== "not_materialized"),
+    output_identity_conflicts: artifactConflicts,
+    publication_performed: false,
+    output_conflict_receipt: conflict ? { id: conflict.id, receipt_hash: conflict.receipt_hash, detected_at: conflict.detected_at, resolution: conflict.resolution } : null,
+    projection: { kind: "bounded_batch_summary", all_variants_included: true, full_validation_receipts_included: false, full_billing_receipts_included: false, credential_redaction_applied: true, max_response_bytes: 4194304, max_json_nodes: 5e4, details_tool: "fusion_cloud_job_inspect" },
+    prepared_warning_summary: { sha256: hash(preparedWarnings), total_count: preparedWarnings.length, inline_count: inlineWarnings.length, inline_complete: inlineWarnings.length === preparedWarnings.length, inspect_job_id: initial2.id },
+    warnings: ["Each prepared variant is a separate workitem. There is no whole-batch rollback or automatic retry.", "Results remain in the approved staging destination. Validation and billing reconciliation are separate trusted steps.", "The existing transfer contract exposes no final output key before submission; the trusted stager must isolate each prepared request. Artifact identity collisions are checked when validation evidence supplies identities.", ...inlineWarnings]
+  };
+  const cleaned = JSON.parse(JSON.stringify(redactCloudData(redact(view))));
+  assertJson(cleaned, 4194304);
+  return cleaned;
+}
+
+// src/handoff.ts
+var ref3 = external_exports.string().min(1).max(128);
+var label = external_exports.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u);
+var digest = external_exports.string().regex(/^[a-f0-9]{64}$/u);
+var text2 = external_exports.string().min(1).max(4e3);
+var refs2 = external_exports.array(ref3).max(100).default([]);
+var labels = external_exports.array(label).max(50).default([]);
+var pointer = external_exports.string().max(512).refine((value) => (value === "" || value.startsWith("/")) && !/~(?![01])/u.test(value), "Use a valid JSON pointer.");
+var operationRequest = external_exports.strictObject({ operation: ref3, document_id: ref3, args: external_exports.record(external_exports.string(), external_exports.unknown()), expected_state: ref3.optional() });
+var handoffAssertionSchema = external_exports.union([
+  external_exports.strictObject({ kind: external_exports.literal("equals"), pointer, expected: external_exports.union([external_exports.string().max(2e3), external_exports.boolean(), external_exports.null()]) }),
+  external_exports.strictObject({ kind: external_exports.literal("numeric_range"), pointer, minimum: external_exports.number().finite().optional(), maximum: external_exports.number().finite().optional(), unit: external_exports.strictObject({ pointer, expected: external_exports.string().min(1).max(64) }) }).refine((value) => value.minimum !== void 0 || value.maximum !== void 0, "A numeric bound is required.").refine((value) => value.minimum === void 0 || value.maximum === void 0 || value.minimum <= value.maximum, "Minimum must not exceed maximum.")
+]);
+var commonCheck = { id: label, requirement_ids: labels, artifact_ids: refs2, reviewer_id: label.optional() };
+var handoffInputSchema = external_exports.strictObject({
+  title: external_exports.string().min(1).max(300),
+  plan_ids: refs2,
+  document_ids: external_exports.array(ref3).max(20).default([]),
+  requirements: external_exports.array(external_exports.strictObject({ id: label, statement: text2, reference: external_exports.string().max(2048).optional() })).max(50).default([]),
+  assumptions: external_exports.array(external_exports.strictObject({ id: label, statement: text2, requirement_ids: labels })).max(50).default([]),
+  reviewers: external_exports.array(external_exports.strictObject({ id: label, label: external_exports.string().min(1).max(300), role: external_exports.string().min(1).max(200), requirement_ids: labels })).max(30).default([]),
+  checks: external_exports.array(external_exports.union([
+    external_exports.strictObject({ ...commonCheck, kind: external_exports.literal("typed_read"), request: operationRequest, assertions: external_exports.array(handoffAssertionSchema).min(1).max(20) }),
+    external_exports.strictObject({ ...commonCheck, kind: external_exports.literal("manual"), procedure: text2 })
+  ])).max(50).default([]),
+  external_evidence: external_exports.array(external_exports.strictObject({ id: label, description: text2, reference: external_exports.string().min(1).max(2048), reported_sha256: digest.optional(), requirement_ids: labels })).max(50).default([])
+});
+var record2 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+var READ_CHECKS = /* @__PURE__ */ new Set(["document.inspect", "parameters.list", "geometry.measure", "geometry.check", "cam.inspect"]);
+function unique(values, description) {
+  if (new Set(values).size !== values.length) throw new FusionError("INVALID_HANDOFF", `${description} must be unique.`);
+}
+function parseInput(input2) {
+  assertJson(input2, 1048576);
+  const parsed = handoffInputSchema.safeParse(input2);
+  if (!parsed.success) throw new FusionError("INVALID_HANDOFF", "Engineering handoff input does not match its bounded schema.");
+  const value = parsed.data;
+  for (const [description, entries2] of [["plan references", value.plan_ids], ["document references", value.document_ids], ["requirements", value.requirements.map((x) => x.id)], ["checks", value.checks.map((x) => x.id)], ["reviewers", value.reviewers.map((x) => x.id)], ["assumptions", value.assumptions.map((x) => x.id)], ["external evidence", value.external_evidence.map((x) => x.id)]]) unique([...entries2], description);
+  const requirements = new Set(value.requirements.map((x) => x.id)), reviewers = new Set(value.reviewers.map((x) => x.id));
+  for (const item of [...value.assumptions, ...value.reviewers, ...value.checks, ...value.external_evidence]) {
+    unique(item.requirement_ids, "Linked requirements");
+    if (item.requirement_ids.some((id2) => !requirements.has(id2))) throw new FusionError("INVALID_HANDOFF", "An evidence entry refers to an undeclared requirement.");
+  }
+  for (const check2 of value.checks) {
+    unique(check2.artifact_ids, "Check artifact references");
+    if (check2.reviewer_id && !reviewers.has(check2.reviewer_id)) throw new FusionError("INVALID_HANDOFF", "A check refers to an undeclared reviewer.");
+    if (check2.kind === "typed_read") {
+      const operation2 = parseOperation(check2.request);
+      if (getOperation(operation2.operation).effect !== "read" || !READ_CHECKS.has(operation2.operation)) throw new FusionError("UNSUPPORTED_HANDOFF_CHECK", "Handoff checks are limited to documented inspection, parameter, measurement, model-health and CAM-inspection reads. Use a manual procedure for unavailable solvers or other workflows.");
+      for (const assertion of check2.assertions) for (const value2 of [assertion.pointer, ...assertion.kind === "numeric_range" ? [assertion.unit.pointer] : []]) {
+        if (value2.split("/").length > 33 || value2.split("/").some((part) => ["__proto__", "constructor", "prototype"].includes(part.replaceAll("~1", "/").replaceAll("~0", "~")))) throw new FusionError("INVALID_HANDOFF", "Assertion pointers must remain within bounded own JSON properties.");
+        if (!visibleAssertionPointer(value2)) throw new FusionError("INVALID_HANDOFF", "Assertion value and unit pointers cannot traverse credential-redacted properties or contain credential-bearing text.");
+      }
+    }
+  }
+  return value;
+}
+function atPointer(value, pointer2) {
+  let current = value;
+  for (const raw of pointer2 === "" ? [] : pointer2.slice(1).split("/")) {
+    const key = raw.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!current || typeof current !== "object" || !Object.hasOwn(current, key) || ["__proto__", "constructor", "prototype"].includes(key)) return { found: false };
+    current = current[key];
+  }
+  return { found: true, value: current };
+}
+function visibleAssertionPointer(pointer2) {
+  let probe = true;
+  for (const key of (pointer2 === "" ? [] : pointer2.slice(1).split("/")).reverse()) probe = { [key.replaceAll("~1", "/").replaceAll("~0", "~")]: probe };
+  const selected = atPointer(redact(probe), pointer2);
+  return redact(pointer2) === pointer2 && selected.found && selected.value === true;
+}
+function scalar(value) {
+  return value === null || typeof value === "boolean" || typeof value === "number" && Number.isFinite(value) || typeof value === "string" && value.length <= 2e3 ? value : null;
+}
+function assessAssertion(payload, cleanedPayload, criterion) {
+  const rawActual = atPointer(payload, criterion.pointer), actual = atPointer(cleanedPayload, criterion.pointer);
+  const rawUnit = criterion.kind === "numeric_range" ? atPointer(payload, criterion.unit.pointer) : { found: false };
+  const unit2 = criterion.kind === "numeric_range" ? atPointer(cleanedPayload, criterion.unit.pointer) : { found: false };
+  const cleanedCriterion = redact(criterion);
+  const result = { criterion: cleanedCriterion, result: "unresolved", actual: actual.found ? scalar(actual.value) : null, actual_unit: unit2.found ? scalar(unit2.value) : null };
+  const changed = (raw, cleaned) => raw.found !== cleaned.found || raw.found && scalar(raw.value) !== scalar(cleaned.value);
+  if (changed(rawActual, actual) || changed(rawUnit, unit2) || hash(criterion) !== hash(cleanedCriterion)) return { ...result, reason: "Credential redaction altered the observation, unit or criterion. No comparison of hidden values was retained." };
+  if (!actual.found) return { ...result, reason: "The requested observation is absent." };
+  if (typeof actual.value === "string" && actual.value.length > 2e3) return { ...result, reason: "The observed string exceeds the bounded scalar evidence limit." };
+  if (criterion.kind === "equals") {
+    if (actual.value !== null && !["string", "boolean"].includes(typeof actual.value)) return { ...result, reason: "The observed value has no admitted comparison type." };
+    return { ...result, result: actual.value === criterion.expected ? "met" : "not_met" };
+  }
+  if (!unit2.found || unit2.value !== criterion.unit.expected) return { ...result, reason: "The exact observed unit is absent or differs; no implicit unit conversion was made." };
+  if (typeof actual.value !== "number" || !Number.isFinite(actual.value)) return { ...result, reason: "The observed quantity is not finite numeric data." };
+  return { ...result, result: (criterion.minimum === void 0 || actual.value >= criterion.minimum) && (criterion.maximum === void 0 || actual.value <= criterion.maximum) ? "met" : "not_met" };
+}
+function sourceMetadata(payload) {
+  const data = record2(record2(payload)?.data) ?? {};
+  const selected = {};
+  for (const key of ["document_id", "session_id", "name", "creation_id", "cloud", "configuration", "design_type", "internal_units", "display_length_unit", "units", "is_saved", "is_modified", "is_up_to_date", "saved", "fixture", "provider", "live_fusion_verified", "freshness_semantics"]) if (data[key] !== void 0) selected[key] = data[key];
+  const cleaned = redact(selected);
+  assertJson(cleaned, 65536);
+  return cleaned;
+}
+function observationFreshness(payload) {
+  const data = record2(record2(payload)?.data) ?? {};
+  const result = { status: "complete", freshness_scope: null, freshness_gaps: [], freshness_unavailable: null, issues: [] };
+  if (Object.hasOwn(data, "freshness_scope")) {
+    try {
+      if (!record2(data.freshness_scope)) throw new Error("shape");
+      assertJson(data.freshness_scope, 16384);
+      result.freshness_scope = structuredClone(data.freshness_scope);
+    } catch {
+      result.issues.push("malformed_freshness_scope");
+    }
+  }
+  if (Object.hasOwn(data, "freshness_gaps")) {
+    const gaps = data.freshness_gaps;
+    if (!Array.isArray(gaps) || gaps.length > 100 || gaps.some((gap) => typeof gap !== "string" || !gap.length || gap.length > 512) || new Set(gaps).size !== gaps.length) result.issues.push("malformed_freshness_gaps");
+    else result.freshness_gaps = [...gaps];
+  }
+  if (Object.hasOwn(data, "freshness_unavailable")) {
+    if (typeof data.freshness_unavailable !== "string" || !data.freshness_unavailable.length || data.freshness_unavailable.length > 4e3) result.issues.push("malformed_freshness_unavailable");
+    else result.freshness_unavailable = data.freshness_unavailable;
+  }
+  if (result.freshness_gaps.length || result.issues.length || result.freshness_unavailable !== null) result.status = "incomplete";
+  return result;
+}
+function sameFreshness(left, right) {
+  return left?.status === "complete" && right?.status === "complete" && hash(left) === hash(right);
+}
+function payloadState(payload) {
+  const state = record2(payload)?.state;
+  return typeof state === "string" && state.length > 0 && state.length <= 128 ? state : null;
+}
+function planDocumentIds(plan) {
+  const ids = new Set(plan.operation.document_id ? [plan.operation.document_id] : []);
+  if (plan.status === "succeeded" && ["documents.create", "documents.import"].includes(plan.operation.operation)) {
+    const data = record2(record2(plan.result)?.data);
+    const created = plan.operation.operation === "documents.import" ? record2(data?.document)?.document_id : data?.document_id;
+    if (typeof created === "string" && created.length > 0 && created.length <= 128) ids.add(created);
+  }
+  return [...ids].sort();
+}
+function planSummary(plan, sources, context) {
+  const result = record2(plan.result), after = record2(result?.after);
+  const recorded = typeof after?.state === "string" ? after.state : typeof result?.state === "string" ? result.state : plan.status === "prepared" ? plan.expected_state ?? null : null;
+  const sourceIds = planDocumentIds(plan);
+  const current = sourceIds.length === 1 ? sources.find((source) => source.document_id === sourceIds[0]) : void 0;
+  const contractCurrent = plan.handler_hash === context.handlerHash && plan.execution_contract_hash === context.executionContractHash;
+  const fresh = !!recorded && current?.status === "observed" && current.collection_check.status === "matching" && recorded === current.state && contractCurrent;
+  const job = record2(result?.job), jobEvidence = {};
+  for (const key of ["id", "provider", "provider_id", "document_id", "status", "created_at", "updated_at", "request_hash", "execution_contract_hash", "binding_hash", "cancel_supported", "submission_error"]) if (job?.[key] !== void 0) jobEvidence[key] = job[key];
+  return { id: plan.id, hash: plan.hash, record_sha256: hash(plan), operation: plan.operation, status: plan.status, handler_sha256: plan.handler_hash, execution_contract_sha256: plan.execution_contract_hash ?? null, recorded_source_state: recorded, source_document_ids: sourceIds, artifact_id: plan.artifact?.id ?? null, current_source_matches: !!fresh, outcome: record2(result?.error)?.outcome ?? null, error: result?.error ?? null, effects: result?.effects ?? [], job: Object.keys(jobEvidence).length ? jobEvidence : null, completion: typeof result?.completion === "string" ? result.completion : null, limitations: plan.limitations };
+}
+function artifactBinding(artifact, plan, sources, context) {
+  const issues = [], provenance2 = record2(artifact.provenance), producer = record2(provenance2?.producer), source = record2(provenance2?.source);
+  const documentId = typeof source?.document_id === "string" ? source.document_id : null;
+  const state = typeof source?.state_at_preparation === "string" ? source.state_at_preparation : null;
+  const observed = sources.find((item) => item.document_id === documentId);
+  const operation2 = record2(plan?.operation);
+  if (artifact.status !== "succeeded") issues.push("artifact_not_complete");
+  if (artifact.manifest_version !== 2 || provenance2?.schema !== 1 || !producer || !source) issues.push("provenance_unavailable_or_legacy");
+  if (!plan || plan.status !== "succeeded" || artifact.producer_plan_hash !== plan.hash || producer?.plan_id !== plan.id || producer?.plan_hash !== plan.hash || producer?.operation !== operation2?.operation) issues.push("producer_plan_mismatch_or_incomplete");
+  if (producer?.profile_sha256 !== context.profileHash || producer?.handler_sha256 !== context.handlerHash || producer?.execution_contract_sha256 !== context.executionContractHash || plan?.handler_sha256 !== context.handlerHash || plan?.execution_contract_sha256 !== context.executionContractHash) issues.push("producer_implementation_changed");
+  if (!documentId || operation2?.document_id !== documentId || source?.observed_document_id !== documentId || !observed || observed.status !== "observed" || observed.collection_check.status !== "matching" || !state || state !== observed.state) issues.push("artifact_source_not_current");
+  if (!state || source?.state_at_completion !== state || source?.completion_state_matches_preparation !== true) issues.push("artifact_completion_source_unconfirmed");
+  return { status: issues.length ? "historical_or_incomplete" : "matching", issues, source_document_id: documentId, source_state: state };
+}
+function requirementCoverage(checks) {
+  return !checks.length ? "missing_checks" : checks.some((check2) => check2.status === "criteria_not_met") ? "criteria_not_met" : checks.some((check2) => check2.status !== "criteria_met") ? "incomplete" : "observed_criteria_met";
+}
+var timestamp = external_exports.string().datetime({ offset: true });
+var nullableRef = ref3.nullable();
+var nullableDigest = digest.nullable();
+var boundedObject = (bytes) => external_exports.record(external_exports.string().max(256), external_exports.unknown()).refine((value) => {
+  try {
+    assertJson(value, bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}, "Stored metadata exceeds its JSON bound.");
+var storedError = external_exports.strictObject({ code: external_exports.string().min(1).max(512), message: external_exports.string().max(4e3), outcome: external_exports.enum(["none", "partial", "unknown"]), details: external_exports.unknown().optional() });
+var freshnessSchema = external_exports.strictObject({ status: external_exports.enum(["complete", "incomplete"]), freshness_scope: boundedObject(16384).nullable(), freshness_gaps: external_exports.array(external_exports.string().min(1).max(512)).max(100), freshness_unavailable: external_exports.string().min(1).max(4e3).nullable(), issues: external_exports.array(external_exports.string().min(1).max(128)).max(10) });
+var sourceSchema = external_exports.strictObject({ document_id: ref3, state: nullableRef, observed_at: timestamp, observation_sha256: nullableDigest, metadata: boundedObject(65536), evidence: external_exports.enum(["synthetic_fixture", "provider_reported", "unavailable"]), engineering_qualified: external_exports.literal(false), status: external_exports.enum(["observed", "incomplete", "unavailable"]), freshness: freshnessSchema.nullable(), collection_check: external_exports.strictObject({ status: external_exports.enum(["matching", "unavailable_or_changed"]), observed_at: timestamp, state: nullableRef, freshness: freshnessSchema.nullable() }), error: storedError.optional() });
+var scalarSchema = external_exports.union([external_exports.string().max(2e3), external_exports.number().finite(), external_exports.boolean(), external_exports.null()]);
+var checkSchema = external_exports.strictObject({ id: label, kind: external_exports.enum(["typed_read", "manual"]), requirement_ids: external_exports.array(label).max(50), artifact_ids: external_exports.array(ref3).max(100), reviewer_id: label.nullable(), status: external_exports.enum(["criteria_met", "criteria_not_met", "incomplete", "not_run"]), source_document_id: nullableRef, source_state: nullableRef, observed_at: timestamp.nullable(), observation_sha256: nullableDigest, evidence: external_exports.enum(["synthetic_fixture", "provider_reported", "unavailable", "manual_review_required"]), engineering_qualified: external_exports.literal(false), freshness: freshnessSchema.nullable(), assertions: external_exports.array(external_exports.strictObject({ criterion: handoffAssertionSchema, result: external_exports.enum(["met", "not_met", "unresolved"]), actual: scalarSchema, actual_unit: scalarSchema, reason: external_exports.string().max(4e3).optional() })).max(20), procedure: text2.optional(), error: storedError.optional() });
+var planSchema = external_exports.strictObject({ id: ref3, hash: digest, record_sha256: digest, operation: operationRequest.extend({ document_id: ref3.optional() }), status: external_exports.enum(["prepared", "executing", "pending", "succeeded", "failed", "outcome_unknown"]), handler_sha256: digest, execution_contract_sha256: nullableDigest, recorded_source_state: nullableRef, source_document_ids: external_exports.array(ref3).max(20), artifact_id: nullableRef, current_source_matches: external_exports.boolean(), outcome: external_exports.enum(["none", "partial", "unknown"]).nullable(), error: storedError.nullable(), effects: external_exports.array(external_exports.string().max(4e3)).max(1e3), job: boundedObject(65536).nullable(), completion: external_exports.string().max(128).nullable(), limitations: external_exports.array(external_exports.string().max(4e3)).max(100) });
+var artifactBindingSchema = external_exports.strictObject({ status: external_exports.enum(["matching", "historical_or_incomplete"]), issues: external_exports.array(external_exports.string().max(128)).max(20), source_document_id: nullableRef, source_state: nullableRef });
+var artifactSchema = external_exports.strictObject({ id: ref3, status: external_exports.enum(["prepared", "generating", "pending", "succeeded", "failed", "unavailable"]), manifest_version: external_exports.union([external_exports.literal(1), external_exports.literal(2), external_exports.null()]), manifest_sha256: nullableDigest, producer_plan_id: ref3, producer_plan_hash: nullableDigest, completed_at: timestamp.nullable(), inspected_at: timestamp, receipt_sha256: nullableDigest, format: external_exports.string().min(1).max(64).nullable(), filename: external_exports.string().min(1).max(2048).nullable(), files: external_exports.array(boundedObject(65536)).max(500), provenance: boundedObject(131072).nullable(), validation: boundedObject(65536).nullable(), limitation: external_exports.string().max(4e3).nullable(), inspection: external_exports.enum(["existing_receipt_checked_at_declared_grade", "incomplete"]), binding: artifactBindingSchema, error: storedError.optional() });
+var manifestSchema = external_exports.strictObject({
+  schema_version: external_exports.literal(2),
+  id: external_exports.string().regex(/^handoff_[a-f0-9-]{36}$/u),
+  created_at: timestamp,
+  state: external_exports.literal("draft"),
+  title: external_exports.string().min(1).max(300),
+  profile_id: external_exports.string().min(1).max(160),
+  profile_hash: digest,
+  handler_sha256: digest,
+  execution_contract_sha256: digest,
+  integrity: digest,
+  input: handoffInputSchema,
+  sources: external_exports.array(sourceSchema).max(20),
+  plans: external_exports.array(planSchema).max(100),
+  artifacts: external_exports.array(artifactSchema).max(100),
+  checks: external_exports.array(checkSchema).max(50),
+  requirements: external_exports.array(external_exports.strictObject({ id: label, statement: text2, reference: external_exports.string().max(2048).optional(), origin: external_exports.literal("caller_supplied_requirement"), check_ids: external_exports.array(label).max(50), coverage: external_exports.enum(["missing_checks", "criteria_not_met", "incomplete", "observed_criteria_met"]), engineering_approval: external_exports.literal(false) })).max(50),
+  assumptions: external_exports.array(external_exports.strictObject({ id: label, statement: text2, requirement_ids: external_exports.array(label).max(50), origin: external_exports.literal("caller_supplied_assumption"), verified: external_exports.literal(false) })).max(50),
+  reviewer_assignments: external_exports.array(external_exports.strictObject({ id: label, label: external_exports.string().min(1).max(300), role: external_exports.string().min(1).max(200), requirement_ids: external_exports.array(label).max(50), origin: external_exports.literal("requested_assignment_metadata"), notified: external_exports.literal(false), review_performed: external_exports.literal(false), approval_granted: external_exports.literal(false) })).max(30),
+  external_evidence: external_exports.array(external_exports.strictObject({ id: label, description: text2, reference: external_exports.string().min(1).max(2048), reported_sha256: digest.optional(), requirement_ids: external_exports.array(label).max(50), origin: external_exports.literal("caller_supplied_reference"), bytes_read: external_exports.literal(false), hash_verified: external_exports.literal(false), engineering_qualified: external_exports.literal(false) })).max(50),
+  unresolved: external_exports.array(external_exports.strictObject({ code: ref3, reference: external_exports.string().min(1).max(160), message: text2 })).max(512),
+  engineering_approval: external_exports.literal(false),
+  regulatory_compliance_established: external_exports.literal(false),
+  external_release_performed: external_exports.literal(false),
+  portability: external_exports.strictObject({ format: external_exports.literal("standalone_json_manifest"), artifact_storage_paths_included: external_exports.literal(false), caller_supplied_references_may_be_paths: external_exports.literal(true), referenced_artifact_bytes_copied: external_exports.literal(false), provider_payloads: text2 }),
+  limitations: external_exports.array(text2).max(50)
+});
+function verifyHandoffManifest(value) {
+  assertJson(value, 4194304);
+  const raw = record2(value);
+  if (!raw || raw.schema_version !== 2) throw new FusionError("LEGACY_HANDOFF", "This record has no supported source-bound evidence schema. It is preserved without migration or a new validation grade.");
+  const { integrity, ...content } = raw;
+  if (typeof integrity !== "string" || !/^[a-f0-9]{64}$/u.test(integrity) || hash(content) !== integrity) throw new FusionError("HANDOFF_CHANGED", "The stored evidence package no longer matches its content hash.");
+  const parsed = manifestSchema.safeParse(value);
+  const invalid2 = (message) => {
+    throw new FusionError("INVALID_HANDOFF_MANIFEST", message);
+  };
+  if (!parsed.success) invalid2("The stored engineering draft does not match its bounded strict schema.");
+  const manifest2 = parsed.data;
+  if (hash(manifest2) !== hash(value)) invalid2("Stored defaults or fields cannot be silently normalized or upgraded.");
+  const input2 = parseInput(manifest2.input);
+  if (hash(input2) !== hash(manifest2.input) || input2.title !== manifest2.title) invalid2("The stored normalized request differs from the recorded draft.");
+  const sameSet = (left, right) => left.length === right.length && new Set(left).size === left.length && new Set(right).size === right.length && hash([...left].sort()) === hash([...right].sort());
+  for (const entries2 of [manifest2.sources.map((item) => item.document_id), manifest2.plans.map((item) => String(item.id)), manifest2.artifacts.map((item) => String(item.id)), manifest2.checks.map((item) => item.id)]) if (new Set(entries2).size !== entries2.length) invalid2("Stored source, plan, artifact and check identities must be unique.");
+  if (!sameSet(input2.plan_ids, manifest2.plans.map((plan) => String(plan.id))) || !sameSet(input2.checks.map((check2) => check2.id), manifest2.checks.map((check2) => check2.id))) invalid2("Stored plan/check selections differ from the original request.");
+  const sourceIds = new Set(input2.document_ids);
+  for (const plan of manifest2.plans) {
+    parseOperation(plan.operation);
+    const ids = plan.source_document_ids;
+    if (new Set(ids).size !== ids.length || record2(plan.operation)?.document_id && !ids.includes(String(record2(plan.operation).document_id))) invalid2("A stored producing plan has inconsistent source identities.");
+    ids.forEach((id2) => sourceIds.add(id2));
+    const source = ids.length === 1 ? manifest2.sources.find((item) => item.document_id === ids[0]) : void 0;
+    const expected = !!plan.recorded_source_state && source?.status === "observed" && source.collection_check.status === "matching" && source.state === plan.recorded_source_state && plan.handler_sha256 === manifest2.handler_sha256 && plan.execution_contract_sha256 === manifest2.execution_contract_sha256;
+    if (plan.current_source_matches !== !!expected) invalid2("A plan freshness claim contradicts its recorded source or implementation.");
+  }
+  for (const check2 of input2.checks) if (check2.kind === "typed_read") sourceIds.add(check2.request.document_id);
+  if (!sameSet([...sourceIds], manifest2.sources.map((source) => source.document_id))) invalid2("Stored source coverage does not match the explicit document, plan and check selections.");
+  const completeFreshness = (freshness) => {
+    if (!freshness) return false;
+    const complete = freshness.freshness_gaps.length === 0 && freshness.issues.length === 0 && freshness.freshness_unavailable === null;
+    if (new Set(freshness.freshness_gaps).size !== freshness.freshness_gaps.length || freshness.status === "complete" !== complete) invalid2("Stored fingerprint coverage has contradictory status or duplicate gaps.");
+    return complete;
+  };
+  for (const source of manifest2.sources) {
+    const complete = completeFreshness(source.freshness);
+    completeFreshness(source.collection_check.freshness);
+    if (source.status === "observed" && (!source.state || !source.observation_sha256 || !complete) || source.status === "unavailable" && source.state !== null) invalid2("A stored source claim lacks a usable complete fingerprint.");
+    if (source.collection_check.status === "matching" && (source.status !== "observed" || source.collection_check.state !== source.state || !sameFreshness(source.freshness, source.collection_check.freshness))) invalid2("A matching collection claim contradicts its source coverage.");
+  }
+  const expectedArtifacts = manifest2.plans.flatMap((plan) => typeof plan.artifact_id === "string" ? [plan.artifact_id] : []);
+  if (!sameSet(expectedArtifacts, manifest2.artifacts.map((artifact) => String(artifact.id)))) invalid2("Artifact selection does not match the exact producing plan set.");
+  const context = { profileHash: manifest2.profile_hash, handlerHash: manifest2.handler_sha256, executionContractHash: manifest2.execution_contract_sha256 };
+  for (const artifact of manifest2.artifacts) {
+    const producer = manifest2.plans.find((plan) => plan.artifact_id === artifact.id);
+    if (!producer || artifact.producer_plan_id !== producer.id || hash(artifact.binding) !== hash(artifactBinding(artifact, producer, manifest2.sources, context))) invalid2("A stored artifact provenance/freshness claim contradicts its producer or source.");
+    const provenance2 = record2(artifact.provenance);
+    if (provenance2 && record2(provenance2.producer)?.independently_verified !== false) invalid2("Artifact producer claims must remain explicitly not independently qualified.");
+  }
+  for (const check2 of manifest2.checks) {
+    const requested = input2.checks.find((item) => item.id === check2.id);
+    if (check2.kind !== requested.kind || hash(check2.requirement_ids) !== hash(requested.requirement_ids) || hash(check2.artifact_ids) !== hash(requested.artifact_ids) || check2.reviewer_id !== (requested.reviewer_id ?? null) || check2.artifact_ids.some((id2) => !expectedArtifacts.includes(id2))) invalid2("A stored check has changed requirements, reviewers or artifact references.");
+    if (requested.kind === "manual") {
+      if (check2.status !== "not_run" || check2.procedure !== requested.procedure || check2.source_document_id !== null || check2.source_state !== null || check2.observed_at !== null || check2.observation_sha256 !== null || check2.freshness !== null || check2.assertions.length || check2.evidence !== "manual_review_required") invalid2("A manual procedure cannot acquire an execution or comparison result.");
+      continue;
+    }
+    completeFreshness(check2.freshness);
+    if (check2.source_document_id !== requested.request.document_id || check2.procedure !== void 0 || check2.status === "not_run" || check2.assertions.length && (check2.assertions.length !== requested.assertions.length || check2.assertions.some((assertion, index) => hash(assertion.criterion) !== hash(requested.assertions[index])))) invalid2("A typed check differs from its selected source or exact comparison criteria.");
+    if (["criteria_met", "criteria_not_met"].includes(check2.status)) {
+      const source = manifest2.sources.find((item) => item.document_id === check2.source_document_id);
+      const validArtifacts = check2.artifact_ids.every((id2) => {
+        const binding2 = record2(manifest2.artifacts.find((artifact) => artifact.id === id2)?.binding);
+        return binding2?.status === "matching" && binding2.source_document_id === check2.source_document_id && binding2.source_state === check2.source_state;
+      });
+      if (!source || source.status !== "observed" || source.collection_check.status !== "matching" || source.state !== check2.source_state || !sameFreshness(source.freshness, check2.freshness) || !validArtifacts || !check2.observation_sha256 || !check2.observed_at || check2.assertions.length !== requested.assertions.length || check2.assertions.some((item) => item.result === "unresolved") || check2.status === "criteria_met" !== check2.assertions.every((item) => item.result === "met")) invalid2("A completed criterion lacks matching source/artifact evidence or complete assertions.");
+    }
+    for (const assertion of check2.assertions) if (assertion.result !== "unresolved") {
+      const criterion = assertion.criterion;
+      let met;
+      if (criterion.kind === "equals") {
+        if (assertion.actual !== null && typeof assertion.actual !== "string" && typeof assertion.actual !== "boolean") invalid2("A stored comparison has an inadmissible scalar type.");
+        met = assertion.actual === criterion.expected;
+      } else {
+        if (typeof assertion.actual !== "number" || assertion.actual_unit !== criterion.unit.expected) invalid2("A stored numeric comparison has missing or different units.");
+        const value2 = assertion.actual;
+        met = (criterion.minimum === void 0 || value2 >= criterion.minimum) && (criterion.maximum === void 0 || value2 <= criterion.maximum);
+      }
+      if (assertion.result === "met" !== met) invalid2("Stored scalar evidence contradicts its comparison result.");
+    }
+  }
+  const expectedRequirements = input2.requirements.map((requirement) => {
+    const checks = manifest2.checks.filter((check2) => check2.requirement_ids.includes(requirement.id));
+    return { ...requirement, origin: "caller_supplied_requirement", check_ids: checks.map((check2) => check2.id), coverage: requirementCoverage(checks), engineering_approval: false };
+  });
+  if (hash(manifest2.requirements) !== hash(expectedRequirements) || hash(manifest2.assumptions) !== hash(input2.assumptions.map((item) => ({ ...item, origin: "caller_supplied_assumption", verified: false }))) || hash(manifest2.reviewer_assignments) !== hash(input2.reviewers.map((item) => ({ ...item, origin: "requested_assignment_metadata", notified: false, review_performed: false, approval_granted: false }))) || hash(manifest2.external_evidence) !== hash(input2.external_evidence.map((item) => ({ ...item, origin: "caller_supplied_reference", bytes_read: false, hash_verified: false, engineering_qualified: false })))) invalid2("Stored requirements, assumptions or external/reviewer claims differ from their unverified input metadata.");
+  const needs = [["ENGINEERING_REVIEW_REQUIRED", "package"]];
+  if (!manifest2.sources.length) needs.push(["NO_SOURCE_BASELINE", "package"]);
+  if (!input2.requirements.length) needs.push(["NO_REQUIREMENTS", "package"]);
+  manifest2.sources.filter((source) => source.collection_check.status !== "matching").forEach((source) => needs.push(["SOURCE_UNAVAILABLE", source.document_id]));
+  manifest2.checks.filter((check2) => check2.status !== "criteria_met").forEach((check2) => needs.push([check2.status === "criteria_not_met" ? "CRITERION_NOT_MET" : "CHECK_INCOMPLETE", check2.id]));
+  manifest2.artifacts.filter((artifact) => record2(artifact.binding)?.status !== "matching").forEach((artifact) => needs.push(["ARTIFACT_INCOMPLETE", String(artifact.id)]));
+  for (const plan of manifest2.plans) {
+    if (!plan.current_source_matches) needs.push(["PLAN_EVIDENCE_NOT_CURRENT", String(plan.id)]);
+    if (plan.status !== "succeeded") needs.push(["PLAN_NOT_SUCCEEDED", String(plan.id)]);
+  }
+  manifest2.requirements.filter((requirement) => requirement.coverage === "missing_checks").forEach((requirement) => needs.push(["REQUIREMENT_UNCOVERED", String(requirement.id)]));
+  if (needs.some(([code, reference3]) => !manifest2.unresolved.some((item) => item.code === code && item.reference === reference3))) invalid2("Unresolved source, artifact, plan or review gates were removed.");
+  return structuredClone(manifest2);
+}
+function manifestContent(manifest2) {
+  const { integrity: _integrity, ...content } = manifest2;
+  return content;
+}
+function handoffError(error51) {
+  const result = errorResult(error51);
+  return { ...result, code: String(result.code).slice(0, 512) || "HANDOFF_EVIDENCE_UNAVAILABLE", message: String(result.message).slice(0, 4e3), outcome: ["none", "partial", "unknown"].includes(result.outcome) ? result.outcome : "unknown" };
+}
+var HandoffManager = class {
+  constructor(store, context) {
+    this.store = store;
+    this.context = context;
+  }
+  store;
+  context;
+  async source(documentId, expectedState) {
+    const observed = now();
+    let state = null, metadata = {}, freshness = null, observationHash = null;
+    try {
+      const payload = await this.context.read({ operation: "document.inspect", document_id: documentId, args: { limit: 1 }, ...expectedState ? { expected_state: expectedState } : {} });
+      assertJson(payload, 4194304);
+      if (record2(record2(payload)?.data)?.document_id !== documentId) throw new FusionError("HANDOFF_SOURCE_IDENTITY", "The observed document identity differs from the selected source.");
+      state = payloadState(payload);
+      metadata = sourceMetadata(payload);
+      freshness = observationFreshness(payload);
+      observationHash = hash(payload);
+      if (!state) throw new FusionError("FRESHNESS_UNAVAILABLE", "Source inspection did not return an observed fingerprint.");
+      if (expectedState && state !== expectedState) throw new FusionError("STALE_STATE", "The provider response no longer matches the requested source fingerprint.");
+      if (freshness.status !== "complete") throw new FusionError("FRESHNESS_UNAVAILABLE", "The source fingerprint has known or malformed coverage gaps. It cannot bind current engineering evidence.");
+      return { document_id: documentId, state, observed_at: observed, observation_sha256: observationHash, metadata, freshness, evidence: record2(payload)?.evidence === "synthetic_fixture" ? "synthetic_fixture" : "provider_reported", engineering_qualified: false, status: "observed", collection_check: { status: "matching", observed_at: observed, state, freshness } };
+    } catch (error51) {
+      return { document_id: documentId, state, observed_at: observed, observation_sha256: observationHash, metadata, freshness, evidence: "unavailable", engineering_qualified: false, status: state ? "incomplete" : "unavailable", collection_check: { status: "unavailable_or_changed", observed_at: observed, state, freshness }, error: handoffError(error51) };
+    }
+  }
+  async prepare(input2) {
+    const request = parseInput(input2);
+    await this.context.verifyAccess();
+    const plans = [];
+    const documents = new Set(request.document_ids);
+    for (const id2 of request.plan_ids) {
+      const plan = await this.context.inspectPlan(id2);
+      if (plan.profile_hash !== this.context.profileHash) throw new FusionError("HANDOFF_SCOPE_CHANGED", "A plan belongs to a different trusted profile configuration. Use its authorized profile to review it.");
+      assertJson(plan, 4194304);
+      plans.push(plan);
+      for (const documentId of planDocumentIds(plan)) documents.add(documentId);
+    }
+    for (const check2 of request.checks) if (check2.kind === "typed_read") documents.add(check2.request.document_id);
+    if (documents.size > 20) throw new FusionError("HANDOFF_LIMIT", "An evidence package supports at most twenty explicit source documents.");
+    for (const documentId of documents) await this.context.authorizeDocument(documentId);
+    const artifactIds = new Set(plans.flatMap((plan) => plan.artifact ? [plan.artifact.id] : []));
+    for (const check2 of request.checks) if (check2.artifact_ids.some((id2) => !artifactIds.has(id2))) throw new FusionError("HANDOFF_ARTIFACT_SCOPE", "Check artifacts must belong to an explicitly selected producing plan.");
+    const sources = await Promise.all([...documents].sort().map((id2) => this.source(id2)));
+    const byDocument = new Map(sources.map((source) => [source.document_id, source]));
+    const initialSummaries = plans.map((plan) => planSummary(plan, sources, this.context));
+    const artifacts = [];
+    for (const id2 of artifactIds) {
+      const producer = initialSummaries.find((plan) => plan.artifact_id === id2);
+      try {
+        const artifact = await this.context.inspectArtifact(id2);
+        assertJson(artifact, 4194304);
+        if (artifact.id !== id2 || artifact.plan_id !== producer.id) throw new FusionError("HANDOFF_ARTIFACT_IDENTITY", "Artifact inspection did not return the exact selected producing plan and artifact identity.");
+        const entry = { id: id2, status: artifact.status, manifest_version: record2(artifact)?.manifest_version ?? 1, manifest_sha256: artifact.manifest_sha256 ?? null, producer_plan_id: producer.id, producer_plan_hash: artifact.producer_plan_hash ?? null, completed_at: artifact.completed_at ?? null, inspected_at: now(), receipt_sha256: hash(artifact), format: artifact.format, filename: artifact.filename, files: artifact.files ?? [], provenance: record2(artifact)?.provenance ?? null, validation: record2(artifact)?.validation ?? null, limitation: artifact.limitation ?? null, inspection: artifact.status === "succeeded" ? "existing_receipt_checked_at_declared_grade" : "incomplete" };
+        entry.binding = artifactBinding(entry, producer, sources, this.context);
+        artifacts.push(entry);
+      } catch (error51) {
+        const entry = { id: id2, status: "unavailable", manifest_version: null, manifest_sha256: null, producer_plan_id: producer.id, producer_plan_hash: null, completed_at: null, inspected_at: now(), receipt_sha256: null, format: null, filename: null, files: [], provenance: null, validation: null, limitation: null, inspection: "incomplete", error: handoffError(error51) };
+        entry.binding = artifactBinding(entry, producer, sources, this.context);
+        artifacts.push(entry);
+      }
+    }
+    const byArtifact = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
+    const checks = [];
+    for (const check2 of request.checks) {
+      const entry = { id: check2.id, kind: check2.kind, requirement_ids: check2.requirement_ids, artifact_ids: check2.artifact_ids, reviewer_id: check2.reviewer_id ?? null, status: check2.kind === "manual" ? "not_run" : "incomplete", source_document_id: check2.kind === "typed_read" ? check2.request.document_id : null, source_state: null, observed_at: null, observation_sha256: null, evidence: check2.kind === "manual" ? "manual_review_required" : "unavailable", engineering_qualified: false, freshness: null, assertions: [] };
+      if (check2.kind === "manual") entry.procedure = check2.procedure;
+      else {
+        const source = byDocument.get(check2.request.document_id);
+        try {
+          if (!source.state || source.status !== "observed") throw new FusionError("FRESHNESS_UNAVAILABLE", "The check has no current observed source baseline.");
+          if (check2.request.expected_state && check2.request.expected_state !== source.state) throw new FusionError("STALE_STATE", "The check requested a different source state. No check was run.");
+          if (check2.artifact_ids.some((id2) => byArtifact.get(id2)?.status !== "succeeded")) throw new FusionError("HANDOFF_ARTIFACT_INCOMPLETE", "An explicitly linked artifact is unavailable or incomplete.");
+          if (check2.artifact_ids.some((id2) => {
+            const binding2 = record2(byArtifact.get(id2)?.binding);
+            return binding2?.status !== "matching" || binding2.source_document_id !== check2.request.document_id || binding2.source_state !== source.state;
+          })) throw new FusionError("HANDOFF_ARTIFACT_NOT_CURRENT", "A linked artifact does not match this check's exact current producing plan, document, source and completion evidence. It remains historical evidence.");
+          const response = await this.context.read({ ...check2.request, expected_state: source.state });
+          assertJson(response, 4194304);
+          entry.freshness = observationFreshness(response);
+          if (!sameFreshness(source.freshness, entry.freshness)) throw new FusionError("FRESHNESS_UNAVAILABLE", "The check response has incomplete or changed fingerprint coverage.");
+          if (payloadState(response) !== source.state) throw new FusionError("STALE_STATE", "The check did not preserve its observed source fingerprint.");
+          const responseDocument = record2(record2(response)?.data)?.document_id;
+          if (responseDocument !== void 0 && responseDocument !== check2.request.document_id) throw new FusionError("HANDOFF_SOURCE_IDENTITY", "The check response identifies another document.");
+          entry.source_state = source.state;
+          entry.observed_at = now();
+          entry.observation_sha256 = hash(response);
+          entry.evidence = record2(response)?.evidence === "synthetic_fixture" ? "synthetic_fixture" : "provider_reported";
+          const cleanedResponse = redact(response);
+          entry.assertions = check2.assertions.map((assertion) => assessAssertion(response, cleanedResponse, assertion));
+          entry.status = entry.assertions.some((value) => value.result === "unresolved") ? "incomplete" : entry.assertions.some((value) => value.result === "not_met") ? "criteria_not_met" : "criteria_met";
+        } catch (error51) {
+          entry.error = handoffError(error51);
+        }
+      }
+      checks.push(entry);
+    }
+    const finalSources = await Promise.all(sources.map((source) => source.status === "observed" && source.state ? this.source(source.document_id, source.state) : Promise.resolve(source)));
+    for (let index = 0; index < sources.length; index++) {
+      const final = finalSources[index];
+      const matching = final.status === "observed" && sameFreshness(sources[index].freshness, final.freshness);
+      sources[index].collection_check = { status: matching ? "matching" : "unavailable_or_changed", observed_at: final.observed_at, state: final.state, freshness: final.freshness };
+    }
+    const unstable = new Set(sources.filter((source) => source.collection_check.status !== "matching").map((source) => source.document_id));
+    for (const check2 of checks) if (check2.source_document_id && unstable.has(check2.source_document_id)) {
+      check2.status = "incomplete";
+      check2.error = { code: "HANDOFF_SOURCE_CHANGED", message: "Source freshness was lost while collecting the package. Recorded comparisons are not current evidence.", outcome: "none" };
+    }
+    const summaries = plans.map((plan) => planSummary(plan, sources, this.context));
+    for (const artifact of artifacts) artifact.binding = artifactBinding(artifact, summaries.find((plan) => plan.artifact_id === artifact.id), sources, this.context);
+    for (const check2 of checks) if (check2.kind === "typed_read" && check2.artifact_ids.some((id2) => record2(byArtifact.get(id2)?.binding)?.status !== "matching")) {
+      check2.status = "incomplete";
+      check2.error ??= { code: "HANDOFF_ARTIFACT_NOT_CURRENT", message: "A linked artifact lost its current source/producer binding during collection.", outcome: "none" };
+    }
+    const unresolved = [];
+    if (!documents.size) unresolved.push({ code: "NO_SOURCE_BASELINE", reference: "package", message: "No source document was resolved." });
+    if (!request.requirements.length) unresolved.push({ code: "NO_REQUIREMENTS", reference: "package", message: "Requirements and acceptance criteria have not been supplied." });
+    for (const source of sources) if (source.collection_check.status !== "matching") unresolved.push({ code: "SOURCE_UNAVAILABLE", reference: source.document_id, message: "Source state or fingerprint coverage is incomplete, unavailable or changed during collection." });
+    for (const check2 of checks) if (check2.status !== "criteria_met") unresolved.push({ code: check2.status === "criteria_not_met" ? "CRITERION_NOT_MET" : "CHECK_INCOMPLETE", reference: check2.id, message: check2.kind === "manual" ? "The assigned manual procedure has not been run by this plugin." : "This check does not establish all requested criteria against a current source." });
+    for (const artifact of artifacts) if (record2(artifact.binding)?.status !== "matching") unresolved.push({ code: "ARTIFACT_INCOMPLETE", reference: String(artifact.id), message: "An artifact is pending, historical, invalid, unavailable or has no matching current producer/source evidence." });
+    for (const plan of summaries) {
+      if (!plan.current_source_matches) unresolved.push({ code: "PLAN_EVIDENCE_NOT_CURRENT", reference: String(plan.id), message: "The historical receipt has no matching current source and implementation binding; it remains historical evidence only." });
+      if (plan.status !== "succeeded") unresolved.push({ code: "PLAN_NOT_SUCCEEDED", reference: String(plan.id), message: "Prepared, pending, failed or uncertain execution remains visible and requires reconciliation." });
+    }
+    const requirements = request.requirements.map((requirement) => {
+      const linked = checks.filter((check2) => check2.requirement_ids.includes(requirement.id));
+      const coverage = requirementCoverage(linked);
+      if (!linked.length) unresolved.push({ code: "REQUIREMENT_UNCOVERED", reference: requirement.id, message: "No automated or manual check is linked to this requirement." });
+      return { ...requirement, origin: "caller_supplied_requirement", check_ids: linked.map((check2) => check2.id), coverage, engineering_approval: false };
+    });
+    unresolved.push({ code: "ENGINEERING_REVIEW_REQUIRED", reference: "package", message: "Only the responsible reviewers can assess engineering sufficiency and any external release. No approval, sending or release transition occurred." });
+    const manifest2 = {
+      schema_version: 2,
+      id: newId("handoff"),
+      created_at: now(),
+      state: "draft",
+      title: request.title,
+      profile_id: this.context.profileId,
+      profile_hash: this.context.profileHash,
+      handler_sha256: this.context.handlerHash,
+      execution_contract_sha256: this.context.executionContractHash,
+      integrity: "",
+      input: request,
+      sources,
+      plans: summaries,
+      artifacts,
+      checks,
+      requirements,
+      assumptions: request.assumptions.map((item) => ({ ...item, origin: "caller_supplied_assumption", verified: false })),
+      reviewer_assignments: request.reviewers.map((item) => ({ ...item, origin: "requested_assignment_metadata", notified: false, review_performed: false, approval_granted: false })),
+      external_evidence: request.external_evidence.map((item) => ({ ...item, origin: "caller_supplied_reference", bytes_read: false, hash_verified: false, engineering_qualified: false })),
+      unresolved,
+      engineering_approval: false,
+      regulatory_compliance_established: false,
+      external_release_performed: false,
+      portability: { format: "standalone_json_manifest", artifact_storage_paths_included: false, caller_supplied_references_may_be_paths: true, referenced_artifact_bytes_copied: false, provider_payloads: "Only bounded source metadata, assertion scalars and payload hashes are retained. Full provider payloads are not embedded." },
+      limitations: ["A matching observed source fingerprint is not an Autodesk document lock.", "Criteria are caller-supplied comparisons, not engineering, regulatory or machine-release approval.", "Synthetic and provider-reported observations remain distinguished; no new live qualification is issued.", "External evidence and reviewer assignments are metadata only; references are not fetched and reviewers are not notified.", "Transfer referenced artifacts only through an independently authorized destination workflow."]
+    };
+    const cleaned = redact(manifest2);
+    assertJson(cleaned, 4194304);
+    cleaned.integrity = hash(manifestContent(cleaned));
+    verifyHandoffManifest(cleaned);
+    await this.context.verifyAccess();
+    await this.store.put("handoff", cleaned.id, cleaned);
+    return cleaned;
+  }
+  async inspect(id2) {
+    await this.context.verifyAccess();
+    const stored = await this.store.get("handoff", id2);
+    if (!stored || record2(stored)?.id !== id2) throw new FusionError("NOT_FOUND", "The engineering handoff is not in this profile ledger.");
+    const manifest2 = verifyHandoffManifest(stored);
+    if (manifest2.profile_hash !== this.context.profileHash || manifest2.profile_id !== this.context.profileId) throw new FusionError("HANDOFF_SCOPE_CHANGED", "This package belongs to a different trusted profile configuration.");
+    for (const source of manifest2.sources) await this.context.authorizeDocument(source.document_id);
+    const currentPlans = /* @__PURE__ */ new Map();
+    const planChecks = [];
+    for (const previous of manifest2.plans) {
+      try {
+        const current = await this.context.inspectPlan(String(previous.id));
+        assertJson(current, 4194304);
+        if (current.id !== previous.id || current.profile_hash !== this.context.profileHash) throw new FusionError("HANDOFF_SCOPE_CHANGED", "The selected producer record belongs to another identity or trusted profile.");
+        for (const documentId of planDocumentIds(current)) await this.context.authorizeDocument(documentId);
+        const changed = current.hash !== previous.hash || hash(current) !== previous.record_sha256;
+        currentPlans.set(current.id, current);
+        planChecks.push({ id: previous.id, status: changed ? "changed" : "matching", recorded_status: previous.status, current_status: current.status, current_record_sha256: hash(current), current_outcome: record2(record2(current.result)?.error)?.outcome ?? null, requires_reconciliation: changed || current.status !== "succeeded" });
+      } catch (error51) {
+        planChecks.push({ id: previous.id, status: "unavailable", recorded_status: previous.status, current_status: null, current_record_sha256: null, current_outcome: null, requires_reconciliation: true, error: handoffError(error51) });
+      }
+    }
+    const currentSources = await Promise.all(manifest2.sources.map((source) => this.source(source.document_id)));
+    const currentArtifacts = /* @__PURE__ */ new Map();
+    const artifactChecks = [];
+    for (const previous of manifest2.artifacts) {
+      try {
+        const current = await this.context.inspectArtifact(String(previous.id));
+        assertJson(current, 4194304);
+        if (current.id !== previous.id || current.plan_id !== previous.producer_plan_id) throw new FusionError("HANDOFF_ARTIFACT_IDENTITY", "The inspected artifact has a different producer or artifact identity.");
+        currentArtifacts.set(current.id, current);
+      } catch (error51) {
+        artifactChecks.push({ id: previous.id, status: "unavailable", error: handoffError(error51) });
+      }
+    }
+    const finalSources = await Promise.all(currentSources.map((source) => source.status === "observed" && source.state ? this.source(source.document_id, source.state) : Promise.resolve(source)));
+    for (const [index, source] of currentSources.entries()) {
+      const final = finalSources[index];
+      source.collection_check = { status: final.status === "observed" && sameFreshness(source.freshness, final.freshness) ? "matching" : "unavailable_or_changed", observed_at: final.observed_at, state: final.state, freshness: final.freshness };
+    }
+    const sourceChecks = manifest2.sources.map((previous, index) => {
+      const current = currentSources[index];
+      const available = current.status === "observed" && current.collection_check.status === "matching" && previous.status === "observed" && previous.collection_check.status === "matching";
+      return { document_id: previous.document_id, recorded_state: previous.state, current_state: current.state, observed_at: current.observed_at, freshness: current.freshness, collection_check: current.collection_check, status: !available || !previous.state ? "unavailable" : previous.state === current.state && sameFreshness(previous.freshness, current.freshness) ? "matching" : "changed", ...current.error ? { error: current.error } : {} };
+    });
+    for (const previous of manifest2.artifacts) {
+      const current = currentArtifacts.get(String(previous.id));
+      if (!current) continue;
+      const producer = currentPlans.get(String(previous.producer_plan_id));
+      const summary = producer ? planSummary(producer, currentSources, this.context) : void 0;
+      const binding2 = artifactBinding({ ...current, manifest_version: current.manifest_version ?? 1 }, summary, currentSources, this.context);
+      const producerMatches = planChecks.find((plan) => plan.id === previous.producer_plan_id)?.status === "matching";
+      const matching = current.status === "succeeded" && current.manifest_sha256 === previous.manifest_sha256 && hash(current) === previous.receipt_sha256 && producerMatches && binding2.status === "matching" && record2(previous.binding)?.status === "matching";
+      artifactChecks.push({ id: previous.id, status: matching ? "matching" : "changed_or_incomplete", current_manifest_sha256: current.manifest_sha256 ?? null, producer_record_matches: producerMatches, binding: binding2 });
+    }
+    const implementationMatches = manifest2.handler_sha256 === this.context.handlerHash && manifest2.execution_contract_sha256 === this.context.executionContractHash;
+    const affectedChecks = manifest2.checks.filter((check2) => check2.status === "incomplete" || check2.status === "not_run" || !implementationMatches || check2.source_document_id && sourceChecks.some((source) => source.document_id === check2.source_document_id && source.status !== "matching") || check2.artifact_ids.some((id3) => artifactChecks.some((artifact) => artifact.id === id3 && artifact.status !== "matching"))).map((check2) => check2.id);
+    await this.context.verifyAccess();
+    return { manifest: manifest2, inspection: { inspected_at: now(), implementation_matches: implementationMatches, sources: sourceChecks, plans: planChecks, artifacts: artifactChecks, stale_or_unverifiable_check_ids: affectedChecks, changed_or_unavailable_plan_ids: planChecks.filter((plan) => plan.status !== "matching").map((plan) => plan.id), unresolved_plan_ids: planChecks.filter((plan) => plan.requires_reconciliation).map((plan) => plan.id), engineering_approval: false, stored_manifest_modified: false, checks_rerun: false, meaning: "This is a fresh comparison to an immutable draft, not renewed engineering approval." } };
+  }
+};
+
+// src/retention.ts
+var sha2 = external_exports.string().regex(/^[a-f0-9]{64}$/u);
+var reference = external_exports.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:/@ -]*$/u);
+var canonicalTime = external_exports.string().max(24).refine((value) => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value, "Use canonical UTC ISO time with milliseconds.");
+var duration3 = external_exports.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+var retentionRecordReferenceSchema = external_exports.string().regex(/^entry:[a-f0-9]{64}$/u);
+var unique2 = (values) => new Set(values).size === values.length;
+var retentionPolicySchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  ownerRef: reference,
+  policyRef: reference,
+  periods: external_exports.strictObject({ expiredPreparationMs: duration3.optional(), terminalEvidenceMs: duration3.optional(), auditMs: duration3.optional() })
+});
+var hold = external_exports.discriminatedUnion("scope", [
+  external_exports.strictObject({ id: external_exports.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u), scope: external_exports.literal("profile"), reason: external_exports.string().min(1).max(512) }),
+  external_exports.strictObject({ id: external_exports.string().regex(/^[a-z][a-z0-9_-]{0,63}$/u), scope: external_exports.literal("records"), recordRefs: external_exports.array(retentionRecordReferenceSchema).min(1).max(1e3).refine(unique2, "Hold references must be unique."), reason: external_exports.string().min(1).max(512) })
+]);
+var retentionHoldsSchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  ownerRef: reference,
+  evidenceRef: reference,
+  reviewedAt: canonicalTime,
+  expiresAt: canonicalTime,
+  complete: external_exports.boolean(),
+  holds: external_exports.array(hold).max(100)
+}).refine((value) => Date.parse(value.reviewedAt) < Date.parse(value.expiresAt), "Hold evidence requires an explicit positive validity interval.").refine((value) => unique2(value.holds.map((item) => item.id)), "Hold IDs must be unique.");
+var retentionSelectionSchema = external_exports.strictObject({ inventory_hash: sha2, record_refs: external_exports.array(retentionRecordReferenceSchema).min(1).max(250).refine(unique2, "Selections must be unique.") });
+var KINDS = ["plan", "job", "artifact", "idempotency", "createddoc", "cloudjob", "cloudbatch", "cloudbatchconflict", "dataplan", "audit", "qualification", "qualification_result", "outbox", "handoff", "handoff_v2", "retention", "retention_plan", "retention_inventory", "batch", "batch_plan", "batch_result", "fixture", "tmp", "refresh", "cleanup"];
+var LIVE_STATES = /* @__PURE__ */ new Set(["executing", "pending", "submitting", "queued", "running", "validating", "cancel_requested", "outcome_unknown", "generating"]);
+var TERMINAL_STATES = /* @__PURE__ */ new Set(["succeeded", "failed", "cancelled"]);
+var UUID = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
+var MAX_EDGES = 1e4;
+var DEPENDENCY_HASH_FIELDS = { plan: "hash", dataplan: "hash", cloudjob: "plan_hash", cloudbatch: "plan_hash", cloudbatchconflict: "receipt_hash", artifact: "manifest_sha256" };
+var object2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+var string4 = (value) => typeof value === "string" && value.length > 0 && value.length <= 2048;
+var hashString = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+var timestamp2 = (value) => canonicalTime.safeParse(value).success;
+function frozen(value) {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) frozen(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function recordId(kind, id2) {
+  if (kind === "idempotency" || kind === "createddoc") return /^[a-f0-9]{64}$/u.test(id2);
+  const prefixes = { plan: "plan", job: "job", artifact: "artifact", cloudjob: "cloudjob", dataplan: "data_plan", audit: "event", qualification: "qualification" };
+  if (prefixes[kind]) return new RegExp(`^${prefixes[kind]}_${UUID}$`, "u").test(id2);
+  if (kind === "qualification_result") return new RegExp(`^qualification_${UUID}_[a-z][a-z0-9_-]{0,63}$`, "u").test(id2);
+  return /^[A-Za-z0-9_-]{1,120}$/u.test(id2);
+}
+function errorIsUnresolved(value) {
+  const error51 = object2(value);
+  return !!error51 && (error51.outcome !== "none" || object2(error51.details)?.diagnostics_omitted === true);
+}
+function planBinding(plan) {
+  return { id: plan.id, created_at: plan.created_at, expires_at: plan.expires_at, operation: plan.operation, expected_state: plan.expected_state ?? null, handler_hash: plan.handler_hash, profile_hash: plan.profile_hash, execution_contract_hash: plan.execution_contract_hash ?? null, effect: plan.effect, provider_args: plan.provider_args, artifact: plan.artifact ?? null, before: plan.before, summary: plan.summary, limitations: plan.limitations };
+}
+function artifactBinding2(record3) {
+  const version3 = record3.manifest_version ?? 1;
+  if (![1, 2].includes(Number(version3)) || typeof version3 !== "number" || version3 === 1 && (record3.provenance !== void 0 || Array.isArray(record3.files) && record3.files.some((file2) => object2(file2)?.validation !== void 0))) throw new Error("unsupported artifact version");
+  const original = { version: version3, id: record3.id, root: record3.root, filename: record3.filename, format: record3.format, plan_id: record3.plan_id ?? null, producer_plan_hash: record3.producer_plan_hash ?? null, completed_at: record3.completed_at ?? null, files: record3.files ?? [] };
+  return version3 === 1 ? original : { ...original, provenance: record3.provenance ?? null, limitation: record3.limitation ?? null };
+}
+var RetentionPlanner = class {
+  constructor(store, context, options = {}) {
+    this.store = store;
+    this.options = options;
+    try {
+      const configuration = { ...context };
+      for (const key of ["policy", "holds", "readDocumentIds"]) if (configuration[key] === void 0) delete configuration[key];
+      const { readDocumentIds: _scope, ...boundedConfiguration } = configuration;
+      assertJson(boundedConfiguration, 1048576);
+      const schema = external_exports.strictObject({ profileId: external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u), profileHash: sha2, executionContractHash: sha2, policy: retentionPolicySchema.optional(), holds: retentionHoldsSchema.optional(), readDocumentIds: external_exports.array(external_exports.string().min(1)).optional() });
+      this.context = frozen(schema.parse(structuredClone(configuration)));
+    } catch {
+      throw new FusionError("INVALID_RETENTION_CONFIGURATION", "Retention requires bounded trusted profile, owner policy and holds configuration.");
+    }
+  }
+  store;
+  options;
+  context;
+  async inventory() {
+    return (await this.analyze()).inventory;
+  }
+  async prepare(input2) {
+    let selected;
+    try {
+      assertJson(input2, 65536);
+      selected = retentionSelectionSchema.parse(input2);
+    } catch {
+      throw new FusionError("INVALID_RETENTION_SELECTION", "Select unique opaque record references from one retained inventory hash.");
+    }
+    const analysis = await this.analyze();
+    if (selected.inventory_hash !== analysis.inventory.inventory_hash) throw new FusionError("RETENTION_INVENTORY_CHANGED", "Ledger bytes, scope, policy or holds changed. Inspect a fresh inventory.");
+    if (!analysis.inventory.complete || !analysis.policy || !analysis.holds) throw new FusionError("RETENTION_INCOMPLETE", "Inventory, dependency coverage and current trusted policy/holds must be complete. Nothing was archived or removed.");
+    const closure = /* @__PURE__ */ new Set(), visit = [...selected.record_refs];
+    while (visit.length) {
+      const ref4 = visit.pop();
+      if (closure.has(ref4)) continue;
+      const node = analysis.nodes.get(ref4);
+      if (!node || node.view.decision !== "archive_review_candidate") throw new FusionError("RETENTION_PROTECTED", "A selected record or dependency remains protected, held or unknown.");
+      closure.add(ref4);
+      if (closure.size > 250) throw new FusionError("RETENTION_PLAN_LIMIT", "The complete dependency group exceeds the bounded review-plan limit.");
+      visit.push(...node.dependencies);
+    }
+    const records = [...closure].sort().map((ref4) => {
+      const node = analysis.nodes.get(ref4), view = node.view;
+      return { record_ref: ref4, record_kind: view.record_kind, sha256: view.sha256, bytes: view.bytes, age_anchor: view.age_anchor, retention_period_ms: view.retention_period_ms, dependencies: [...node.dependencies].sort() };
+    });
+    const content = {
+      schema_version: 1,
+      kind: "retention_archive_copy_review",
+      status: "review_only",
+      created_at: analysis.analyzedAt,
+      source_binding: { profile_id: this.context.profileId, profile_hash: this.context.profileHash, execution_contract_hash: this.context.executionContractHash, inventory_hash: analysis.inventory.inventory_hash, policy_hash: hash(analysis.policy), holds_hash: hash(analysis.holds), holds_expires_at: analysis.holds.expiresAt },
+      selected_record_refs: [...selected.record_refs].sort(),
+      records,
+      archive_execution_supported: false,
+      removal_eligible: false,
+      limitations: ["Copy-only review metadata; no archival, relocation, deletion, remote cleanup or hold release is implemented.", "Only local ledger records were inventoried. Artifact bytes, credential/native subtrees, cloud staging and support bundles were not inspected.", "Hashes detect changed local content; they are not signatures, WORM storage or regulatory certification.", "Future execution requires a separately implemented authorized collector and fresh source/holds checks. This plan grants no removal authority."]
+    };
+    assertJson(content, 1048576);
+    const digest2 = hash(content);
+    return frozen({ ...content, id: `retention_${digest2}`, hash: digest2 });
+  }
+  async analyze() {
+    const snapshot = await this.store.snapshotReadOnly({ ...this.options.snapshotLimits, maxEntries: Math.min(this.options.snapshotLimits?.maxEntries ?? 1e3, 1e3), readKinds: [...KINDS] });
+    const analyzedAt = this.options.now?.() ?? now();
+    if (!timestamp2(analyzedAt)) throw new FusionError("RETENTION_CLOCK_UNAVAILABLE", "Retention analysis requires an explicit valid UTC observation time.");
+    const at = Date.parse(analyzedAt), policy = this.context.policy, holds = this.context.holds;
+    return analyzeSnapshot(snapshot, this.context, policy, holds, analyzedAt, at);
+  }
+};
+function analyzeSnapshot(snapshot, context, policy, holds, analyzedAt, at) {
+  const issues = new Set(snapshot.issues), nodes = /* @__PURE__ */ new Map(), keys = /* @__PURE__ */ new Map();
+  const allowed = context.readDocumentIds === void 0 ? void 0 : new Set(context.readDocumentIds);
+  let dependencyComplete = true, edges = 0;
+  const problem = (node, reason, unknown2 = false) => {
+    if (!node.view.reasons.includes(reason)) node.view.reasons.push(reason);
+    node.candidate = false;
+    if (unknown2) {
+      node.view.decision = "unknown";
+      dependencyComplete = false;
+    }
+  };
+  const restrict = (node, documentId) => {
+    if (allowed && (!string4(documentId) || !allowed.has(documentId))) {
+      node.restricted = true;
+      problem(node, "READ_SCOPE_UNPROVEN_OR_DENIED");
+    }
+  };
+  const connect = (node, kind, id2, expectedHash, missingAllowed = false) => {
+    if (!string4(id2)) {
+      problem(node, "INVALID_DEPENDENCY_REFERENCE", true);
+      return void 0;
+    }
+    const target = keys.get(`${kind}:${id2}`);
+    if (!target) {
+      if (!missingAllowed) problem(node, "MISSING_DEPENDENCY", true);
+      return void 0;
+    }
+    const hashField = DEPENDENCY_HASH_FIELDS[kind];
+    if (expectedHash !== void 0 && (!hashString(expectedHash) || !hashField || target.data?.[hashField] !== expectedHash)) problem(node, "DEPENDENCY_HASH_MISMATCH", true);
+    if (!node.dependencies.has(target.source.ref)) {
+      if (++edges > MAX_EDGES) {
+        problem(node, "DEPENDENCY_LIMIT", true);
+        return target;
+      }
+      node.dependencies.add(target.source.ref);
+      target.dependencies.add(node.source.ref);
+    }
+    return target;
+  };
+  const candidate = (node, period, anchor) => {
+    node.view.terminal = true;
+    node.period = period;
+    if (!timestamp2(anchor)) {
+      problem(node, "TERMINAL_TIMESTAMP_UNAVAILABLE");
+      return;
+    }
+    if (Date.parse(anchor) > at) {
+      problem(node, "TIMESTAMP_IN_FUTURE");
+      return;
+    }
+    node.view.age_anchor = anchor;
+    const minimum = policy?.periods[period];
+    if (minimum === void 0) {
+      problem(node, "OWNER_PERIOD_MISSING");
+      return;
+    }
+    node.view.retention_period_ms = minimum;
+    if (at - Date.parse(anchor) < minimum) {
+      problem(node, "OWNER_PERIOD_NOT_ELAPSED");
+      return;
+    }
+    node.candidate = node.view.reasons.length === 0;
+  };
+  for (const source of snapshot.entries) {
+    const known = !!source.kind && KINDS.includes(source.kind) && !!source.id && recordId(source.kind, source.id);
+    const node = { source, data: source.status === "read" ? object2(source.value) : void 0, restricted: false, candidate: false, dependencies: /* @__PURE__ */ new Set(), view: { record_ref: source.ref, record_kind: known ? source.kind : "unknown", ...known ? { record_id: source.id } : {}, ...source.sha256 ? { sha256: source.sha256 } : {}, ...source.bytes !== void 0 ? { bytes: source.bytes } : {}, decision: source.status === "unknown" ? "unknown" : "protected", reasons: [], terminal: false, dependency_count: 0, removal_eligible: false } };
+    nodes.set(source.ref, node);
+    if (source.kind && source.id) keys.set(`${source.kind}:${source.id}`, node);
+    if (source.status !== "read") {
+      problem(node, source.issue ?? "UNREAD_RECORD", source.status === "unknown");
+      continue;
+    }
+    if (!known || !node.data) {
+      problem(node, "UNKNOWN_RECORD_SCHEMA", true);
+      continue;
+    }
+    if (source.kind !== "qualification_result" && node.data.id !== void 0 && node.data.id !== source.id) problem(node, "RECORD_ID_MISMATCH", true);
+  }
+  for (const node of nodes.values()) {
+    if (node.source.status !== "read" || !node.data || node.view.decision === "unknown") continue;
+    const value = node.data, kind = node.source.kind, state = value.status;
+    if (typeof state === "string" && ["prepared", "draft", "draft_outbox", "scenario_passed", ...LIVE_STATES, ...TERMINAL_STATES].includes(state)) node.view.state = state;
+    if (kind !== "qualification_result") node.view.terminal = typeof state === "string" && TERMINAL_STATES.has(state);
+    try {
+      if (kind === "plan") {
+        const operation2 = object2(value.operation), result = object2(value.result), output2 = object2(value.artifact);
+        if (!operation2 || hash(planBinding(value)) !== value.hash) throw new Error("plan binding");
+        parseOperation(operation2);
+        if (!hashString(value.profile_hash) || !hashString(value.execution_contract_hash) || !hashString(value.handler_hash) || !timestamp2(value.created_at) || !timestamp2(value.expires_at) || Date.parse(value.created_at) > Date.parse(value.expires_at)) throw new Error("plan shape");
+        restrict(node, operation2.document_id);
+        if (value.profile_hash !== context.profileHash || value.execution_contract_hash !== context.executionContractHash) problem(node, "SOURCE_BINDING_UNREVIEWED");
+        if (output2) {
+          const target = connect(node, "artifact", output2.id, void 0, state === "prepared");
+          if (target && state === "prepared") problem(node, "PREPARATION_HAS_STAGED_ARTIFACT");
+        }
+        const imported = object2(object2(operation2.args)?.source);
+        if (operation2.operation === "documents.import" && imported?.kind === "artifact") connect(node, "artifact", imported.id);
+        const job = object2(result?.job);
+        if (job) connect(node, "job", job.id);
+        if (state === "prepared") {
+          if (value.idempotency_key !== void 0 || value.result !== void 0) problem(node, "PREPARATION_HAS_EXECUTION_EVIDENCE");
+          if (Date.parse(value.expires_at) <= at) candidate(node, "expiredPreparationMs", value.expires_at);
+          else problem(node, "PREPARATION_NOT_EXPIRED");
+        } else if (typeof state === "string" && LIVE_STATES.has(state)) problem(node, "NONTERMINAL_OR_UNCERTAIN_OPERATION");
+        else if (typeof state === "string" && TERMINAL_STATES.has(state)) {
+          if (!result || errorIsUnresolved(result.error) || object2(result.after)?.validation_incomplete === true || object2(result.after)?.unavailable !== void 0 || result.completion !== "provider_completed" && !(state === "failed" && object2(result.error)?.outcome === "none")) problem(node, "UNRECONCILED_OUTCOME_OR_VALIDATION");
+          problem(node, "TERMINAL_TIMESTAMP_UNAVAILABLE");
+        } else throw new Error("plan status");
+      } else if (kind === "idempotency") {
+        problem(node, "REPLAY_FENCE_REQUIRES_LIVE_LEDGER");
+        const fields = Object.keys(value).sort();
+        if (string4(value.job_id) && fields.every((key) => ["job_id", "plan_hash"].includes(key))) connect(node, "cloudjob", value.job_id, value.plan_hash);
+        else if (string4(value.plan_id) && fields.every((key) => ["plan_id", "hash"].includes(key))) connect(node, value.plan_id.startsWith("data_plan_") ? "dataplan" : "plan", value.plan_id, value.hash);
+        else throw new Error("replay reference");
+      } else if (kind === "createddoc") {
+        problem(node, "CREATED_DOCUMENT_AUTHORITY_REQUIRES_LIVE_LEDGER");
+        if (!string4(value.document_id) || hash(value.document_id) !== node.source.id || !hashString(value.plan_hash)) throw new Error("created document identity");
+        restrict(node, value.document_id);
+        connect(node, "plan", value.plan_id, value.plan_hash);
+      } else if (kind === "job") {
+        problem(node, "JOB_OWNERSHIP_REQUIRES_LIVE_LEDGER");
+        if (!["desktop_cam", "desktop_render"].includes(String(value.provider)) || !string4(value.provider_id) || !timestamp2(value.created_at) || !timestamp2(value.updated_at)) throw new Error("job shape");
+        const binding3 = { id: value.id, provider: value.provider, provider_id: value.provider_id, plan_id: value.plan_id, document_id: value.document_id, artifact_id: value.artifact_id ?? null, created_at: value.created_at, request_hash: value.request_hash, execution_contract_hash: value.execution_contract_hash, submission_error: value.submission_error ?? null };
+        if (hash(binding3) !== value.binding_hash) throw new Error("job binding");
+        restrict(node, value.document_id);
+        connect(node, "plan", value.plan_id, value.request_hash);
+        if (value.artifact_id !== void 0) connect(node, "artifact", value.artifact_id);
+        if (!node.view.terminal || errorIsUnresolved(value.submission_error) || errorIsUnresolved(object2(value.data)?.error)) problem(node, "NONTERMINAL_OR_UNRECONCILED_JOB");
+      } else if (kind === "cloudjob") {
+        problem(node, "CLOUD_ACCOUNTING_AND_OWNERSHIP_REQUIRES_LIVE_LEDGER");
+        const prepared = object2(value.prepared), reservation = object2(prepared?.reservation), batch = object2(value.batch);
+        if (!prepared || !reservation || !hashString(value.plan_hash) || !hashString(prepared.requestHash) || typeof value.submitted !== "boolean" || typeof value.reserved_units !== "number" || !Number.isFinite(value.reserved_units) || value.reserved_units < 0) throw new Error("cloud ledger shape");
+        const { requestHash: preparedHash, ...preparedFields } = prepared;
+        if (cloudHash(preparedFields) !== preparedHash || !["id", "recipeId", "recipeVersion"].every((key) => string4(prepared[key])) || !hashString(prepared.recipeHash) || !object2(prepared.context) || !object2(prepared.activity) || !object2(prepared.destination) || !object2(prepared.inputs) || !Array.isArray(prepared.warnings) || !timestamp2(prepared.createdAt) || !timestamp2(prepared.expiresAt) || typeof reservation.amount !== "number" || !Number.isFinite(reservation.amount) || reservation.amount < 0 || !string4(reservation.currency) || !timestamp2(value.created_at) || !timestamp2(value.updated_at) || !string4(value.profile_id) || !hashString(value.profile_hash) || !hashString(value.scope_hash) || !hashString(value.authorization_binding)) throw new Error("prepared cloud evidence");
+        const binding3 = { id: value.id, created_at: value.created_at, prepared, profile: value.profile_hash, scope: value.scope_hash, authorization: value.authorization_binding, profile_id: value.profile_id, budget_period: value.budget_period, ...batch ? { batch } : {} };
+        if (hash(binding3) !== value.plan_hash) throw new Error("cloud ledger binding");
+        const settlement = object2(value.settlement);
+        if (value.settlement !== void 0) {
+          if (!settlement) throw new Error("settlement shape");
+          const { receipt_hash, ...receipt } = settlement;
+          if (hash(receipt) !== receipt_hash || receipt.job_id !== value.id || receipt.provider_id !== value.provider_id || receipt.request_hash !== prepared.requestHash || receipt.currency !== reservation.currency || receipt.final !== true || typeof receipt.actual_amount !== "number" || !Number.isFinite(receipt.actual_amount) || receipt.actual_amount < 0 || value.submitted !== true || value.reserved_units !== 0) throw new Error("settlement evidence");
+        } else if (value.reserved_units !== (value.submitted ? reservation.amount : 0)) throw new Error("cost exposure");
+        const validation = object2(value.validation);
+        if (value.validation !== void 0) {
+          if (!validation) throw new Error("validation shape");
+          const { receipt_hash, ...receipt } = validation;
+          if (hash(receipt) !== receipt_hash || receipt.job_id !== value.id || receipt.provider_id !== value.provider_id || receipt.request_hash !== prepared.requestHash || receipt.recipe_hash !== prepared.recipeHash) throw new Error("validation evidence");
+        }
+        if (allowed) node.restricted = true;
+        if (batch) connect(node, "cloudbatch", batch.batch_id);
+        if (value.validation_in_progress !== void 0) {
+          problem(node, "CLOUD_VALIDATION_OUTCOME_UNRESOLVED");
+          const intent = object2(value.validation_in_progress);
+          if (!intent || !batch || typeof intent.attempt_id !== "string" || !new RegExp(`^validation_${UUID}$`, "u").test(intent.attempt_id) || !timestamp2(intent.started_at) || intent.job_id !== value.id || intent.batch_id !== batch.batch_id || intent.request_hash !== prepared.requestHash || value.submitted !== true || !string4(value.provider_id)) throw new Error("validation intent binding");
+        }
+        if (value.output_identity_conflict !== void 0) {
+          problem(node, "HISTORICAL_OUTPUT_VALIDATION_UNUSABLE");
+          const conflict = object2(value.output_identity_conflict);
+          if (!conflict || !batch || conflict.batch_id !== batch.batch_id || !hashString(conflict.receipt_hash) || conflict.disposition !== "historical_validation_unusable") throw new Error("output conflict binding");
+          connect(node, "cloudbatchconflict", conflict.batch_id, conflict.receipt_hash);
+        }
+        if (value.submitted && !value.settlement) problem(node, "UNSETTLED_CLOUD_EXPOSURE");
+        if (!node.view.terminal || errorIsUnresolved(value.error)) problem(node, "NONTERMINAL_OR_UNRECONCILED_JOB");
+      } else if (kind === "cloudbatch") {
+        problem(node, "BATCH_MANIFEST_REQUIRES_LIVE_LEDGER");
+        assertCloudBatchIntegrity(value);
+        if (allowed) node.restricted = true;
+        const batch = value;
+        for (const variant of batch.variants) {
+          const child = connect(node, "cloudjob", variant.initial_job.id, variant.initial_job.plan_hash, batch.phase === "materializing");
+          if (!child && batch.phase === "materializing") problem(node, "BATCH_MATERIALIZATION_INCOMPLETE", true);
+          const replayId = hash({ cloud: batch.profile_id, key: variant.idempotency_key });
+          connect(node, "idempotency", replayId, void 0, true);
+        }
+      } else if (kind === "cloudbatchconflict") {
+        problem(node, "OUTPUT_IDENTITY_CONFLICT_FENCE");
+        if (allowed) node.restricted = true;
+        const conflict = value;
+        assertCloudBatchConflictIntegrity(conflict);
+        const parent = connect(node, "cloudbatch", conflict.batch_id, conflict.batch_plan_hash);
+        if (parent?.data) {
+          const batch = parent.data;
+          assertCloudBatchIntegrity(batch);
+          assertCloudBatchConflictIntegrity(conflict, batch);
+          if (batch.phase !== "ready") throw new Error("conflict before ready batch");
+        }
+        for (const binding3 of conflict.job_bindings) connect(node, "cloudjob", binding3.job_id, binding3.plan_hash);
+      } else if (kind === "dataplan") {
+        problem(node, "CLOUD_DATA_AUTHORITY_REQUIRES_LIVE_LEDGER");
+        if (allowed) node.restricted = true;
+        const binding3 = { id: value.id, profile_hash: value.profile_hash, scope_hash: value.scope_hash, authorization_binding: value.authorization_binding, created_at: value.created_at, expires_at: value.expires_at, operation: value.operation, draft: value.draft, require_atomic_concurrency: value.require_atomic_concurrency };
+        if (value.operation !== "mfg.property_set" || hash(binding3) !== value.hash) throw new Error("data plan binding");
+        if (errorIsUnresolved(object2(value.result)?.error) || !node.view.terminal) problem(node, "NONTERMINAL_OR_UNRECONCILED_DATA_WRITE");
+        if (node.view.terminal) problem(node, "TERMINAL_TIMESTAMP_UNAVAILABLE");
+      } else if (kind === "artifact") {
+        const producer = connect(node, "plan", value.plan_id, value.producer_plan_hash);
+        if (allowed) restrict(node, object2(producer?.data?.operation)?.document_id);
+        if (state !== "succeeded") {
+          problem(node, "QUARANTINED_OR_INCOMPLETE_ARTIFACT");
+          continue;
+        }
+        if (!Array.isArray(value.files) || !value.files.length || value.files.length > 500 || value.files.some((file2) => {
+          const item = object2(file2);
+          return !item || !string4(item.name) || !hashString(item.sha256) || !Number.isSafeInteger(item.size) || Number(item.size) < 1;
+        }) || !hashString(value.producer_plan_hash) || hash(artifactBinding2(value)) !== value.manifest_sha256 || producer?.data?.hash !== value.producer_plan_hash || producer.data.status !== "succeeded") throw new Error("artifact manifest");
+        if (value.manifest_version === 2) {
+          const provenance2 = object2(value.provenance), provenanceProducer = object2(provenance2?.producer), source = object2(provenance2?.source);
+          if (provenance2?.schema !== 1 || provenanceProducer?.plan_id !== value.plan_id || provenanceProducer?.plan_hash !== value.producer_plan_hash || provenanceProducer?.independently_verified !== false || source?.document_id !== object2(producer.data.operation)?.document_id) throw new Error("artifact provenance binding");
+        }
+        candidate(node, "terminalEvidenceMs", value.completed_at);
+      } else if (kind === "audit") {
+        const details = object2(value.details);
+        if (!details || !timestamp2(value.time) || hash(details) !== value.integrity) throw new Error("audit integrity");
+        const event = value.event;
+        if (["plan_prepared", "execution_intent", "execution_result"].includes(String(event))) connect(node, "plan", details.plan_id, event === "execution_result" ? void 0 : details.hash);
+        else if (["data_plan_prepared", "data_write_intent", "data_write_result"].includes(String(event))) connect(node, "dataplan", details.id, event === "data_write_result" ? void 0 : details.hash);
+        else if (["cloud_job_prepared", "cloud_submission_intent", "cloud_submission_result", "cloud_cancel_intent", "cloud_cancel_requested", "cloud_output_validation", "cloud_billing_reconciled"].includes(String(event))) connect(node, "cloudjob", details.id, details.plan_hash);
+        else if (["cloud_batch_prepared", "cloud_batch_materialized", "cloud_batch_execution"].includes(String(event))) connect(node, "cloudbatch", details.id ?? details.batch_id);
+        else if (event === "cloud_batch_output_conflict") {
+          connect(node, "cloudbatch", details.batch_id, details.batch_plan_hash);
+          connect(node, "cloudbatchconflict", details.batch_id, details.conflict_receipt_hash);
+          if (!Array.isArray(details.job_ids) || details.job_ids.length < 2 || details.job_ids.length > 100 || !details.job_ids.every(string4) || !unique2(details.job_ids)) throw new Error("conflict audit references");
+          for (const id2 of details.job_ids) connect(node, "cloudjob", id2);
+        } else {
+          problem(node, "AUDIT_DEPENDENCY_SCHEMA_UNREVIEWED", true);
+          continue;
+        }
+        candidate(node, "auditMs", value.time);
+      } else if (kind === "qualification") {
+        const { report_hash: expected, ...report } = value, cleanup = object2(value.cleanup);
+        if (hash(report) !== expected || !timestamp2(value.tested_at) || !["scenario_passed", "failed"].includes(String(state)) || !cleanup || !Array.isArray(value.evidence) || value.evidence.length > 130) throw new Error("qualification report");
+        if (value.profile_id !== context.profileId || value.profile_sha256 !== context.profileHash || value.execution_contract_sha256 !== context.executionContractHash) problem(node, "SOURCE_BINDING_UNREVIEWED");
+        if (cleanup.review_required !== false || !["remaining_document_ids", "unresolved_jobs", "failed_step_ids"].every((key) => Array.isArray(cleanup[key]) && cleanup[key].length === 0)) problem(node, "QUALIFICATION_CLEANUP_UNRESOLVED");
+        for (const evidence of value.evidence) {
+          const step = object2(evidence), receipt = object2(step?.result_receipt);
+          if (!step || !receipt || receipt.kind !== "qualification_result" || !hashString(receipt.sha256)) {
+            problem(node, "QUALIFICATION_RECEIPT_MISSING", true);
+            continue;
+          }
+          const result = connect(node, "qualification_result", receipt.id);
+          if (!result || hash(result.source.value) !== receipt.sha256) {
+            problem(node, "QUALIFICATION_RECEIPT_CHANGED", true);
+            continue;
+          }
+          const payload = object2(result.source.value);
+          if (step.action === "change") connect(node, "plan", payload?.id, payload?.hash);
+          else if (step.action === "wait_job") connect(node, "job", payload?.id);
+          else if (step.action === "artifact") connect(node, "artifact", payload?.id);
+          else if (step.action !== "read") {
+            problem(node, "QUALIFICATION_DEPENDENCIES_UNREVIEWED", true);
+            continue;
+          }
+          if (allowed) restrict(result, payload?.document_id);
+          candidate(result, "terminalEvidenceMs", value.tested_at);
+        }
+        candidate(node, "terminalEvidenceMs", value.tested_at);
+      } else if (kind === "qualification_result") {
+      } else if (kind === "handoff" && value.schema_version === 2) {
+        problem(node, "DRAFT_HANDOFF_REQUIRES_REVIEW");
+        const manifest2 = verifyHandoffManifest(value);
+        if (manifest2.profile_id !== context.profileId || manifest2.profile_hash !== context.profileHash) problem(node, "SOURCE_BINDING_UNREVIEWED");
+        for (const source of manifest2.sources) restrict(node, source.document_id);
+        for (const plan of manifest2.plans) connect(node, "plan", plan.id, plan.hash);
+        for (const artifact of manifest2.artifacts) {
+          const target = connect(node, "artifact", artifact.id, hashString(artifact.manifest_sha256) ? artifact.manifest_sha256 : void 0, artifact.status === "unavailable");
+          if (!target) problem(node, "HANDOFF_ARTIFACT_UNAVAILABLE");
+        }
+      } else if (kind === "handoff" && value.schema_version === void 0 && value.state === "draft" && Array.isArray(value.plans)) {
+        problem(node, "DRAFT_HANDOFF_REQUIRES_REVIEW");
+        if (value.plans.length > 100) throw new Error("handoff size");
+        for (const plan of value.plans) {
+          const item = object2(plan);
+          connect(node, "plan", item?.id, item?.hash);
+        }
+      } else if (kind === "retention_plan" && verifyRetentionPlan(value)) {
+        problem(node, "RETENTION_REVIEW_RECORD_PROTECTED");
+        const plan = value;
+        for (const record3 of plan.records) {
+          const target = nodes.get(record3.record_ref);
+          if (!target) {
+            problem(node, "RETENTION_REVIEW_SOURCE_MISSING", true);
+            continue;
+          }
+          if (target.source.sha256 !== record3.sha256) problem(node, "RETENTION_REVIEW_SOURCE_CHANGED");
+          if (target.source.kind && target.source.id) connect(node, target.source.kind, target.source.id);
+        }
+      } else {
+        problem(node, "PROTECTED_RECORD_DEPENDENCIES_UNREVIEWED", true);
+        if (allowed) node.restricted = true;
+      }
+    } catch {
+      problem(node, "MALFORMED_OR_CHANGED_RECORD", true);
+    }
+  }
+  for (const node of nodes.values()) if (node.source.kind === "qualification_result" && !node.dependencies.size) problem(node, "QUALIFICATION_PARENT_MISSING", true);
+  if (!policy) issues.add("RETENTION_POLICY_MISSING");
+  if (!holds) issues.add("TRUSTED_HOLDS_MISSING");
+  else {
+    if (!holds.complete) issues.add("TRUSTED_HOLDS_INCOMPLETE");
+    if (Date.parse(holds.reviewedAt) > at) issues.add("TRUSTED_HOLDS_FROM_FUTURE");
+    if (Date.parse(holds.expiresAt) <= at) issues.add("TRUSTED_HOLDS_EXPIRED");
+    for (const hold2 of holds.holds) {
+      const targets = hold2.scope === "profile" ? [...nodes.keys()] : hold2.recordRefs;
+      for (const ref4 of targets) {
+        const target = nodes.get(ref4);
+        if (!target) {
+          issues.add("TRUSTED_HOLD_TARGET_UNRESOLVED");
+          dependencyComplete = false;
+          continue;
+        }
+        target.view.decision = "held";
+        problem(target, "TRUSTED_HOLD");
+      }
+    }
+  }
+  if (!dependencyComplete) issues.add("DEPENDENCY_COVERAGE_INCOMPLETE");
+  const complete = snapshot.complete && dependencyComplete && issues.size === 0;
+  const visited = /* @__PURE__ */ new Set();
+  for (const initial2 of nodes.values()) {
+    if (visited.has(initial2.source.ref)) continue;
+    const group = [], pending = [initial2];
+    while (pending.length) {
+      const node = pending.pop();
+      if (visited.has(node.source.ref)) continue;
+      visited.add(node.source.ref);
+      group.push(node);
+      for (const ref4 of node.dependencies) {
+        const related = nodes.get(ref4);
+        if (related) pending.push(related);
+      }
+    }
+    const held = group.some((node) => node.view.decision === "held"), restricted = group.some((node) => node.restricted);
+    const protectedGroup = group.some((node) => !node.candidate || node.view.decision === "unknown");
+    for (const node of group) {
+      if (restricted) {
+        node.restricted = true;
+        problem(node, "READ_SCOPE_UNPROVEN_OR_DENIED");
+      }
+      if (held) {
+        node.view.decision = "held";
+        problem(node, "TRUSTED_HOLD_OR_HELD_DEPENDENCY");
+      } else if (node.view.decision !== "unknown") {
+        if (!complete) problem(node, "ANALYSIS_INCOMPLETE");
+        if (protectedGroup) problem(node, "PROTECTED_DEPENDENCY_GROUP");
+        node.view.decision = node.candidate && complete ? "archive_review_candidate" : "protected";
+      }
+      node.view.dependency_count = node.dependencies.size;
+      node.view.reasons.sort();
+      if (node.view.decision === "unknown") {
+        delete node.view.record_id;
+        delete node.view.state;
+        delete node.view.age_anchor;
+        delete node.view.retention_period_ms;
+        node.view.terminal = false;
+      }
+      if (node.restricted) node.view = { record_ref: node.source.ref, record_kind: "restricted", decision: node.view.decision === "held" ? "held" : "protected", reasons: ["READ_SCOPE_UNPROVEN_OR_DENIED", ...node.view.decision === "held" ? ["TRUSTED_HOLD_OR_HELD_DEPENDENCY"] : []], terminal: false, dependency_count: 0, removal_eligible: false };
+    }
+  }
+  const binding2 = {
+    schema_version: 1,
+    profile_id: context.profileId,
+    profile_hash: context.profileHash,
+    execution_contract_hash: context.executionContractHash,
+    read_scope_hash: hashBytes(JSON.stringify(context.readDocumentIds ?? null)),
+    policy_hash: policy ? hash(policy) : null,
+    holds_hash: holds ? hash(holds) : null,
+    root_hash: snapshot.root_hash,
+    complete: snapshot.complete,
+    issues: snapshot.issues,
+    total_entry_count: snapshot.total_entry_count,
+    entries: snapshot.entries.map((entry) => ({ ref: entry.ref, status: entry.status, type: entry.entry_type, sha256: entry.sha256 ?? null, bytes: entry.bytes ?? null, issue: entry.issue ?? null }))
+  };
+  const entries2 = [...nodes.values()].map((node) => node.view).sort((left, right) => left.record_ref < right.record_ref ? -1 : left.record_ref > right.record_ref ? 1 : 0);
+  const counts = { archive_review_candidate: 0, protected: 0, held: 0, unknown: 0 };
+  for (const entry of entries2) counts[entry.decision]++;
+  const inventory = { schema_version: 1, scope: "local_ledger_metadata_only", profile_id: context.profileId, inventory_hash: hash(binding2), observed_at: snapshot.observed_at, analyzed_at: analyzedAt, inventory_complete: snapshot.complete, dependency_coverage_complete: dependencyComplete, complete, entry_count_lower_bound: snapshot.entry_count_lower_bound, unrepresented_entry_count_lower_bound: Math.max(0, snapshot.entry_count_lower_bound - nodes.size), total_entry_count: snapshot.total_entry_count, counts, issues: [...issues].sort(), entries: entries2, excluded: ["credential and native-state subtrees", "artifact output bytes and directories", "cloud staging and provider state", "support bundles and external caches"], provider_state_observed: false, archive_execution_supported: false, removal_eligible: false };
+  assertJson(inventory, 2097152);
+  return { inventory: frozen(inventory), nodes, policy, holds, analyzedAt };
+}
+function verifyRetentionPlan(value) {
+  try {
+    assertJson(value, 1048576);
+    const recordSchema = external_exports.strictObject({ record_ref: retentionRecordReferenceSchema, record_kind: external_exports.enum(KINDS), sha256: sha2, bytes: external_exports.number().int().min(1).max(16777216), age_anchor: canonicalTime, retention_period_ms: duration3, dependencies: external_exports.array(retentionRecordReferenceSchema).max(250).refine(unique2) });
+    const schema = external_exports.strictObject({ schema_version: external_exports.literal(1), kind: external_exports.literal("retention_archive_copy_review"), id: external_exports.string().regex(/^retention_[a-f0-9]{64}$/u), hash: sha2, status: external_exports.literal("review_only"), created_at: canonicalTime, source_binding: external_exports.strictObject({ profile_id: external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/u), profile_hash: sha2, execution_contract_hash: sha2, inventory_hash: sha2, policy_hash: sha2, holds_hash: sha2, holds_expires_at: canonicalTime }), selected_record_refs: external_exports.array(retentionRecordReferenceSchema).min(1).max(250).refine(unique2), records: external_exports.array(recordSchema).min(1).max(250), archive_execution_supported: external_exports.literal(false), removal_eligible: external_exports.literal(false), limitations: external_exports.array(external_exports.string().min(1).max(1024)).min(1).max(10) });
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) return false;
+    const plan = parsed.data;
+    const refs3 = new Set(plan.records.map((record3) => record3.record_ref));
+    if (plan.id !== `retention_${plan.hash}` || refs3.size !== plan.records.length || plan.selected_record_refs.some((ref4) => !refs3.has(ref4)) || plan.records.some((record3) => record3.dependencies.some((ref4) => !refs3.has(ref4))) || Date.parse(plan.created_at) >= Date.parse(plan.source_binding.holds_expires_at)) return false;
+    const { id: _id, hash: expected, ...content } = plan;
+    return hash(content) === expected;
+  } catch {
+    return false;
+  }
+}
+
+// src/profile.ts
+import { constants as constants2 } from "node:fs";
+import { lstat as lstat2, open as open2, realpath as realpath2 } from "node:fs/promises";
+import { execFile as execFile2 } from "node:child_process";
+import { promisify as promisify2 } from "node:util";
+import os from "node:os";
+import path2 from "node:path";
+var absolute = external_exports.string().max(4096).refine((v) => path2.isAbsolute(v) && !v.includes("\0") && !/^[/\\]{2}/u.test(v), "Use an absolute local path without network shares or NUL bytes.");
+var id = external_exports.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/);
+var sha3 = external_exports.string().regex(/^[a-f0-9]{64}$/);
+var asset = external_exports.strictObject({ id, path: absolute, sha256: sha3 });
+var profileSchema = external_exports.strictObject({
+  version: external_exports.literal(1),
+  id,
+  mode: external_exports.enum(["fixture", "managed", "assisted"]),
+  stateRoot: absolute,
+  desktop: external_exports.strictObject({ provider: external_exports.enum(["native", "addin"]).default("native"), url: external_exports.string().url(), tokenFile: absolute.optional(), mapping: external_exports.strictObject({ tool: external_exports.string().min(1), argument: external_exports.string().min(1), schemaHash: sha3, fixedArguments: external_exports.record(external_exports.string(), external_exports.unknown()).optional() }).optional(), timeoutMs: external_exports.number().int().min(100).max(12e4).default(12e4) }).optional(),
+  policy: external_exports.strictObject({
+    mutationsEnabled: external_exports.boolean().default(false),
+    effects: external_exports.array(external_exports.enum(["local_edit", "local_artifact", "cloud_write", "cloud_compute", "administration"])).default([]),
+    operations: external_exports.array(external_exports.string().min(1)).default([]),
+    documents: external_exports.array(external_exports.string().min(1)).default([]),
+    readDocuments: external_exports.array(external_exports.string().min(1)).optional(),
+    planMaxAgeMs: external_exports.number().int().min(1e3).max(36e5).default(9e5),
+    grantExpiresAt: external_exports.string().datetime().optional(),
+    allowUnsavedCreation: external_exports.boolean().default(false),
+    allowCreatedDocuments: external_exports.boolean().default(false),
+    qualificationDocuments: external_exports.array(external_exports.string().min(1)).default([]),
+    allowNonAtomicCloudWrites: external_exports.boolean().default(false),
+    allowedDataFiles: external_exports.array(external_exports.strictObject({ id: external_exports.string(), versionId: external_exports.string() })).default([]),
+    saveFolders: external_exports.array(external_exports.string()).default([]),
+    qualifiedOperations: external_exports.array(external_exports.string()).default([]),
+    qualificationEvidence: external_exports.string().max(4096).optional(),
+    desktopQualification: external_exports.strictObject({
+      version: external_exports.literal(1),
+      provider: external_exports.enum(["native", "addin"]),
+      fusionVersion: external_exports.string().min(1).max(256),
+      platform: external_exports.string().min(1).max(32),
+      arch: external_exports.string().min(1).max(32),
+      osRelease: external_exports.string().min(1).max(256),
+      handlerSha256: sha3,
+      executionContractSha256: sha3,
+      expiresAt: external_exports.string().datetime(),
+      evidence: external_exports.string().min(1).max(4096),
+      reviewer: external_exports.string().min(1).max(256)
+    }).optional(),
+    maxPlansPerMinute: external_exports.number().int().min(1).max(600).default(60)
+  }),
+  outputs: external_exports.array(external_exports.strictObject({ id, path: absolute })).default([]),
+  assets: external_exports.strictObject({ templates: external_exports.array(asset).default([]), posts: external_exports.array(asset).default([]), machines: external_exports.array(asset).default([]), toolLibraries: external_exports.array(asset).default([]), imports: external_exports.array(asset.extend({ trusted: external_exports.literal(true) })).default([]) }).default(() => ({ templates: [], posts: [], machines: [], toolLibraries: [], imports: [] })),
+  manufacturing: external_exports.array(external_exports.strictObject({
+    id,
+    postId: id,
+    machineId: id,
+    toolLibrarySha256: sha3,
+    strategyIds: external_exports.array(external_exports.string()).min(1),
+    units: external_exports.enum(["mm", "in"]),
+    qualificationEvidence: external_exports.string().min(1),
+    reviewRecords: external_exports.array(external_exports.strictObject({ id, sourceState: sha3, method: external_exports.string().min(1), reviewedBy: external_exports.string().min(1), expiresAt: external_exports.string().datetime() })).default([])
+  })).default([]),
+  retention: external_exports.strictObject({ policy: retentionPolicySchema.optional(), holds: retentionHoldsSchema.optional() }).optional(),
+  cloud: external_exports.strictObject({
+    clientId: external_exports.string().min(1).optional(),
+    tenantId: external_exports.string().min(1),
+    scopes: external_exports.array(external_exports.string()).min(1).optional(),
+    redirectUri: external_exports.string().url().optional(),
+    hubIds: external_exports.array(external_exports.string()).default([]),
+    projects: external_exports.array(external_exports.strictObject({ hubId: external_exports.string(), projectId: external_exports.string() })).default([]),
+    mfgModels: external_exports.array(external_exports.strictObject({ modelId: external_exports.string(), hubId: external_exports.string(), projectId: external_exports.string(), configurationId: external_exports.string().nullable().optional() })).default([]),
+    manage: external_exports.strictObject({ tenant: external_exports.string(), workspaceIds: external_exports.array(external_exports.number().int().positive()) }).optional(),
+    recipesFile: absolute.optional(),
+    enterpriseAdapter: external_exports.strictObject({ path: absolute, sha256: sha3 }).optional(),
+    propertyRules: external_exports.array(external_exports.strictObject({ propertyDefinitionId: external_exports.string().min(1), type: external_exports.enum(["string", "number", "boolean"]), allowNull: external_exports.boolean(), maxLength: external_exports.number().int().positive().optional(), minimum: external_exports.number().finite().optional(), maximum: external_exports.number().finite().optional(), unit: external_exports.string().optional(), owner: external_exports.literal("product") })).default([]),
+    budget: external_exports.strictObject({ maxConcurrentJobs: external_exports.number().int().min(1).max(100), maxSubmissions: external_exports.number().int().min(1), maxReservedUnits: external_exports.number().positive(), currency: external_exports.string().min(1).max(32), period: external_exports.string().min(1) }).optional()
+  }).optional()
+});
+var defaultStateRoot = () => path2.join(os.homedir(), ".local", "state", "codex-fusion");
+function fixtureProfile(stateRoot = path2.join(defaultStateRoot(), "fixture")) {
+  return profileSchema.parse({ version: 1, id: "fixture", mode: "fixture", stateRoot, policy: { mutationsEnabled: true, effects: ["local_edit", "local_artifact"], operations: ["*"], documents: ["fixture:bracket"], qualifiedOperations: [], allowUnsavedCreation: false }, outputs: [{ id: "artifacts", path: path2.join(stateRoot, "artifacts") }] });
+}
+function parseProfile(value) {
+  const result = profileSchema.safeParse(value);
+  if (!result.success) throw new FusionError("INVALID_PROFILE", "Profile does not match the versioned schema.", "none", result.error.issues.map((x) => ({ path: x.path, message: x.message })));
+  const p = result.data;
+  if (p.desktop?.provider === "addin" && (!p.desktop.tokenFile || p.desktop.mapping)) throw new FusionError("INVALID_PROFILE", "Add-in profiles require an explicit tokenFile and must not include a native script mapping.");
+  if (p.desktop?.provider === "native" && p.desktop.tokenFile) throw new FusionError("INVALID_PROFILE", "Native MCP does not use the add-in token file.");
+  if (p.cloud?.enterpriseAdapter && (p.cloud.clientId !== void 0 || p.cloud.scopes !== void 0 || p.cloud.redirectUri !== void 0)) throw new FusionError("INVALID_PROFILE", "Enterprise adapters own authorization; omit public-client clientId/scopes/redirectUri fields. Their service grants are not inherited from interactive PKCE.");
+  if (p.cloud && !p.cloud.enterpriseAdapter && (!p.cloud.clientId || !p.cloud.scopes || !p.cloud.redirectUri)) throw new FusionError("INVALID_PROFILE", "Standard cloud profiles require an explicit public clientId, scopes and redirectUri.");
+  for (const list of [p.outputs, p.assets.templates, p.assets.posts, p.assets.machines, p.assets.toolLibraries, p.assets.imports, p.manufacturing]) if (new Set(list.map((x) => x.id)).size !== list.length) throw new FusionError("INVALID_PROFILE", "Profile IDs must be unique within each registry.");
+  if (p.mode !== "fixture" && p.policy.operations.includes("*")) throw new FusionError("INVALID_PROFILE", "Real provider grants must enumerate operations.");
+  if (p.mode !== "fixture" && p.policy.documents.includes("*")) throw new FusionError("INVALID_PROFILE", "Real provider grants must enumerate document references.");
+  if (p.policy.readDocuments?.includes("*")) throw new FusionError("INVALID_PROFILE", "Restricted read scope must enumerate document references; omit readDocuments to explicitly use all current-user open documents.");
+  if (p.mode !== "fixture" && p.policy.mutationsEnabled && !p.policy.grantExpiresAt) throw new FusionError("INVALID_PROFILE", "Real provider mutation grants require an expiry.");
+  return p;
+}
+async function loadProfile(filename) {
+  if (!filename) return fixtureProfile();
+  if (!path2.isAbsolute(filename)) throw new FusionError("INVALID_PROFILE", "FUSION_PROFILE must be an explicit absolute path.");
+  const { bytes } = await readTrustedFile(filename, 1048576);
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new FusionError("INVALID_PROFILE", "Profile must contain valid bounded UTF-8 JSON.");
+  }
+  const profile = parseProfile(value);
+  if (profile.cloud?.enterpriseAdapter) await verifyTrustedExecutableAsset(profile.cloud.enterpriseAdapter);
+  return profile;
+}
+var profileHash = (profile) => hash(profile);
+var execFileAsync2 = promisify2(execFile2);
+var WINDOWS_TRUST_CHECK = String.raw`
+$ErrorActionPreference = 'Stop'
+$sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$trusted = @($sid, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+$paths = ConvertFrom-Json $env:CODEX_FUSION_TRUST_PATHS
+foreach ($item in $paths) {
+  $acl = Get-Acl -LiteralPath $item
+  if ($trusted -notcontains $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { exit 2 }
+  foreach ($rule in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+    if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) { continue }
+    if (($rule.PropagationFlags -band [System.Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) { continue }
+    $write = [int][System.Security.AccessControl.FileSystemRights]::Delete -bor [int][System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [int][System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor [int][System.Security.AccessControl.FileSystemRights]::TakeOwnership
+    if ($item -eq $paths[0]) { $write = $write -bor [int][System.Security.AccessControl.FileSystemRights]::Write }
+    if (([int]$rule.FileSystemRights -band $write) -ne 0 -and $trusted -notcontains $rule.IdentityReference.Value) { exit 3 }
+  }
+}
+Write-Output 'TRUSTED'
+`;
+async function readTrustedFile(filename, maxBytes = 32e6) {
+  if (!absolute.safeParse(filename).success || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 256e6) throw new FusionError("UNTRUSTED_ASSET", "Trusted file paths and byte limits must be explicit and bounded.");
+  const before = await lstat2(filename);
+  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > maxBytes) throw new FusionError("UNTRUSTED_ASSET", "Trusted configuration/code must be a bounded regular file without aliases.");
+  const canonicalPath = await realpath2(filename);
+  const paths = [canonicalPath];
+  let parent = path2.dirname(canonicalPath);
+  for (let depth = 0; ; depth++) {
+    if (depth > 64) throw new FusionError("UNTRUSTED_ASSET", "Trusted path nesting exceeds its limit.");
+    paths.push(parent);
+    const next = path2.dirname(parent);
+    if (next === parent) break;
+    parent = next;
+  }
+  if (process.platform === "win32") {
+    const systemRoot = process.env.SystemRoot;
+    if (!systemRoot || !path2.isAbsolute(systemRoot)) throw new FusionError("ACL_UNVERIFIED", "Windows configuration/code ownership cannot be verified.");
+    try {
+      const result = await execFileAsync2(path2.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_TRUST_CHECK, "utf16le").toString("base64")], { env: { ...process.env, CODEX_FUSION_TRUST_PATHS: JSON.stringify(paths) }, timeout: 15e3, maxBuffer: 16384, windowsHide: true });
+      if (result.stdout.trim() !== "TRUSTED") throw new Error("untrusted ACL");
+    } catch {
+      throw new FusionError("ACL_UNVERIFIED", "Configuration/code and its canonical parent paths must be writable only by this user, SYSTEM or administrators. Windows qualification is required.");
+    }
+  } else {
+    for (const [index, candidate] of paths.entries()) {
+      const info = await lstat2(candidate);
+      const sharedStickyParent = index > 0 && info.uid === 0 && (info.mode & 512) !== 0;
+      if (info.isSymbolicLink() || (index ? !info.isDirectory() : !info.isFile()) || info.uid !== process.getuid?.() && info.uid !== 0 || (info.mode & 18) !== 0 && !sharedStickyParent) throw new FusionError("UNTRUSTED_PROFILE", "Configuration/code and parent paths must be owned by this user or an administrator and not writable by group/others.");
+    }
+  }
+  const handle = await open2(canonicalPath, constants2.O_RDONLY | (constants2.O_NOFOLLOW ?? 0));
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size || opened.mtimeMs !== before.mtimeMs || opened.size > maxBytes) throw new FusionError("ASSET_CHANGED", "Trusted file changed while being opened.");
+    const bytes = Buffer.alloc(opened.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const result = await handle.read(bytes, length, bytes.length - length, length);
+      if (!result.bytesRead) break;
+      length += result.bytesRead;
+    }
+    const after = await handle.stat(), linked = await lstat2(canonicalPath);
+    if (length !== opened.size || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || after.nlink !== 1 || linked.isSymbolicLink() || linked.dev !== opened.dev || linked.ino !== opened.ino || await realpath2(filename) !== canonicalPath) throw new FusionError("ASSET_CHANGED", "Trusted file changed while its bytes were read.");
+    return { bytes: bytes.subarray(0, length), canonicalPath };
+  } finally {
+    await handle.close();
+  }
+}
+async function verifyTrustedExecutableAsset(asset2) {
+  if (path2.extname(asset2.path).toLowerCase() !== ".mjs" || !sha3.safeParse(asset2.sha256).success) throw new FusionError("UNTRUSTED_ADAPTER", "Enterprise adapters require an explicit .mjs module and reviewed SHA-256.");
+  const result = await readTrustedFile(asset2.path);
+  if (hashBytes(result.bytes) !== asset2.sha256) throw new FusionError("ADAPTER_CHANGED", "The trusted enterprise adapter bytes changed. Restart and review the exact new module before use.");
+  return result.canonicalPath;
+}
+function authorize(profile, operation2, effect, documentId) {
+  if (effect === "read") {
+    if (documentId && profile.policy.readDocuments && !profile.policy.readDocuments.includes(documentId)) throw new FusionError("READ_DOCUMENT_DENIED", "Document is outside the trusted read scope.");
+    return;
+  }
+  const p = profile.policy;
+  if (!p.mutationsEnabled) throw new FusionError("MUTATIONS_DISABLED", "Mutations are disabled by the active profile.");
+  if (p.grantExpiresAt && Date.parse(p.grantExpiresAt) <= Date.now()) throw new FusionError("GRANT_EXPIRED", "The trusted scoped grant has expired.");
+  if (!p.effects.includes(effect)) throw new FusionError("EFFECT_DENIED", `The profile does not authorize ${effect}.`);
+  if (!p.operations.includes(operation2) && !(profile.mode === "fixture" && p.operations.includes("*"))) throw new FusionError("OPERATION_DENIED", `The profile does not authorize ${operation2}.`);
+  if (documentId && !p.documents.includes(documentId)) throw new FusionError("DOCUMENT_DENIED", "The document is outside the trusted grant.");
+  if (profile.mode === "managed" && (!p.qualifiedOperations.includes(operation2) || !p.qualificationEvidence)) throw new FusionError("QUALIFICATION_REQUIRED", "Managed writes require operation-specific live qualification evidence in the trusted profile. Use assisted mode only with its disclosed limits.");
+}
+
+// src/artifact-validation.ts
+var MAX_BYTES = 256e6;
+var MAX_PNG_CHUNKS = 1e5;
+var MAX_PNG_PIXELS = 64e6;
+var MAX_STL_TRIANGLES = 5e6;
+var MAX_STL_LINE = 1024;
+function invalid(message) {
+  throw new FusionError("INVALID_ARTIFACT", message, "partial");
+}
+function limit2(message) {
+  throw new FusionError("ARTIFACT_LIMIT", message, "partial");
+}
+function input(bytes) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length) invalid("Artifact content must be a nonempty byte buffer.");
+  if (bytes.length > MAX_BYTES) limit2("Artifact content exceeds the 256 MB parser bound.");
+}
+var crcTable = Uint32Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let i = 0; i < 8; i++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+  return c >>> 0;
+});
+function crc32(bytes, start, end) {
+  let c = 4294967295;
+  for (let i = start; i < end; i++) c = crcTable[(c ^ bytes[i]) & 255] ^ c >>> 8;
+  return (c ^ 4294967295) >>> 0;
+}
+function validatePngContent(bytes, expected) {
+  input(bytes);
+  if (expected && (!Number.isSafeInteger(expected.width) || expected.width < 1 || !Number.isSafeInteger(expected.height) || expected.height < 1)) invalid("Requested PNG dimensions are invalid.");
+  if (bytes.length < 57 || !bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) invalid("PNG signature or minimum container length is invalid.");
+  let cursor = 8, chunks = 0, width = 0, height = 0, bitDepth = 0, colorType = -1;
+  let palette = false, idat = false, afterIdat = false, compressedBytes = 0, ended = false, animation = false;
+  while (cursor < bytes.length) {
+    if (++chunks > MAX_PNG_CHUNKS) limit2("PNG exceeds the bounded chunk count.");
+    if (bytes.length - cursor < 12) invalid("PNG has a truncated chunk.");
+    const length = bytes.readUInt32BE(cursor);
+    if (length > 2147483647 || length > bytes.length - cursor - 12) invalid("PNG chunk length escapes the file.");
+    const typeBytes = bytes.subarray(cursor + 4, cursor + 8);
+    if (typeBytes.some((value) => !(value >= 65 && value <= 90 || value >= 97 && value <= 122))) invalid("PNG chunk type contains a non-letter byte.");
+    const type = typeBytes.toString("ascii");
+    if (type[2] !== type[2].toUpperCase()) invalid("PNG chunk type reserved bit is invalid.");
+    const start = cursor + 8, end = start + length;
+    if (crc32(bytes, cursor + 4, end) !== bytes.readUInt32BE(end)) invalid("PNG chunk CRC does not match its bytes.");
+    if (chunks === 1 && type !== "IHDR") invalid("PNG must begin with IHDR.");
+    if (type === "IHDR") {
+      if (chunks !== 1 || length !== 13) invalid("PNG must have one 13-byte IHDR.");
+      width = bytes.readUInt32BE(start);
+      height = bytes.readUInt32BE(start + 4);
+      bitDepth = bytes[start + 8];
+      colorType = bytes[start + 9];
+      const depths = { 0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16] };
+      if (!width || !height || width > 2147483647 || height > 2147483647 || !depths[colorType]?.includes(bitDepth) || bytes[start + 10] !== 0 || bytes[start + 11] !== 0 || ![0, 1].includes(bytes[start + 12])) invalid("PNG IHDR dimensions or coding fields are invalid.");
+      if (width * height > MAX_PNG_PIXELS) limit2("PNG exceeds the 64-million-pixel admission bound.");
+      if (expected && (width !== expected.width || height !== expected.height)) invalid("PNG dimensions differ from the bound producer request.");
+    } else if (type === "PLTE") {
+      if (palette || idat || length === 0 || length % 3 !== 0 || length > 768 || [0, 4].includes(colorType) || colorType === 3 && length / 3 > 2 ** bitDepth) invalid("PNG palette is invalid or out of order.");
+      palette = true;
+    } else if (type === "IDAT") {
+      if (afterIdat || colorType === 3 && !palette) invalid("PNG image data is nonconsecutive or lacks its required palette.");
+      idat = true;
+      compressedBytes += length;
+    } else if (type === "IEND") {
+      if (length !== 0 || !idat || compressedBytes === 0 || end + 4 !== bytes.length) invalid("PNG trailer or image-data framing is invalid.");
+      ended = true;
+    } else {
+      if (type[0] === type[0].toUpperCase()) invalid("PNG contains an unsupported critical chunk.");
+      if (["acTL", "fcTL", "fdAT"].includes(type)) animation = true;
+    }
+    if (idat && type !== "IDAT") afterIdat = true;
+    cursor = end + 4;
+  }
+  if (!ended) invalid("PNG lacks a terminal IEND chunk.");
+  return {
+    validator: "png_container_v1",
+    width,
+    height,
+    chunk_count: chunks,
+    requested_dimensions: expected ? { ...expected } : null,
+    dimensions_match_request: expected ? true : null,
+    pixel_data_decoded: false,
+    animation_chunks_present: animation,
+    scope: "Container, CRC and declared pixel dimensions only; compressed pixels/metadata, animation semantics and visual correctness are not decoded or verified."
+  };
+}
+var StlBounds = class {
+  min = [Infinity, Infinity, Infinity];
+  max = [-Infinity, -Infinity, -Infinity];
+  vertex(values) {
+    for (let axis = 0; axis < 3; axis++) {
+      const value = values[axis];
+      if (!Number.isFinite(value)) invalid("STL contains a nonfinite vertex coordinate.");
+      this.min[axis] = Math.min(this.min[axis], value);
+      this.max[axis] = Math.max(this.max[axis], value);
+    }
+  }
+};
+function stlResult(encoding, triangles, bounds, attributes = 0) {
+  if (!triangles) invalid("STL contains no triangular facets.");
+  return {
+    validator: "stl_triangles_v1",
+    encoding,
+    triangle_count: triangles,
+    bounds: { min: bounds.min, max: bounds.max, unit: "file_coordinates_without_embedded_unit" },
+    nonzero_attribute_word_count: attributes,
+    normal_check: "finite_components_only",
+    topology_checked: false,
+    scope: "Bounded triangular record grammar and finite numbers only; normal direction/unit length, degenerate facets, winding, watertightness, intersections, embedded attribute/color conventions and source-shape equivalence are not verified."
+  };
+}
+function binaryStl(bytes, triangles) {
+  if (triangles > MAX_STL_TRIANGLES) limit2("STL exceeds the five-million-triangle admission bound.");
+  const bounds = new StlBounds();
+  let attributes = 0;
+  for (let i = 0, offset2 = 84; i < triangles; i++, offset2 += 50) {
+    for (let n = 0; n < 3; n++) if (!Number.isFinite(bytes.readFloatLE(offset2 + n * 4))) invalid("STL contains a nonfinite normal component.");
+    for (let vertex = 0; vertex < 3; vertex++) {
+      const start = offset2 + 12 + vertex * 12;
+      bounds.vertex([bytes.readFloatLE(start), bytes.readFloatLE(start + 4), bytes.readFloatLE(start + 8)]);
+    }
+    if (bytes.readUInt16LE(offset2 + 48) !== 0) attributes++;
+  }
+  return stlResult("binary", triangles, bounds, attributes);
+}
+function* asciiLines(bytes) {
+  let start = 0;
+  for (let i = 0; i <= bytes.length; i++) {
+    if (i - start > MAX_STL_LINE) limit2("ASCII STL exceeds the 1024-byte line bound.");
+    if (i === bytes.length || bytes[i] === 10 || bytes[i] === 13) {
+      const line = bytes.toString("ascii", start, i).trim();
+      if (line) yield line;
+      if (bytes[i] === 13 && bytes[i + 1] === 10) i++;
+      start = i + 1;
+    } else if (bytes[i] !== 9 && (bytes[i] < 32 || bytes[i] > 126)) invalid("ASCII STL contains non-ASCII or control bytes.");
+  }
+}
+function stlNumber(token) {
+  if (token.length > 128) limit2("ASCII STL numeric token exceeds its bound.");
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(token)) invalid("ASCII STL contains a malformed numeric token.");
+  const value = Number(token);
+  if (!Number.isFinite(value)) invalid("ASCII STL contains a nonfinite number.");
+  return value;
+}
+function asciiStl(bytes) {
+  const lines = asciiLines(bytes), bounds = new StlBounds();
+  const next = () => {
+    const line = lines.next();
+    if (line.done) invalid("ASCII STL ended inside its triangular record grammar.");
+    return line.value;
+  };
+  if (!/^solid(?:\s.*)?$/.test(next())) invalid("ASCII STL must begin with a solid record.");
+  let triangles = 0;
+  for (; ; ) {
+    const line = next();
+    if (/^endsolid(?:\s.*)?$/.test(line)) {
+      if (!lines.next().done) invalid("ASCII STL has data after its single endsolid record.");
+      break;
+    }
+    const normal = line.split(/\s+/);
+    if (normal.length !== 5 || normal[0] !== "facet" || normal[1] !== "normal") invalid("ASCII STL requires a facet normal record with three components.");
+    normal.slice(2).forEach(stlNumber);
+    if (!/^outer\s+loop$/.test(next())) invalid("ASCII STL requires one outer loop per facet.");
+    for (let i = 0; i < 3; i++) {
+      const vertex = next().split(/\s+/);
+      if (vertex.length !== 4 || vertex[0] !== "vertex") invalid("ASCII STL requires exactly three vertices per facet.");
+      bounds.vertex(vertex.slice(1).map(stlNumber));
+    }
+    if (next() !== "endloop" || next() !== "endfacet") invalid("ASCII STL facet terminators are invalid.");
+    if (++triangles > MAX_STL_TRIANGLES) limit2("STL exceeds the five-million-triangle admission bound.");
+  }
+  return stlResult("ascii", triangles, bounds);
+}
+function validateStlContent(bytes) {
+  input(bytes);
+  if (bytes.length >= 84) {
+    const triangles = bytes.readUInt32LE(80);
+    if (84 + triangles * 50 === bytes.length) return binaryStl(bytes, triangles);
+  }
+  return asciiStl(bytes);
+}
+
 // src/artifacts.ts
 import { constants as constants3 } from "node:fs";
-import { lstat as lstat3, mkdir as mkdir2, open as open3, opendir, realpath as realpath3 } from "node:fs/promises";
+import { lstat as lstat3, mkdir as mkdir2, open as open3, opendir as opendir2, realpath as realpath3 } from "node:fs/promises";
 import path3 from "node:path";
+function provenanceError(message) {
+  throw new FusionError("ARTIFACT_PROVENANCE_CHANGED", message, "partial");
+}
+function object3(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function text3(value, label2, maximum = 2048) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value !== "string" || !value.length || value.length > maximum || /[\u0000-\u001f\u007f]/u.test(value)) provenanceError(`${label2} is not bounded observation text.`);
+  return value;
+}
+function sha4(value, label2) {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) provenanceError(`${label2} is not a SHA-256.`);
+  return value;
+}
+function bool(value, label2) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value !== "boolean") provenanceError(`${label2} is not an observed boolean.`);
+  return value;
+}
+function projection(value, fields) {
+  if (value === void 0 || value === null) return null;
+  const record3 = object3(value);
+  if (!record3) provenanceError("Source observation has an invalid object shape.");
+  return Object.fromEntries(fields.map((field) => [field, text3(record3[field], field)]));
+}
+function version2(record3) {
+  const value = record3.manifest_version ?? 1;
+  if (![1, 2].includes(value)) throw new FusionError("ARTIFACT_CHANGED", "Artifact manifest version is unsupported.", "partial");
+  if (value === 1 && (record3.provenance !== void 0 || record3.files?.some((file2) => file2.validation !== void 0))) throw new FusionError("ARTIFACT_CHANGED", "A legacy artifact cannot acquire version 2 provenance or validation grades.", "partial");
+  return value;
+}
+function assertProducerBinding(plan) {
+  let actual;
+  try {
+    actual = hash({
+      id: plan.id,
+      created_at: plan.created_at,
+      expires_at: plan.expires_at,
+      operation: plan.operation,
+      expected_state: plan.expected_state ?? null,
+      handler_hash: plan.handler_hash,
+      profile_hash: plan.profile_hash,
+      execution_contract_hash: plan.execution_contract_hash ?? null,
+      effect: plan.effect,
+      provider_args: plan.provider_args,
+      artifact: plan.artifact ?? null,
+      before: plan.before,
+      summary: plan.summary,
+      limitations: plan.limitations
+    });
+  } catch {
+    provenanceError("The stored producer content cannot be verified against its immutable plan binding.");
+  }
+  if (actual !== plan.hash) provenanceError("The stored producer content changed after its plan hash was prepared.");
+}
+function provenance(plan, evidence, profile) {
+  if (!evidence || !["native_mcp", "typed_addin", "synthetic_fixture", "unverified_provider"].includes(evidence.provider_kind) || evidence.response?.ok !== true) provenanceError("Artifact completion requires a successful broker-retained provider response.");
+  assertJson(evidence.response, 4194304);
+  const response = evidence.response, data = object3(response.data);
+  if (!data) provenanceError("Artifact completion response lacks structured provider data.");
+  if (data.status !== void 0 && data.status !== "succeeded") provenanceError("Pending, failed or unrecognized provider status cannot finalize an artifact.");
+  if (plan.profile_hash !== profileHash(profile)) provenanceError("The artifact producer belongs to another profile configuration.");
+  const op = parseOperation(plan.operation), before = object3(plan.before) ?? {};
+  const documentId = text3(op.document_id, "Producer document ID", 128);
+  const observedDocumentId = text3(before.document_id, "Observed document ID", 128);
+  if (!documentId || observedDocumentId !== null && observedDocumentId !== documentId || data.source_document_id !== void 0 && data.source_document_id !== documentId) provenanceError("The artifact source observation does not match its producing document.");
+  const expectedState = text3(plan.expected_state, "Prepared source state", 128);
+  if (!expectedState || op.expected_state !== expectedState) provenanceError("The producer source-state binding is incomplete.");
+  const providerJobId2 = text3(evidence.provider_job_id, "Provider future ID");
+  if ((data.job_id !== void 0 || providerJobId2 !== null) && data.job_id !== providerJobId2) provenanceError("The completion response belongs to another provider future.");
+  if (["render.start", "cam.nc_post", "cam.setup_sheet"].includes(op.operation) && data.status !== "succeeded") provenanceError("Asynchronous artifact completion needs explicit successful provider status.");
+  const args = op.args, internal = object3(plan.provider_args);
+  if (!internal) provenanceError("The producer has no bound provider arguments.");
+  const destination = object3(args.output);
+  if (destination?.root !== plan.artifact.root || destination?.filename !== plan.artifact.filename) provenanceError("The reserved output identity differs from the bound request.");
+  const optionKeys = {
+    "exports.generate": ["format", "entity_id", "unit", "mesh_refinement"],
+    "view.capture": ["width", "height", "fit"],
+    "render.start": ["width", "height", "quality"],
+    "drawings.export_pdf": ["all_sheets"],
+    "flatpattern.export": ["component_id"],
+    "cam.nc_post": ["operation_ids", "manufacturing_profile_id", "review_record_id", "program_name"],
+    "cam.setup_sheet": ["operation_ids", "format"]
+  };
+  const keys = optionKeys[op.operation];
+  if (!keys) provenanceError("The producer operation has no reviewed artifact provenance mapping.");
+  const options = Object.fromEntries(keys.filter((key) => args[key] !== void 0).map((key) => [key, args[key]]));
+  for (const key of keys) {
+    if (!["manufacturing_profile_id", "review_record_id"].includes(key) && args[key] !== void 0 && (internal[key] === void 0 || hash(args[key]) !== hash(internal[key]))) provenanceError("Provider options differ from the bound producer request.");
+  }
+  if (args.parameters !== void 0) options.post_parameters_sha256 = hash(args.parameters);
+  if (op.operation === "cam.nc_post") {
+    options.resolved_output_unit = text3(internal.units, "Bound NC output unit", 32);
+    options.resolved_post_sha256 = sha4(internal.post_sha256, "Bound post asset hash");
+    options.resolved_machine_sha256 = sha4(object3(internal.machine_profile)?.sha256, "Bound machine asset hash");
+    options.resolved_tool_library_sha256 = sha4(object3(internal.tool_library)?.sha256, "Bound tool-library asset hash");
+  }
+  const format = op.operation === "exports.generate" ? args.format : op.operation === "drawings.export_pdf" ? "pdf" : op.operation === "flatpattern.export" ? "dxf" : op.operation === "cam.nc_post" ? "nc" : op.operation === "cam.setup_sheet" ? "html" : "png";
+  if (format !== plan.artifact.format) provenanceError("The reserved artifact format differs from the producer request.");
+  let dimensions = null;
+  if (["view.capture", "render.start"].includes(op.operation)) {
+    if (internal.width !== args.width || internal.height !== args.height) provenanceError("The provider image dimensions differ from the bound request.");
+    dimensions = { width: args.width, height: args.height };
+  }
+  if (format === "stl") {
+    options.unit = args.unit ?? "mm";
+    options.mesh_refinement = args.mesh_refinement ?? "high";
+    options.binary = true;
+    options.one_file_per_body = false;
+    if ((internal.unit ?? "mm") !== options.unit || (internal.mesh_refinement ?? "high") !== options.mesh_refinement) provenanceError("The provider STL options differ from the bound request.");
+  }
+  if (op.operation === "view.capture") options.fit = args.fit ?? false;
+  const diagnostic = evidence.diagnostic === void 0 ? void 0 : object3(evidence.diagnostic);
+  if (evidence.diagnostic !== void 0 && !diagnostic) provenanceError("Provider diagnostic observation has an invalid shape.");
+  const diagnosticSession = text3(diagnostic?.session_id, "Diagnostic session ID", 256);
+  const sourceSession = text3(before.session_id, "Source session ID", 256);
+  if (diagnosticSession && sourceSession && diagnosticSession !== sourceSession) provenanceError("Provider diagnostics and source observation belong to different sessions.");
+  const observedFusionVersion = text3(diagnostic?.fusion_version, "Observed Fusion version", 256);
+  const fusionVersion = sourceSession && diagnosticSession === sourceSession ? observedFusionVersion : null;
+  const cloud = projection(before.cloud, ["lineage_id", "version_id", "project_id", "folder_id"]);
+  if (cloud) {
+    const number4 = object3(before.cloud)?.version_number;
+    if (number4 !== void 0 && number4 !== null && (!Number.isSafeInteger(number4) || number4 < 1)) provenanceError("Observed cloud version number is invalid.");
+    cloud.version_number = number4 ?? null;
+  }
+  let configuration = null;
+  if (before.configuration !== void 0 && before.configuration !== null) {
+    const value = object3(before.configuration);
+    if (!value) provenanceError("Observed configuration identity is invalid.");
+    configuration = { is_configured_design: bool(value.is_configured_design, "Configured-design flag"), is_configuration: bool(value.is_configuration, "Configuration-instance flag"), row_id: text3(value.row_id, "Configuration row"), table_id: text3(value.table_id, "Configuration table") };
+  }
+  const output2 = data.artifact === void 0 ? void 0 : object3(data.artifact);
+  if (data.artifact !== void 0 && !output2) provenanceError("Provider artifact observation has an invalid shape.");
+  let reportedOutput = null;
+  if (output2) {
+    const outputFormat = text3(output2.format, "Reported output format", 32);
+    const outputHash = output2.sha256 === void 0 ? null : sha4(output2.sha256, "Reported output hash");
+    const bytes = output2.size_bytes;
+    if (bytes !== void 0 && (!Number.isSafeInteger(bytes) || bytes < 1)) provenanceError("Reported output byte count is invalid.");
+    if (outputFormat !== null && outputFormat !== format) provenanceError("Reported output format differs from the reserved artifact.");
+    const reportedOptions = {};
+    for (const field of ["unit", "mesh_refinement"]) if (output2[field] !== void 0) reportedOptions[field] = text3(output2[field], "Reported " + field, 64);
+    if (output2.binary !== void 0) reportedOptions.binary = bool(output2.binary, "Reported binary format");
+    for (const field of ["surface_deviation_cm", "normal_deviation_rad", "maximum_edge_length_cm"]) {
+      if (output2[field] !== void 0) {
+        if (typeof output2[field] !== "number" || !Number.isFinite(output2[field])) provenanceError("Reported mesh tolerance is nonfinite.");
+        reportedOptions[field] = output2[field];
+      }
+    }
+    if (format === "stl") {
+      for (const field of ["unit", "mesh_refinement", "binary"]) if (reportedOptions[field] !== void 0 && reportedOptions[field] !== options[field]) provenanceError("Reported STL options contradict the bound export request.");
+    }
+    reportedOutput = { format: outputFormat, sha256: outputHash, size_bytes: bytes ?? null, options: reportedOptions };
+  }
+  const completionState = text3(response.state, "Completion source state", 128);
+  const synthetic = evidence.provider_kind === "synthetic_fixture" || before.fixture === true || data.fixture === true || data.provider === "synthetic_fixture" || data.live_fusion_verified === false;
+  const internalUnits = projection(before.internal_units, ["length", "angle", "mass"]);
+  const reportedUnits = projection(before.units, ["length", "angle", "mass"]);
+  const losses = {
+    step: ["Neutral BRep exchange does not preserve Fusion parametric history or establish material/metadata parity."],
+    stl: ["STL stores tessellated coordinates without an embedded unit or parametric/material identity.", "Unit and meshing settings are requested/provider-reported context; file parsing does not verify their physical correspondence."],
+    f3d: ["Native archive contents and target Fusion compatibility require a qualified reopen; archives are not extracted here."],
+    png: ["Images are not dimensional proof; compressed pixels, visual correctness and complete animation semantics are not verified."],
+    pdf: ["PDF signatures do not establish drawing sheet count, dimensions or engineering approval."],
+    dxf: ["DXF signatures do not establish dimensional fidelity or manufacturing suitability."],
+    html: ["HTML is an unsanitized review package, not manufacturing signoff; embedded content must not be opened automatically."],
+    nc: ["NC content is quarantined; program correctness, collision safety and machine release remain unverified."]
+  };
+  const unknown2 = [];
+  for (const [field, value] of Object.entries({ fusion_version: fusionVersion, source_document_observation: observedDocumentId, source_session: sourceSession, cloud_identity: cloud, configuration, internal_units: internalUnits, completion_state: completionState, provider_output_hash: reportedOutput?.sha256 ?? null })) if (value === null) unknown2.push(field);
+  const result = {
+    schema: 1,
+    producer: {
+      plan_id: plan.id,
+      plan_hash: sha4(plan.hash, "Producer plan hash"),
+      operation: op.operation,
+      handler_sha256: sha4(plan.handler_hash, "Handler hash"),
+      execution_contract_sha256: sha4(plan.execution_contract_hash, "Execution contract hash"),
+      profile_sha256: sha4(plan.profile_hash, "Profile hash"),
+      provider_kind: evidence.provider_kind,
+      evidence: synthetic ? "synthetic_fixture" : evidence.provider_kind === "unverified_provider" ? "unverified_provider_response" : "provider_reported",
+      fusion_version: fusionVersion,
+      diagnostic_session_id: diagnosticSession,
+      independently_verified: false
+    },
+    source: {
+      document_id: documentId,
+      observed_document_id: observedDocumentId,
+      session_id: sourceSession,
+      state_at_preparation: expectedState,
+      state_at_completion: completionState,
+      completion_state_matches_preparation: completionState === null ? null : expectedState === completionState,
+      cloud,
+      configuration,
+      internal_units: internalUnits,
+      reported_units: reportedUnits,
+      display_length_unit: text3(before.display_length_unit, "Display length unit", 64),
+      scope: "Historical source observation used to prepare the producer; completion state is separate and does not prove which intermediate geometry an asynchronous provider used."
+    },
+    request: { format, options, options_basis: "Bound producer request, resolved pinned asset settings and explicit reviewed-handler defaults; not inferred from profile qualification claims.", png_dimensions: dimensions },
+    completion: { recorded_at: now(), response_sha256: hash(response), provider_job_id: providerJobId2, provider_status: text3(data.status, "Provider status", 64), reported_output: reportedOutput },
+    known_losses: [...losses[format] ?? [], "No kernel, physical, visual or manufacturing correctness is established by this receipt."],
+    unknown_fields: unknown2
+  };
+  assertJson(result, 131072);
+  return result;
+}
 function validateFilename(filename) {
   if (!/^[\p{L}\p{N}][\p{L}\p{N}\p{M}._ -]{0,159}$/u.test(filename) || filename !== filename.normalize("NFC") || filename.endsWith(".") || filename.endsWith(" ") || filename.includes("..") || /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(filename)) throw new FusionError("UNSAFE_PATH", "Use a simple NFC filename without separators, traversal, device names, trailing dots or trailing spaces.");
   return filename;
@@ -15324,8 +17524,33 @@ async function boundedFile(filename, maxBytes, kind) {
   }
 }
 var samePath = (left, right) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
-function manifest(record2) {
-  return { version: 1, id: record2.id, root: record2.root, filename: record2.filename, format: record2.format, plan_id: record2.plan_id ?? null, producer_plan_hash: record2.producer_plan_hash ?? null, completed_at: record2.completed_at ?? null, files: record2.files ?? [] };
+function manifest(record3) {
+  const manifestVersion = version2(record3);
+  const original = { version: manifestVersion, id: record3.id, root: record3.root, filename: record3.filename, format: record3.format, plan_id: record3.plan_id ?? null, producer_plan_hash: record3.producer_plan_hash ?? null, completed_at: record3.completed_at ?? null, files: record3.files ?? [] };
+  return manifestVersion === 1 ? original : { ...original, provenance: record3.provenance ?? null, limitation: record3.limitation ?? null };
+}
+function validateContent(bytes, format, manifestVersion, expected) {
+  if (manifestVersion === 2 && format === "png") return {
+    media_type: "image/png",
+    validation: validatePngContent(bytes, expected),
+    checks: ["regular_file", "nonempty", "sha256", "png_critical_chunk_structure", "png_chunk_crc", ...expected ? ["png_dimensions_match_request"] : []]
+  };
+  if (manifestVersion === 2 && format === "stl") return {
+    media_type: "model/stl",
+    validation: validateStlContent(bytes),
+    checks: ["regular_file", "nonempty", "sha256", "stl_triangle_record_grammar", "stl_finite_coordinates_and_normals", "stl_coordinate_bounds"]
+  };
+  return validateArtifact(bytes, format);
+}
+function validateProvenance(record3) {
+  const value = record3.provenance;
+  if (!value || value.schema !== 1 || value.producer?.plan_id !== record3.plan_id || value.producer?.plan_hash !== record3.producer_plan_hash || value.request?.format !== record3.format || value.producer.independently_verified !== false || !Array.isArray(value.known_losses) || !Array.isArray(value.unknown_fields)) throw new FusionError("ARTIFACT_CHANGED", "Version 2 provenance is missing or contradicts the immutable artifact identity.", "partial");
+  assertJson(value, 131072);
+  if (record3.format === "png") {
+    const dimensions = value.request.png_dimensions;
+    if (!dimensions || !Number.isSafeInteger(dimensions.width) || dimensions.width < 108 || dimensions.width > 4e3 || !Number.isSafeInteger(dimensions.height) || dimensions.height < 108 || dimensions.height > 4e3) throw new FusionError("ARTIFACT_CHANGED", "The completed PNG receipt lacks its bounded original dimension request.", "partial");
+  }
+  return value;
 }
 function validateArtifact(bytes, format) {
   if (!bytes.length) throw new FusionError("EMPTY_ARTIFACT", "The provider produced an empty artifact.", "partial");
@@ -15354,10 +17579,12 @@ var ArtifactManager = class {
     if (!suffix[format]?.includes(path3.extname(destination.filename).toLowerCase())) throw new FusionError("INVALID_EXTENSION", "Filename extension does not match the requested format.");
     const id2 = newId("artifact");
     const directory = path3.join(root.path, id2);
-    return { id: id2, root: root.id, filename: destination.filename, format, directory, path: path3.join(directory, destination.filename), status: "prepared", created_at: now() };
+    return { id: id2, root: root.id, filename: destination.filename, format, directory, path: path3.join(directory, destination.filename), status: "prepared", created_at: now(), manifest_version: 2 };
   }
   async stage(reservation) {
     await this.validateAccess?.();
+    version2(reservation);
+    if (reservation.status !== "prepared" || reservation.files || reservation.manifest_sha256 || reservation.provenance || reservation.producer_plan_hash || reservation.completed_at) throw new FusionError("ARTIFACT_CHANGED", "Only a fresh prepared reservation may be staged.");
     const configured = this.profile.outputs.find((x) => x.id === reservation.root);
     if (!configured) throw new FusionError("OUTPUT_DENIED", "The output root was removed.");
     const root = await ensurePrivateDirectory(configured.path);
@@ -15382,15 +17609,26 @@ var ArtifactManager = class {
   /** Called only by the engine after an explicit successful provider result. */
   async complete(id2, producer) {
     await this.validateAccess?.();
-    const plan = await this.store.get("plan", producer.plan_id);
-    if (!plan || plan.id !== producer.plan_id || plan.hash !== producer.plan_hash || plan.artifact?.id !== id2 || !["executing", "pending", "outcome_unknown", "succeeded", "failed"].includes(plan.status)) throw new FusionError("ARTIFACT_PROVENANCE_CHANGED", "Only the verified producing execution may finalize this artifact.");
-    return this.inspectInternal(id2, false, producer);
+    try {
+      if (producer.evidence?.response?.ok !== true) provenanceError("Artifact completion requires the actual successful provider response.");
+      const plan = await this.store.get("plan", producer.plan_id);
+      const record3 = await this.store.get("artifact", id2);
+      if (!plan || !record3 || plan.id !== producer.plan_id || plan.hash !== producer.plan_hash || plan.artifact?.id !== id2 || !["executing", "pending", "outcome_unknown", "succeeded", "failed"].includes(plan.status)) provenanceError("Only the verified producing execution may finalize this artifact.");
+      assertProducerBinding(plan);
+      if (record3.plan_id !== plan.id || record3.id !== plan.artifact.id || record3.root !== plan.artifact.root || record3.filename !== plan.artifact.filename || record3.format !== plan.artifact.format || version2(record3) !== version2(plan.artifact)) provenanceError("The staged artifact no longer matches its bound producer reservation.");
+      if (record3.status === "succeeded") return await this.inspectInternal(id2, false, producer);
+      const observed = version2(record3) === 2 ? provenance(plan, producer.evidence, this.profile) : void 0;
+      return await this.inspectInternal(id2, false, { ...producer, ...observed ? { provenance: observed } : {} });
+    } catch (error51) {
+      if (error51 instanceof FusionError && error51.outcome === "none") throw new FusionError(error51.code, error51.message, "partial", error51.details);
+      throw error51;
+    }
   }
   async quarantine(id2, status, limitation) {
-    const record2 = await this.store.get("artifact", id2);
-    if (!record2 || record2.id !== id2) throw new FusionError("NOT_FOUND", "Artifact reference was not found in this profile.");
-    if (record2.status === "succeeded" || record2.manifest_sha256 || record2.files) throw new FusionError("ARTIFACT_IMMUTABLE", "A completed artifact manifest cannot be changed.");
-    const result = { ...record2, status, limitation };
+    const record3 = await this.store.get("artifact", id2);
+    if (!record3 || record3.id !== id2) throw new FusionError("NOT_FOUND", "Artifact reference was not found in this profile.");
+    if (record3.status === "succeeded" || record3.manifest_sha256 || record3.files) throw new FusionError("ARTIFACT_IMMUTABLE", "A completed artifact manifest cannot be changed.");
+    const result = { ...record3, status, limitation };
     await this.store.put("artifact", id2, result);
     return result;
   }
@@ -15398,9 +17636,12 @@ var ArtifactManager = class {
     const reservation = await this.store.get("artifact", id2);
     if (!reservation || reservation.id !== id2 || !/^artifact_[a-f0-9-]{36}$/u.test(id2)) throw new FusionError("NOT_FOUND", "Artifact reference was not found in this profile.");
     validateFilename(reservation.filename);
+    const manifestVersion = version2(reservation);
     if (completion && reservation.plan_id !== completion.plan_id) throw new FusionError("ARTIFACT_PROVENANCE_CHANGED", "Artifact does not belong to this producing plan.");
     if (reservation.status === "succeeded" && (!reservation.files?.length || !reservation.producer_plan_hash || !reservation.completed_at || !reservation.manifest_sha256 || hash(manifest(reservation)) !== reservation.manifest_sha256 || completion && reservation.producer_plan_hash !== completion.plan_hash)) throw new FusionError("ARTIFACT_CHANGED", "The immutable artifact manifest changed or is incomplete.", "partial");
-    if (reservation.status !== "succeeded" && (reservation.files || reservation.manifest_sha256 || reservation.producer_plan_hash)) throw new FusionError("ARTIFACT_CHANGED", "An incomplete artifact cannot carry a completed manifest.", "partial");
+    if (reservation.status !== "succeeded" && (reservation.files || reservation.manifest_sha256 || reservation.producer_plan_hash || reservation.provenance || reservation.completed_at)) throw new FusionError("ARTIFACT_CHANGED", "An incomplete artifact cannot carry a completed manifest.", "partial");
+    const observed = manifestVersion === 2 && reservation.status === "succeeded" ? validateProvenance(reservation) : completion?.provenance;
+    if (completion && reservation.status !== "succeeded" && manifestVersion === 2 && !observed) provenanceError("Version 2 completion requires bound provider provenance.");
     const configured = this.profile.outputs.find((x) => x.id === reservation.root);
     if (!configured) throw new FusionError("OUTPUT_DENIED", "This artifact root is no longer authorized.");
     const root = await realpath3(configured.path);
@@ -15415,7 +17656,7 @@ var ArtifactManager = class {
       const info = await lstat3(current);
       if (info.isSymbolicLink() || !info.isDirectory() || !samePath(await realpath3(current), current)) throw new FusionError("UNSAFE_ARTIFACT", "Output directory was replaced or linked.", "partial");
       directories.push({ filename: current, ino: info.ino, dev: info.dev });
-      for await (const entry of await opendir(current)) {
+      for await (const entry of await opendir2(current)) {
         if (++entries2 > 500) throw new FusionError("ARTIFACT_LIMIT", "Output contains too many entries.", "partial");
         validateFilename(entry.name.normalize("NFC"));
         const filename = path3.join(current, entry.name);
@@ -15452,15 +17693,20 @@ var ArtifactManager = class {
       const bytes = await boundedFile(filename, 256e6 - totalBytes, "artifact");
       totalBytes += bytes.length;
       const fileFormat = reservation.format === "html" ? { ".html": "html", ".htm": "html", ".css": "css", ".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg" }[path3.extname(name2).toLowerCase()] ?? "unsupported" : reservation.format;
-      files.push({ name: name2, size: bytes.length, sha256: hashBytes(bytes), ...validateArtifact(bytes, fileFormat) });
+      files.push({ name: name2, size: bytes.length, sha256: hashBytes(bytes), ...validateContent(bytes, fileFormat, manifestVersion, !bundle && fileFormat === "png" ? observed?.request.png_dimensions ?? void 0 : void 0) });
     }
+    if (reservation.format === "stl" && manifestVersion === 2 && observed?.request.options.binary === true && files[0]?.validation?.validator === "stl_triangles_v1" && files[0].validation.encoding !== "binary") provenanceError("STL encoding differs from the bound binary export settings.");
     for (const previous of directories) {
       const current = await lstat3(previous.filename);
       if (current.isSymbolicLink() || !current.isDirectory() || current.ino !== previous.ino || current.dev !== previous.dev || !samePath(await realpath3(previous.filename), previous.filename)) throw new FusionError("ARTIFACT_CHANGED", "Output directory changed during inspection.", "partial");
     }
     if (reservation.files && (reservation.files.length !== files.length || reservation.files.some((previous) => !files.some((current) => current.name === previous.name && current.sha256 === previous.sha256 && current.size === previous.size)))) throw new FusionError("ARTIFACT_CHANGED", "The immutable artifact receipt no longer matches the output bytes.", "partial");
+    if (manifestVersion === 2 && reservation.files && hash(reservation.files) !== hash(files)) throw new FusionError("ARTIFACT_CHANGED", "The completed validation grade no longer matches its declared validator and file bytes.", "partial");
+    const reported = observed?.completion.reported_output;
+    if (!bundle && reported && (reported.sha256 !== null && reported.sha256 !== files[0].sha256 || reported.size_bytes !== null && reported.size_bytes !== files[0].size)) provenanceError("Provider-reported artifact hash or byte count differs from the independently inspected output.");
     if (reservation.status === "succeeded") return reservation;
-    const result = { ...reservation, files, status: "succeeded", producer_plan_hash: completion.plan_hash, completed_at: now(), ...!bundle ? { path: path3.join(directory, files[0].name) } : {}, limitation: reservation.format === "nc" ? "Quarantined NC candidate. Signature checks do not establish collision safety or authorize machine use." : reservation.format === "html" ? "Quarantined HTML review package. It is not sanitized for active browser execution; do not publish or open untrusted embedded content automatically." : "Structural validation does not establish geometric fidelity; use round-trip/kernel qualification." };
+    const result = { ...reservation, files, status: "succeeded", producer_plan_hash: completion.plan_hash, completed_at: now(), ...observed ? { provenance: observed } : {}, ...!bundle ? { path: path3.join(directory, files[0].name) } : {}, limitation: reservation.format === "nc" ? "Quarantined NC candidate. Signature checks do not establish collision safety or authorize machine use." : reservation.format === "html" ? "Quarantined HTML review package. It is not sanitized for active browser execution; do not publish or open untrusted embedded content automatically." : "Structural validation does not establish geometric fidelity; use round-trip/kernel qualification." };
+    if (manifestVersion === 2) validateProvenance(result);
     result.manifest_sha256 = hash(manifest(result));
     await this.store.put("artifact", id2, result);
     return result;
@@ -15506,12 +17752,12 @@ var FixtureDesktopProvider = class {
           break;
         case "parameters.list": {
           const args = parseOperation({ operation: request.operation, document_id: request.document_id, args: request.args }).args;
-          const limit2 = args.limit ?? 100;
+          const limit3 = args.limit ?? 100;
           const names = Object.keys(p).sort();
           data = {
-            parameters: names.slice(0, limit2).map((name2) => ({ id: `fixture:param:${name2}`, name: name2, ...p[name2] })),
+            parameters: names.slice(0, limit3).map((name2) => ({ id: `fixture:param:${name2}`, name: name2, ...p[name2] })),
             total: names.length,
-            truncated: names.length > limit2,
+            truncated: names.length > limit3,
             units_note: "Synthetic numeric lengths are in millimetres; no Fusion unit conversion has run."
           };
           break;
@@ -15543,16 +17789,16 @@ var FixtureDesktopProvider = class {
         }
         case "entities.find": {
           const args = parseOperation({ operation: request.operation, document_id: request.document_id, args: request.args }).args;
-          const limit2 = args.limit ?? 100, offset2 = args.offset ?? 0;
+          const limit3 = args.limit ?? 100, offset2 = args.offset ?? 0;
           if (args.kind === "parameter" && args.parent_id !== void 0) throw new FusionError("INVALID_ARGUMENT", "Parameter discovery is scoped by document.");
           if (!["body", "parameter"].includes(args.kind) || args.parent_id !== void 0) throw new FusionError("FIXTURE_UNSUPPORTED", "This fixture simulates only document-scoped body and parameter discovery.");
           let entities = args.kind === "body" ? [{ entity_id: "fixture:body:bracket", name: "Bracket", kind: "body" }] : Object.keys(p).sort().map((name2) => ({ entity_id: `fixture:param:${name2}`, name: name2, kind: "parameter" }));
           if (args.name !== void 0) entities = entities.filter((entity) => entity.name === args.name);
           data = {
-            entities: entities.slice(offset2, offset2 + limit2),
+            entities: entities.slice(offset2, offset2 + limit3),
             total: entities.length,
             offset: offset2,
-            next_offset: offset2 + limit2 < entities.length ? offset2 + limit2 : null,
+            next_offset: offset2 + limit3 < entities.length ? offset2 + limit3 : null,
             name_filter_semantics: "Exact discovery filter only; mutations require opaque handles"
           };
           break;
@@ -15611,10 +17857,10 @@ function boundedJson(value, maxBytes, maxDepth = 48) {
   let nodes = 0;
   let bytes = 0;
   const ancestors = /* @__PURE__ */ new Set();
-  const charge = (text2) => {
-    bytes += Buffer.byteLength(text2);
+  const charge = (text4) => {
+    bytes += Buffer.byteLength(text4);
     if (bytes > maxBytes) throw new NativeFusionError("PAYLOAD_TOO_LARGE", "Native JSON payload exceeds its byte limit.");
-    return text2;
+    return text4;
   };
   const visit = (item, depth) => {
     if (++nodes > 1e5 || depth > maxDepth) {
@@ -15660,17 +17906,17 @@ function boundedJson(value, maxBytes, maxDepth = 48) {
 function cloneNativeJson(value, maxBytes) {
   return JSON.parse(boundedJson(value, maxBytes));
 }
-function validateNativeEndpoint(input) {
-  if (typeof input !== "string" || input.length > 2048 || /[\s\\?#]/u.test(input)) {
+function validateNativeEndpoint(input2) {
+  if (typeof input2 !== "string" || input2.length > 2048 || /[\s\\?#]/u.test(input2)) {
     throw new NativeFusionError("INVALID_ENDPOINT", "Configure a literal loopback MCP URL without credentials, query, fragment, whitespace, or backslashes.");
   }
-  const match = /^(https?):\/\/(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})(\/[^\u0000-\u0020\u007f]*)?$/u.exec(input);
+  const match = /^(https?):\/\/(127\.0\.0\.1|\[::1\]):([1-9][0-9]{0,4})(\/[^\u0000-\u0020\u007f]*)?$/u.exec(input2);
   if (!match || Number(match[3]) > 65535) {
     throw new NativeFusionError("INVALID_ENDPOINT", "Native Fusion requires literal 127.0.0.1 or [::1] and an explicit port from 1 through 65535.");
   }
   let url2;
   try {
-    url2 = new URL(input);
+    url2 = new URL(input2);
   } catch {
     throw new NativeFusionError("INVALID_ENDPOINT", "The configured native MCP URL is invalid.");
   }
@@ -15692,12 +17938,12 @@ async function abortable(promise2, signal) {
 }
 function createBoundedNativeFetch(options) {
   const configured = options.endpoint.href;
-  return async (input, init) => {
-    const target = input instanceof Request ? input.url : String(input);
+  return async (input2, init) => {
+    const target = input2 instanceof Request ? input2.url : String(input2);
     if (target !== configured) {
       throw new NativeFusionError("ENDPOINT_CHANGED", "The native transport attempted to use an endpoint other than its configured URL.");
     }
-    const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+    const method = (init?.method ?? (input2 instanceof Request ? input2.method : "GET")).toUpperCase();
     if (!["GET", "POST", "DELETE"].includes(method)) throw new NativeFusionError("INVALID_METHOD", "Unsupported native MCP HTTP method.");
     if (typeof init?.body === "string" && Buffer.byteLength(init.body) > MAX_NATIVE_REQUEST_BYTES) {
       throw new NativeFusionError("PAYLOAD_TOO_LARGE", "Native MCP request exceeds its byte limit.");
@@ -15707,7 +17953,7 @@ function createBoundedNativeFetch(options) {
     timer.unref?.();
     const signals = [options.connectionSignal, deadline.signal];
     if (init?.signal) signals.push(init.signal);
-    else if (input instanceof Request) signals.push(input.signal);
+    else if (input2 instanceof Request) signals.push(input2.signal);
     const signal = AbortSignal.any(signals);
     let reader;
     let finished = false;
@@ -15723,7 +17969,7 @@ function createBoundedNativeFetch(options) {
     };
     try {
       if (signal.aborted) throw abortReason(signal);
-      const responsePromise = options.fetchImpl(input, {
+      const responsePromise = options.fetchImpl(input2, {
         ...init,
         method,
         signal,
@@ -15815,7 +18061,7 @@ function createBoundedNativeFetch(options) {
 }
 
 // src/native-script.ts
-import { createHash as createHash2, randomBytes } from "node:crypto";
+import { createHash as createHash3, randomBytes } from "node:crypto";
 var MAX_HANDLER_BYTES = 2 * 1024 * 1024;
 var MAX_DESKTOP_REQUEST_BYTES = 2 * 1024 * 1024;
 var MARKER_PATTERN = /^CODEX_FUSION_V1_[a-f0-9]{64}$/u;
@@ -15839,7 +18085,7 @@ function buildDesktopScript(handlerSource, request, options = {}) {
   const outputLimit = boundedInteger(options.maxResponseBytes ?? DEFAULT_NATIVE_RESPONSE_BYTES, "maxResponseBytes", 512, 32 * 1024 * 1024);
   const marker = `CODEX_FUSION_V1_${randomBytes(32).toString("hex")}`;
   const source = Buffer.from(handlerSource, "utf8");
-  const handlerHash = createHash2("sha256").update(source).digest("hex");
+  const handlerHash = createHash3("sha256").update(source).digest("hex");
   const failureEnvelope = JSON.stringify({
     version: 1,
     request_id: clean.request_id,
@@ -16002,7 +18248,7 @@ function parseDesktopResult(result, marker, maxResponseBytes = DEFAULT_NATIVE_RE
 }
 
 // src/native.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 
 // node_modules/@modelcontextprotocol/client/dist/chunk-Br0eD_fh.mjs
 var __create = Object.create;
@@ -17173,14 +19419,14 @@ function checkResourceAllowed({ requestedResource, configuredResource }) {
 }
 var FIRST_MODERN_PROTOCOL_VERSION = "2026-07-28";
 var SUPPORTED_MODERN_PROTOCOL_VERSIONS = [FIRST_MODERN_PROTOCOL_VERSION];
-function isModernProtocolVersion(version2) {
-  return version2 >= FIRST_MODERN_PROTOCOL_VERSION;
+function isModernProtocolVersion(version3) {
+  return version3 >= FIRST_MODERN_PROTOCOL_VERSION;
 }
 function legacyProtocolVersions(versions) {
-  return versions.filter((version2) => !isModernProtocolVersion(version2));
+  return versions.filter((version3) => !isModernProtocolVersion(version3));
 }
 function modernProtocolVersions(versions) {
-  return versions.filter((version2) => isModernProtocolVersion(version2));
+  return versions.filter((version3) => isModernProtocolVersion(version3));
 }
 function appendTextFallbackForNonObject(result) {
   const sc = result.structuredContent;
@@ -19696,8 +21942,8 @@ function getWireResultSchemas() {
   return wireResultSchemasMemo;
 }
 var MODERN_WIRE_REVISION = "2026-07-28";
-function codecForVersion(version2) {
-  return version2 !== void 0 && isModernProtocolVersion(version2) ? rev2026Codec : rev2025Codec;
+function codecForVersion(version3) {
+  return version3 !== void 0 && isModernProtocolVersion(version3) ? rev2026Codec : rev2025Codec;
 }
 function classifiedWireEra(classification) {
   if (classification.revision !== void 0) return codecForVersion(classification.revision).era;
@@ -20293,14 +22539,14 @@ function findDroppedConstraintPaths(original, parsed, path9 = "") {
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
 }
-function normalizeElicitInputParams(input) {
-  if (!isStandardSchema(input.requestedSchema)) return {
-    ...input,
+function normalizeElicitInputParams(input2) {
+  if (!isStandardSchema(input2.requestedSchema)) return {
+    ...input2,
     mode: "form",
-    requestedSchema: input.requestedSchema
+    requestedSchema: input2.requestedSchema
   };
-  const vendor = input.requestedSchema["~standard"].vendor;
-  const pruned = walkRequestedSchema(convertStandardElicitationSchema(input.requestedSchema), vendor);
+  const vendor = input2.requestedSchema["~standard"].vendor;
+  const pruned = walkRequestedSchema(convertStandardElicitationSchema(input2.requestedSchema), vendor);
   const parsed = parseSchema(ElicitRequestFormParamsSchema.shape.requestedSchema, pruned);
   if (!parsed.success) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Elicitation requestedSchema only supports flat primitive properties (string, number, integer, boolean, and string enums): ${describeUnsupportedProperties(pruned, parsed.error.message)}`);
   const droppedConstraints = findDroppedConstraintPaths(pruned, parsed.data);
@@ -20308,7 +22554,7 @@ function normalizeElicitInputParams(input) {
   const danglingRequired = (parsed.data.required ?? []).filter((key) => !Object.prototype.hasOwnProperty.call(parsed.data.properties, key));
   if (danglingRequired.length > 0) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `Elicitation requestedSchema lists required properties that are not defined in properties: ${danglingRequired.join(", ")}`);
   return {
-    ...input,
+    ...input2,
     mode: "form",
     requestedSchema: parsed.data
   };
@@ -20741,8 +22987,8 @@ var Protocol = class {
   */
   _negotiatedProtocolVersion;
   static {
-    writeNegotiatedProtocolVersion = (instance, version2) => {
-      instance._negotiatedProtocolVersion = version2;
+    writeNegotiatedProtocolVersion = (instance, version3) => {
+      instance._negotiatedProtocolVersion = version3;
     };
   }
   _supportedProtocolVersions;
@@ -21574,9 +23820,9 @@ var require_content_type = /* @__PURE__ */ __commonJSMin(((exports) => {
   var QESC_REGEXP = /\\([\u000b\u0020-\u00ff])/g;
   var TYPE_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
   exports.parse = parse3;
-  function parse3(string4) {
-    if (!string4) throw new TypeError("argument string is required");
-    var header = typeof string4 === "object" ? getcontenttype(string4) : string4;
+  function parse3(string5) {
+    if (!string5) throw new TypeError("argument string is required");
+    var header = typeof string5 === "object" ? getcontenttype(string5) : string5;
     if (typeof header !== "string") throw new TypeError("argument string is required to be a string");
     var index = header.indexOf(";");
     var type = index !== -1 ? header.slice(0, index).trim() : header.trim();
@@ -22080,9 +24326,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
   };
   var Label = class extends Node {
-    constructor(label) {
+    constructor(label2) {
       super();
-      this.label = label;
+      this.label = label2;
       this.names = {};
     }
     render({ _n }) {
@@ -22090,9 +24336,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
   };
   var Break = class extends Node {
-    constructor(label) {
+    constructor(label2) {
       super();
-      this.label = label;
+      this.label = label2;
       this.names = {};
     }
     render({ _n }) {
@@ -22457,11 +24703,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin(((exports) => {
     endFor() {
       return this._endBlockNode(For);
     }
-    label(label) {
-      return this._leafNode(new Label(label));
+    label(label2) {
+      return this._leafNode(new Label(label2));
     }
-    break(label) {
-      return this._leafNode(new Break(label));
+    break(label2) {
+      return this._leafNode(new Break(label2));
     }
     return(value) {
       const node = new Return();
@@ -23575,11 +25821,11 @@ var require_resolve = /* @__PURE__ */ __commonJSMin(((exports) => {
     "enum",
     "const"
   ]);
-  function inlineRef(schema, limit2 = true) {
+  function inlineRef(schema, limit3 = true) {
     if (typeof schema == "boolean") return true;
-    if (limit2 === true) return !hasRef(schema);
-    if (!limit2) return false;
-    return countKeys(schema) <= limit2;
+    if (limit3 === true) return !hasRef(schema);
+    if (!limit3) return false;
+    return countKeys(schema) <= limit3;
   }
   exports.inlineRef = inlineRef;
   const REF_KEYWORDS = /* @__PURE__ */ new Set([
@@ -23645,19 +25891,19 @@ var require_resolve = /* @__PURE__ */ __commonJSMin(((exports) => {
       addAnchor.call(this, sch.$anchor);
       addAnchor.call(this, sch.$dynamicAnchor);
       baseIds[jsonPtr] = innerBaseId;
-      function addRef(ref2) {
+      function addRef(ref4) {
         const _resolve = this.opts.uriResolver.resolve;
-        ref2 = normalizeId(innerBaseId ? _resolve(innerBaseId, ref2) : ref2);
-        if (schemaRefs.has(ref2)) throw ambiguos(ref2);
-        schemaRefs.add(ref2);
-        let schOrRef = this.refs[ref2];
+        ref4 = normalizeId(innerBaseId ? _resolve(innerBaseId, ref4) : ref4);
+        if (schemaRefs.has(ref4)) throw ambiguos(ref4);
+        schemaRefs.add(ref4);
+        let schOrRef = this.refs[ref4];
         if (typeof schOrRef == "string") schOrRef = this.refs[schOrRef];
-        if (typeof schOrRef == "object") checkAmbiguosRef(sch, schOrRef.schema, ref2);
-        else if (ref2 !== normalizeId(fullPath)) if (ref2[0] === "#") {
-          checkAmbiguosRef(sch, localRefs[ref2], ref2);
-          localRefs[ref2] = sch;
-        } else this.refs[ref2] = fullPath;
-        return ref2;
+        if (typeof schOrRef == "object") checkAmbiguosRef(sch, schOrRef.schema, ref4);
+        else if (ref4 !== normalizeId(fullPath)) if (ref4[0] === "#") {
+          checkAmbiguosRef(sch, localRefs[ref4], ref4);
+          localRefs[ref4] = sch;
+        } else this.refs[ref4] = fullPath;
+        return ref4;
       }
       function addAnchor(anchor) {
         if (typeof anchor == "string") {
@@ -23667,11 +25913,11 @@ var require_resolve = /* @__PURE__ */ __commonJSMin(((exports) => {
       }
     });
     return localRefs;
-    function checkAmbiguosRef(sch1, sch2, ref2) {
-      if (sch2 !== void 0 && !equal(sch1, sch2)) throw ambiguos(ref2);
+    function checkAmbiguosRef(sch1, sch2, ref4) {
+      if (sch2 !== void 0 && !equal(sch1, sch2)) throw ambiguos(ref4);
     }
-    function ambiguos(ref2) {
-      return /* @__PURE__ */ new Error(`reference "${ref2}" resolves to more than one schema`);
+    function ambiguos(ref4) {
+      return /* @__PURE__ */ new Error(`reference "${ref4}" resolves to more than one schema`);
     }
   }
   exports.getSchemaRefs = getSchemaRefs;
@@ -24107,9 +26353,9 @@ var require_ref_error = /* @__PURE__ */ __commonJSMin(((exports) => {
   Object.defineProperty(exports, "__esModule", { value: true });
   const resolve_1 = require_resolve();
   var MissingRefError = class extends Error {
-    constructor(resolver, baseId, ref2, msg) {
-      super(msg || `can't resolve reference ${ref2} from id ${baseId}`);
-      this.missingRef = (0, resolve_1.resolveUrl)(resolver, baseId, ref2);
+    constructor(resolver, baseId, ref4, msg) {
+      super(msg || `can't resolve reference ${ref4} from id ${baseId}`);
+      this.missingRef = (0, resolve_1.resolveUrl)(resolver, baseId, ref4);
       this.missingSchema = (0, resolve_1.normalizeId)((0, resolve_1.getFullPath)(resolver, this.missingRef));
     }
   };
@@ -24229,14 +26475,14 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
   }
   exports.compileSchema = compileSchema;
-  function resolveRef2(root, baseId, ref2) {
+  function resolveRef2(root, baseId, ref4) {
     var _a3;
-    ref2 = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref2);
-    const schOrFunc = root.refs[ref2];
+    ref4 = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref4);
+    const schOrFunc = root.refs[ref4];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve.call(this, root, ref2);
+    let _sch = resolve.call(this, root, ref4);
     if (_sch === void 0) {
-      const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref2];
+      const schema = (_a3 = root.localRefs) === null || _a3 === void 0 ? void 0 : _a3[ref4];
       const { schemaId } = this.opts;
       if (schema) _sch = new SchemaEnv({
         schema,
@@ -24246,7 +26492,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
       });
     }
     if (_sch === void 0) return;
-    return root.refs[ref2] = inlineOrCompile.call(this, _sch);
+    return root.refs[ref4] = inlineOrCompile.call(this, _sch);
   }
   exports.resolveRef = resolveRef2;
   function inlineOrCompile(sch) {
@@ -24260,13 +26506,13 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve(root, ref2) {
+  function resolve(root, ref4) {
     let sch;
-    while (typeof (sch = this.refs[ref2]) == "string") ref2 = sch;
-    return sch || this.schemas[ref2] || resolveSchema.call(this, root, ref2);
+    while (typeof (sch = this.refs[ref4]) == "string") ref4 = sch;
+    return sch || this.schemas[ref4] || resolveSchema.call(this, root, ref4);
   }
-  function resolveSchema(root, ref2) {
-    const p = this.opts.uriResolver.parse(ref2);
+  function resolveSchema(root, ref4) {
+    const p = this.opts.uriResolver.parse(ref4);
     const refPath = (0, resolve_1._getFullPath)(this.opts.uriResolver, p);
     let baseId = (0, resolve_1.getFullPath)(this.opts.uriResolver, root.baseId, void 0);
     if (Object.keys(root.schema).length > 0 && refPath === baseId) return getJsonPointer.call(this, p, root);
@@ -24279,7 +26525,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
     if (typeof (schOrRef === null || schOrRef === void 0 ? void 0 : schOrRef.schema) !== "object") return;
     if (!schOrRef.validate) compileSchema.call(this, schOrRef);
-    if (id2 === (0, resolve_1.normalizeId)(ref2)) {
+    if (id2 === (0, resolve_1.normalizeId)(ref4)) {
       const { schema } = schOrRef;
       const { schemaId } = this.opts;
       const schId = schema[schemaId];
@@ -24343,21 +26589,21 @@ var require_data = /* @__PURE__ */ __commonJSMin(((exports, module) => {
 var require_utils = /* @__PURE__ */ __commonJSMin(((exports, module) => {
   const isUUID = RegExp.prototype.test.bind(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu);
   const isIPv4 = RegExp.prototype.test.bind(/^(?:(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d{2}|[1-9]\d|\d)$/u);
-  function stringArrayToHexStripped(input) {
+  function stringArrayToHexStripped(input2) {
     let acc = "";
     let code = 0;
     let i = 0;
-    for (i = 0; i < input.length; i++) {
-      code = input[i].charCodeAt(0);
+    for (i = 0; i < input2.length; i++) {
+      code = input2[i].charCodeAt(0);
       if (code === 48) continue;
       if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) return "";
-      acc += input[i];
+      acc += input2[i];
       break;
     }
-    for (i += 1; i < input.length; i++) {
-      code = input[i].charCodeAt(0);
+    for (i += 1; i < input2.length; i++) {
+      code = input2[i].charCodeAt(0);
       if (!(code >= 48 && code <= 57 || code >= 65 && code <= 70 || code >= 97 && code <= 102)) return "";
-      acc += input[i];
+      acc += input2[i];
     }
     return acc;
   }
@@ -24378,7 +26624,7 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     }
     return true;
   }
-  function getIPV6(input) {
+  function getIPV6(input2) {
     let tokenCount = 0;
     const output2 = {
       error: false,
@@ -24390,8 +26636,8 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     let endipv6Encountered = false;
     let endIpv6 = false;
     let consume = consumeHextets;
-    for (let i = 0; i < input.length; i++) {
-      const cursor = input[i];
+    for (let i = 0; i < input2.length; i++) {
+      const cursor = input2[i];
       if (cursor === "[" || cursor === "]") continue;
       if (cursor === ":") {
         if (endipv6Encountered === true) endIpv6 = true;
@@ -24400,7 +26646,7 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports, module) => {
           output2.error = true;
           break;
         }
-        if (i > 0 && input[i - 1] === ":") endipv6Encountered = true;
+        if (i > 0 && input2[i - 1] === ":") endipv6Encountered = true;
         address.push(":");
         continue;
       } else if (cursor === "%") {
@@ -24446,69 +26692,69 @@ var require_utils = /* @__PURE__ */ __commonJSMin(((exports, module) => {
     return ind;
   }
   function removeDotSegments(path9) {
-    let input = path9;
+    let input2 = path9;
     const output2 = [];
     let nextSlash = -1;
     let len = 0;
-    while (len = input.length) {
-      if (len === 1) if (input === ".") break;
-      else if (input === "/") {
+    while (len = input2.length) {
+      if (len === 1) if (input2 === ".") break;
+      else if (input2 === "/") {
         output2.push("/");
         break;
       } else {
-        output2.push(input);
+        output2.push(input2);
         break;
       }
       else if (len === 2) {
-        if (input[0] === ".") {
-          if (input[1] === ".") break;
-          else if (input[1] === "/") {
-            input = input.slice(2);
+        if (input2[0] === ".") {
+          if (input2[1] === ".") break;
+          else if (input2[1] === "/") {
+            input2 = input2.slice(2);
             continue;
           }
-        } else if (input[0] === "/") {
-          if (input[1] === "." || input[1] === "/") {
+        } else if (input2[0] === "/") {
+          if (input2[1] === "." || input2[1] === "/") {
             output2.push("/");
             break;
           }
         }
       } else if (len === 3) {
-        if (input === "/..") {
+        if (input2 === "/..") {
           if (output2.length !== 0) output2.pop();
           output2.push("/");
           break;
         }
       }
-      if (input[0] === ".") {
-        if (input[1] === ".") {
-          if (input[2] === "/") {
-            input = input.slice(3);
+      if (input2[0] === ".") {
+        if (input2[1] === ".") {
+          if (input2[2] === "/") {
+            input2 = input2.slice(3);
             continue;
           }
-        } else if (input[1] === "/") {
-          input = input.slice(2);
+        } else if (input2[1] === "/") {
+          input2 = input2.slice(2);
           continue;
         }
-      } else if (input[0] === "/") {
-        if (input[1] === ".") {
-          if (input[2] === "/") {
-            input = input.slice(2);
+      } else if (input2[0] === "/") {
+        if (input2[1] === ".") {
+          if (input2[2] === "/") {
+            input2 = input2.slice(2);
             continue;
-          } else if (input[2] === ".") {
-            if (input[3] === "/") {
-              input = input.slice(3);
+          } else if (input2[2] === ".") {
+            if (input2[3] === "/") {
+              input2 = input2.slice(3);
               if (output2.length !== 0) output2.pop();
               continue;
             }
           }
         }
       }
-      if ((nextSlash = input.indexOf("/", 1)) === -1) {
-        output2.push(input);
+      if ((nextSlash = input2.indexOf("/", 1)) === -1) {
+        output2.push(input2);
         break;
       } else {
-        output2.push(input.slice(0, nextSlash));
-        input = input.slice(nextSlash);
+        output2.push(input2.slice(0, nextSlash));
+        input2 = input2.slice(nextSlash);
       }
     }
     return output2.join("");
@@ -25124,21 +27370,21 @@ var require_core$3 = /* @__PURE__ */ __commonJSMin(((exports) => {
           return _compileAsync.call(this, sch);
         }
       }
-      function checkLoaded({ missingSchema: ref2, missingRef }) {
-        if (this.refs[ref2]) throw new Error(`AnySchema ${ref2} is loaded but ${missingRef} cannot be resolved`);
+      function checkLoaded({ missingSchema: ref4, missingRef }) {
+        if (this.refs[ref4]) throw new Error(`AnySchema ${ref4} is loaded but ${missingRef} cannot be resolved`);
       }
-      async function loadMissingSchema(ref2) {
-        const _schema = await _loadSchema.call(this, ref2);
-        if (!this.refs[ref2]) await loadMetaSchema.call(this, _schema.$schema);
-        if (!this.refs[ref2]) this.addSchema(_schema, ref2, meta3);
+      async function loadMissingSchema(ref4) {
+        const _schema = await _loadSchema.call(this, ref4);
+        if (!this.refs[ref4]) await loadMetaSchema.call(this, _schema.$schema);
+        if (!this.refs[ref4]) this.addSchema(_schema, ref4, meta3);
       }
-      async function _loadSchema(ref2) {
-        const p = this._loading[ref2];
+      async function _loadSchema(ref4) {
+        const p = this._loading[ref4];
         if (p) return p;
         try {
-          return await (this._loading[ref2] = loadSchema(ref2));
+          return await (this._loading[ref4] = loadSchema(ref4));
         } finally {
-          delete this._loading[ref2];
+          delete this._loading[ref4];
         }
       }
     }
@@ -25282,7 +27528,7 @@ var require_core$3 = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
     errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
       if (!errors || errors.length === 0) return "No errors";
-      return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
+      return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text4, msg) => text4 + separator + msg);
     }
     $dataMetaSchema(metaSchema, keywordsJsonPointers) {
       const rules = this.RULES.all;
@@ -25655,8 +27901,8 @@ var require_multipleOf = /* @__PURE__ */ __commonJSMin(((exports) => {
       const { gen, data, schemaCode, it } = cxt;
       const prec = it.opts.multipleOfPrecision;
       const res = gen.let("res");
-      const invalid = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
-      cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid}))`);
+      const invalid2 = prec ? (0, codegen_1._)`Math.abs(Math.round(${res}) - ${res}) > 1e-${prec}` : (0, codegen_1._)`${res} !== parseInt(${res})`;
+      cxt.fail$data((0, codegen_1._)`(${schemaCode} === 0 || (${res} = ${data}/${schemaCode}, ${invalid2}))`);
     }
   };
   exports.default = def;
@@ -26942,10 +29188,10 @@ var require_discriminator = /* @__PURE__ */ __commonJSMin(((exports) => {
         for (let i = 0; i < oneOf.length; i++) {
           let sch = oneOf[i];
           if ((sch === null || sch === void 0 ? void 0 : sch.$ref) && !(0, util_1.schemaHasRulesButRef)(sch, it.self.RULES)) {
-            const ref2 = sch.$ref;
-            sch = compile_1.resolveRef.call(it.self, it.schemaEnv.root, it.baseId, ref2);
+            const ref4 = sch.$ref;
+            sch = compile_1.resolveRef.call(it.self, it.schemaEnv.root, it.baseId, ref4);
             if (sch instanceof compile_1.SchemaEnv) sch = sch.schema;
-            if (sch === void 0) throw new ref_error_1.default(it.opts.uriResolver, it.baseId, ref2);
+            if (sch === void 0) throw new ref_error_1.default(it.opts.uriResolver, it.baseId, ref4);
           }
           const propSch = (_a3 = sch === null || sch === void 0 ? void 0 : sch.properties) === null || _a3 === void 0 ? void 0 : _a3[tagName];
           if (typeof propSch != "object") throw new Error(`discriminator: oneOf subschemas (or referenced schemas) must have "properties/${tagName}"`);
@@ -27245,10 +29491,10 @@ var require_dynamicRef = /* @__PURE__ */ __commonJSMin(((exports) => {
     schemaType: "string",
     code: (cxt) => dynamicRef(cxt, cxt.schema)
   };
-  function dynamicRef(cxt, ref2) {
+  function dynamicRef(cxt, ref4) {
     const { gen, keyword, it } = cxt;
-    if (ref2[0] !== "#") throw new Error(`"${keyword}" only supports hash fragment reference`);
-    const anchor = ref2.slice(1);
+    if (ref4[0] !== "#") throw new Error(`"${keyword}" only supports hash fragment reference`);
+    const anchor = ref4.slice(1);
     if (it.allErrors) _dynamicRef();
     else {
       const valid = gen.let("valid", false);
@@ -28656,10 +30902,10 @@ var AjvJsonSchemaValidator = class {
   getValidator(schema) {
     const engine = this._engineFor(schema);
     const ajvValidator = "$id" in schema && typeof schema.$id === "string" ? engine.getSchema(schema.$id) ?? engine.compile(schema) : engine.compile(schema);
-    return (input) => {
-      return ajvValidator(input) ? {
+    return (input2) => {
+      return ajvValidator(input2) ? {
         valid: true,
-        data: input,
+        data: input2,
         errorMessage: void 0
       } : {
         valid: false,
@@ -28751,9 +30997,9 @@ function createParser(config2) {
       return;
     }
     pendingFragments.push(chunk);
-    const input = pendingFragments.join("");
+    const input2 = pendingFragments.join("");
     pendingFragments.length = 0, pendingFragmentsLength = 0;
-    const trailing = processLines(input);
+    const trailing = processLines(input2);
     trailing !== "" && (pendingFragments.push(trailing), pendingFragmentsLength = trailing.length), checkBufferSize();
   }
   function checkBufferSize() {
@@ -29204,9 +31450,9 @@ function resolveClientMetadata(provider) {
     application_type: clientMetadata.application_type ?? deriveApplicationType(clientMetadata.redirect_uris)
   };
 }
-async function parseErrorResponse(input) {
-  const statusCode = input instanceof Response ? input.status : void 0;
-  const body = input instanceof Response ? await input.text() : input;
+async function parseErrorResponse(input2) {
+  const statusCode = input2 instanceof Response ? input2.status : void 0;
+  const body = input2 instanceof Response ? await input2.text() : input2;
   try {
     const result = OAuthErrorResponseSchema.parse(JSON.parse(body));
     return OAuthError.fromResponse(result);
@@ -30206,7 +32452,7 @@ function classifyResult(result, context) {
   const parsed = codecForVersion(MODERN_WIRE_REVISION).validateResult("server/discover", result);
   if (!parsed.ok) return { kind: "legacy" };
   const supportedVersions = parsed.value.supportedVersions;
-  const overlap = context.clientModernVersions.find((version2) => supportedVersions.includes(version2));
+  const overlap = context.clientModernVersions.find((version3) => supportedVersions.includes(version3));
   if (overlap !== void 0) return {
     kind: "modern",
     version: overlap,
@@ -30231,7 +32477,7 @@ function classifyRpcError(outcome, context) {
       requested: parseRequested(data) ?? context.requestedVersion
     }, message);
     const supportedModern = modernProtocolVersions(supported);
-    const mutual = context.clientModernVersions.find((version2) => supportedModern.includes(version2));
+    const mutual = context.clientModernVersions.find((version3) => supportedModern.includes(version3));
     if (mutual !== void 0) return {
       kind: "corrective",
       version: mutual,
@@ -30493,11 +32739,11 @@ function normalizeReply(reply, timeoutMs) {
         error: error51
       };
       if (error51 instanceof SdkHttpError) {
-        const text2 = error51.data?.text;
+        const text4 = error51.data?.text;
         return {
           kind: "http-error",
           status: error51.data.status,
-          body: typeof text2 === "string" ? text2 : void 0,
+          body: typeof text4 === "string" ? text4 : void 0,
           statusText: error51.data.statusText
         };
       }
@@ -30793,10 +33039,10 @@ var Client = class extends Protocol {
   * `'auto'` fallback included).
   */
   _outboundMetaEnvelope() {
-    const version2 = this._negotiatedProtocolVersion;
-    if (version2 === void 0) return void 0;
+    const version3 = this._negotiatedProtocolVersion;
+    if (version3 === void 0) return void 0;
     return this._wireCodec().outboundEnvelope({
-      protocolVersion: version2,
+      protocolVersion: version3,
       clientInfo: this._clientInfo,
       clientCapabilities: this._capabilities
     });
@@ -31088,16 +33334,16 @@ var Client = class extends Protocol {
     const discover = prior.discover;
     this._resetConnectionState();
     const explicit = this._supportedProtocolVersionsOption;
-    const version2 = (explicit && modernProtocolVersions(explicit).length > 0 ? modernProtocolVersions(explicit) : SUPPORTED_MODERN_PROTOCOL_VERSIONS).find((v) => discover.supportedVersions.includes(v));
-    if (version2 === void 0) throw new SdkError(SdkErrorCode.EraNegotiationFailed, "connect({ prior }) with a modern verdict requires a 2026-07-28+ mutual protocol version; the supplied DiscoverResult and this client's supportedProtocolVersions have no modern overlap. For a server known to be legacy, pass prior: { kind: 'legacy' } to skip the probe and initialize directly, or use versionNegotiation: { mode: 'auto' } to re-probe with legacy fallback.");
+    const version3 = (explicit && modernProtocolVersions(explicit).length > 0 ? modernProtocolVersions(explicit) : SUPPORTED_MODERN_PROTOCOL_VERSIONS).find((v) => discover.supportedVersions.includes(v));
+    if (version3 === void 0) throw new SdkError(SdkErrorCode.EraNegotiationFailed, "connect({ prior }) with a modern verdict requires a 2026-07-28+ mutual protocol version; the supplied DiscoverResult and this client's supportedProtocolVersions have no modern overlap. For a server known to be legacy, pass prior: { kind: 'legacy' } to skip the probe and initialize directly, or use versionNegotiation: { mode: 'auto' } to re-probe with legacy fallback.");
     await super.connect(transport);
     this._discoverResult = discover;
     this._serverCapabilities = discover.capabilities;
     this._serverVersion = serverInfoFromDiscover(discover);
     this._cache.setServerIdentity(this._deriveServerIdentity(transport));
     this._instructions = discover.instructions;
-    this._negotiatedProtocolVersion = version2;
-    transport.setProtocolVersion?.(version2);
+    this._negotiatedProtocolVersion = version3;
+    transport.setProtocolVersion?.(version3);
     if (this._listChangedConfig) try {
       this._setupListChangedHandlers(this._listChangedConfig);
     } catch (error51) {
@@ -31154,9 +33400,9 @@ var Client = class extends Protocol {
   * established.
   */
   getProtocolEra() {
-    const version2 = this._negotiatedProtocolVersion;
-    if (version2 === void 0) return void 0;
-    return isModernProtocolVersion(version2) ? "modern" : "legacy";
+    const version3 = this._negotiatedProtocolVersion;
+    if (version3 === void 0) return void 0;
+    return isModernProtocolVersion(version3) ? "modern" : "legacy";
   }
   /**
   * After initialization has completed, this may be populated with information about the server's instructions.
@@ -32270,13 +34516,13 @@ var StreamableHTTPClientTransport = class {
         if (response.status === 403) {
           const { resourceMetadataUrl, scope, error: error51, errorDescription } = extractWWWAuthenticateParams(response);
           if (error51 === "insufficient_scope") {
-            const text2 = await response.text?.().catch(() => null);
+            const text4 = await response.text?.().catch(() => null);
             if (await this._stepUpAuthorize({
               scope,
               resourceMetadataUrl,
               errorDescription,
               statusText: response.statusText,
-              text: text2
+              text: text4
             }, stepUpRetries) !== "AUTHORIZED") throw markAuthSeamEscape(new UnauthorizedError());
             return this._startOrAuthSse(options, isAuthRetry, stepUpRetries + 1);
           }
@@ -32507,7 +34753,7 @@ var StreamableHTTPClientTransport = class {
           }));
           throw markAuthSeamEscape(new UnauthorizedError());
         }
-        const text2 = await response.text?.().catch(() => null);
+        const text4 = await response.text?.().catch(() => null);
         if (response.status === 403) {
           const { resourceMetadataUrl, scope, error: error51, errorDescription } = extractWWWAuthenticateParams(response);
           if (error51 === "insufficient_scope") {
@@ -32516,13 +34762,13 @@ var StreamableHTTPClientTransport = class {
               resourceMetadataUrl,
               errorDescription,
               statusText: response.statusText,
-              text: text2
+              text: text4
             }, stepUpRetries) !== "AUTHORIZED") throw markAuthSeamEscape(new UnauthorizedError());
             return this._send(message, options, isAuthRetry, stepUpRetries + 1);
           }
         }
-        if (response.status === 400 && typeof text2 === "string" && this._isModernEnvelopedRequest(message)) try {
-          const parsed = JSONRPCMessageSchema.parse(JSON.parse(text2));
+        if (response.status === 400 && typeof text4 === "string" && this._isModernEnvelopedRequest(message)) try {
+          const parsed = JSONRPCMessageSchema.parse(JSON.parse(text4));
           const requests = (Array.isArray(message) ? message : [message]).filter((m) => isJSONRPCRequest(m));
           if (isJSONRPCErrorResponse(parsed) && requests.some((r) => r.id === parsed.id)) {
             this.onmessage?.(parsed);
@@ -32530,10 +34776,10 @@ var StreamableHTTPClientTransport = class {
           }
         } catch {
         }
-        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, `Error POSTing to endpoint: ${text2}`, {
+        throw new SdkHttpError(SdkErrorCode.ClientHttpNotImplemented, `Error POSTing to endpoint: ${text4}`, {
           status: response.status,
           statusText: response.statusText,
-          text: text2
+          text: text4
         });
       }
       if (response.status === 202) {
@@ -32603,8 +34849,8 @@ var StreamableHTTPClientTransport = class {
       throw error51;
     }
   }
-  setProtocolVersion(version2) {
-    this._protocolVersion = version2;
+  setProtocolVersion(version3) {
+    this._protocolVersion = version3;
   }
   get protocolVersion() {
     return this._protocolVersion;
@@ -32662,7 +34908,7 @@ function schemaFingerprint(tool) {
     annotations: clean.annotations ?? null,
     execution: clean.execution ?? null
   };
-  return createHash3("sha256").update(boundedJson(contract, MAX_NATIVE_SCHEMA_BYTES)).digest("hex");
+  return createHash4("sha256").update(boundedJson(contract, MAX_NATIVE_SCHEMA_BYTES)).digest("hex");
 }
 function validateMapping(mapping) {
   const clean = cloneNativeJson(mapping, MAX_NATIVE_SCHEMA_BYTES);
@@ -33071,8 +35317,8 @@ foreach ($rule in $rules) {
 }
 Write-Output 'PRIVATE'
 `;
-var addinLocalFetch = async (input, init) => {
-  const endpoint = input instanceof URL ? input : validateNativeEndpoint(input instanceof Request ? input.url : String(input));
+var addinLocalFetch = async (input2, init) => {
+  const endpoint = input2 instanceof URL ? input2 : validateNativeEndpoint(input2 instanceof Request ? input2.url : String(input2));
   if (endpoint.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(endpoint.hostname) || endpoint.pathname !== "/dispatch" || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
     throw new NativeFusionError("INVALID_ENDPOINT", "The add-in HTTP client only supports the configured literal loopback /dispatch route.");
   }
@@ -33246,13 +35492,13 @@ var AddinDesktopProvider = class {
   async exchange(method, pairing, requestId = null, body = "") {
     if (this.closed) throw new NativeFusionError("NATIVE_CANCELLED", "The add-in client is closed.");
     const nonce = randomBytes2(24).toString("hex");
-    const timestamp2 = String(Math.floor(Date.now() / 1e3));
+    const timestamp4 = String(Math.floor(Date.now() / 1e3));
     const signature = hmac(pairing.token, `request
 ${method}
 /dispatch
 ${pairing.session_id}
 ${nonce}
-${timestamp2}
+${timestamp4}
 `, body);
     const boundedFetch = createBoundedNativeFetch({
       endpoint: this.endpoint,
@@ -33268,7 +35514,7 @@ ${timestamp2}
         "Content-Type": "application/json",
         "X-Codex-Fusion-Session": pairing.session_id,
         "X-Codex-Fusion-Nonce": nonce,
-        "X-Codex-Fusion-Timestamp": timestamp2,
+        "X-Codex-Fusion-Timestamp": timestamp4,
         "X-Codex-Fusion-Signature": signature
       }
     });
@@ -33303,9 +35549,9 @@ ${response.status}
 // src/engine.ts
 import path5 from "node:path";
 import os2 from "node:os";
-function frozen(value) {
+function frozen2(value) {
   if (value && typeof value === "object") {
-    for (const child of Object.values(value)) frozen(child);
+    for (const child of Object.values(value)) frozen2(child);
     Object.freeze(value);
   }
   return value;
@@ -33342,14 +35588,25 @@ var FusionEngine = class {
     this.desktop = desktop;
     this.handlerHash = handlerHash;
     this.options = options;
-    this.profile = frozen(structuredClone(profile));
-    this.options = frozen(structuredClone(options));
+    this.profile = frozen2(structuredClone(profile));
+    this.options = frozen2(structuredClone(options));
     if (options.executionContractHash && !/^[a-f0-9]{64}$/u.test(options.executionContractHash)) throw new FusionError("INVALID_CONTRACT", "Execution contract must be an explicit SHA-256.");
     if (options.executionContractFiles && (!options.executionContractHash || options.executionContractFiles.length < 1 || options.executionContractFiles.length > 100 || new Set(options.executionContractFiles.map((file2) => file2.path)).size !== options.executionContractFiles.length || options.executionContractFiles.some((file2) => !path5.isAbsolute(file2.path) || !/^[a-f0-9]{64}$/u.test(file2.sha256)))) throw new FusionError("INVALID_CONTRACT", "Compiled execution files require bounded unique absolute paths, exact hashes and a contract hash.");
     this.executionContractHash = options.executionContractHash ?? hash({ schema: 2, handler: handlerHash, operations: describeOperations(void 0, true) });
     this.executionContractKind = options.executionContractFiles?.length ? "installed_code" : "schema_only";
     this.store = new RecordStore(this.profile.stateRoot);
     this.artifacts = new ArtifactManager(this.profile, this.store, () => this.checkProfile());
+    this.handoffs = new HandoffManager(this.store, {
+      profileId: this.profile.id,
+      profileHash: profileHash(this.profile),
+      handlerHash: this.handlerHash,
+      executionContractHash: this.executionContractHash,
+      verifyAccess: () => this.assertTrustedConfiguration(),
+      authorizeDocument: (id2) => this.authorizeOperation("document.inspect", "read", id2),
+      inspectPlan: (id2) => this.inspectPlan(id2),
+      read: (request) => this.read(request),
+      inspectArtifact: (id2) => this.artifacts.inspect(id2, true)
+    });
   }
   profile;
   desktop;
@@ -33357,6 +35614,7 @@ var FusionEngine = class {
   options;
   store;
   artifacts;
+  handoffs;
   executionContractHash;
   executionContractKind;
   queue = new SerialQueue();
@@ -33375,11 +35633,11 @@ var FusionEngine = class {
     });
   }
   async isCreatedDocument(documentId) {
-    const record2 = await this.store.get("createddoc", hash(documentId));
-    if (!record2 || record2.document_id !== documentId || record2.profile_hash !== profileHash(this.profile) || record2.handler_hash !== this.handlerHash || record2.execution_contract_hash !== this.executionContractHash || !record2.plan_id || !record2.plan_hash) return false;
-    const producer = await this.inspectPlan(record2.plan_id);
+    const record3 = await this.store.get("createddoc", hash(documentId));
+    if (!record3 || record3.document_id !== documentId || record3.profile_hash !== profileHash(this.profile) || record3.handler_hash !== this.handlerHash || record3.execution_contract_hash !== this.executionContractHash || !record3.plan_id || !record3.plan_hash) return false;
+    const producer = await this.inspectPlan(record3.plan_id);
     const data = recordData(recordData(producer.result)?.data);
-    return producer.hash === record2.plan_hash && producer.status === "succeeded" && ["documents.create", "documents.import"].includes(producer.operation.operation) && producer.profile_hash === record2.profile_hash && producer.handler_hash === record2.handler_hash && producer.execution_contract_hash === record2.execution_contract_hash && !!data && createdDocumentId(producer.operation.operation, data) === documentId;
+    return producer.hash === record3.plan_hash && producer.status === "succeeded" && ["documents.create", "documents.import"].includes(producer.operation.operation) && producer.profile_hash === record3.profile_hash && producer.handler_hash === record3.handler_hash && producer.execution_contract_hash === record3.execution_contract_hash && !!data && createdDocumentId(producer.operation.operation, data) === documentId;
   }
   async authorizeOperation(operation2, effect, documentId) {
     const scoped = documentId && this.profile.policy.allowCreatedDocuments && await this.isCreatedDocument(documentId) ? { ...this.profile, policy: { ...this.profile.policy, documents: [...this.profile.policy.documents, documentId], ...this.profile.policy.readDocuments ? { readDocuments: [...this.profile.policy.readDocuments, documentId] } : {} } } : this.profile;
@@ -33411,6 +35669,14 @@ var FusionEngine = class {
   assertPlanBinding(plan) {
     if (plan.handler_hash !== this.handlerHash || plan.profile_hash !== profileHash(this.profile) || plan.execution_contract_hash !== this.executionContractHash) throw new FusionError("PLAN_BINDING_CHANGED", "Handler, execution contract or trusted profile changed since preparation.");
   }
+  artifactCompletionEvidence(response, providerJobId2) {
+    if (!response.ok) throw new FusionError("INVALID_ARTIFACT_COMPLETION", "An unsuccessful provider response cannot finalize an artifact.", "unknown");
+    return {
+      provider_kind: this.desktop instanceof FixtureDesktopProvider ? "synthetic_fixture" : this.desktop instanceof NativeFusionClient ? "native_mcp" : this.desktop instanceof AddinDesktopProvider ? "typed_addin" : "unverified_provider",
+      response,
+      ...providerJobId2 ? { provider_job_id: providerJobId2 } : {}
+    };
+  }
   async recordJob(plan, providerId, status, submissionError) {
     const job = { id: newId("job"), provider: plan.operation.operation === "render.start" ? "desktop_render" : "desktop_cam", provider_id: providerId, plan_id: plan.id, document_id: plan.operation.document_id, status, created_at: now(), updated_at: now(), request_hash: plan.hash, execution_contract_hash: this.executionContractHash, binding_hash: "", cancel_supported: false, ...plan.artifact ? { artifact_id: plan.artifact.id } : {}, ...submissionError ? { submission_error: submissionError } : {} };
     job.binding_hash = hash(jobBinding(job));
@@ -33429,7 +35695,7 @@ var FusionEngine = class {
       throw new FusionError(stale ? "STALE_STATE" : "SCOPED_DISCOVERY_UNAVAILABLE", stale ? "The session changed since the bound observation." : "Scoped document discovery failed. Raw provider errors may contain other documents and were withheld.");
     }
   }
-  async scopedDocumentList(result, limit2 = 256) {
+  async scopedDocumentList(result, limit3 = 256) {
     if (this.profile.policy.readDocuments === void 0) return result;
     const data = recordData(result.data);
     if (!data || !Array.isArray(data.documents) || data.documents.length > 256) throw new FusionError("INVALID_PROVIDER_RESPONSE", "Document discovery did not provide a bounded filterable typed list. Restricted metadata was not exposed.");
@@ -33448,7 +35714,7 @@ var FusionEngine = class {
     }
     const metadata = {};
     for (const key of ["session_id", "fusion_version", "execution", "live_qualification", "provider", "live_fusion_verified"]) if (data[key] !== void 0) metadata[key] = data[key];
-    return { ...result, data: { ...metadata, documents: visible.slice(0, limit2), total: visible.length, truncated: visible.length > limit2 || data.truncated === true, restricted_document_count: redactedCount, content_scope: "Only allowed document summaries are returned. Session fingerprints include the complete session solely to detect stale plans." } };
+    return { ...result, data: { ...metadata, documents: visible.slice(0, limit3), total: visible.length, truncated: visible.length > limit3 || data.truncated === true, restricted_document_count: redactedCount, content_scope: "Only allowed document summaries are returned. Session fingerprints include the complete session solely to detect stale plans." } };
   }
   desktopEvidence(data) {
     const diagnostic = recordData(data);
@@ -33518,8 +35784,8 @@ var FusionEngine = class {
       return { profile: this.profile.id, mode: this.profile.mode, desktop, desktop_evidence: evidence, read_scope: this.readScope(), mutations_enabled: this.profile.policy.mutationsEnabled, cloud_configured: !!this.profile.cloud, profile_sha256: profileHash(this.profile), handler_sha256: this.handlerHash, execution_contract_sha256: this.executionContractHash, execution_contract_kind: this.executionContractKind, runtime_environment: { platform: process.platform, arch: process.arch, os_release: os2.release() }, desktop_qualification_candidate: candidate, desktop_qualification_candidate_observed_at: candidate ? now() : null, desktop_qualification_candidate_requires: ["A responsible engineer must review the tested operation variants and exact environment.", "Only the trusted profile owner may add reviewer, evidence and expiresAt. Candidate values do not grant permission or qualify an operation."], desktop_qualification_binding: this.profile.policy.desktopQualification ? { configured: true, expires_at: this.profile.policy.desktopQualification.expiresAt, binding_sha256: hash(this.profile.policy.desktopQualification), current_compatibility: "Checked again by every managed preparation/execution; discovery alone does not admit writes." } : { configured: false }, local_native_authentication: "The Autodesk native endpoint has no authentication; this facade does not change that endpoint.", live_fusion_exercised: evidence.handler_execution_reported === true, live_fusion_verified: false, trusted_qualification_attestation: !(this.desktop instanceof FixtureDesktopProvider) && this.profile.policy.qualifiedOperations.length > 0 && !!this.profile.policy.qualificationEvidence };
     });
   }
-  async read(input) {
-    const op = parseOperation(input);
+  async read(input2) {
+    const op = parseOperation(input2);
     const definition = getOperation(op.operation);
     if (definition.effect !== "read") throw new FusionError("PREPARE_REQUIRED", "This operation has side effects. Prepare and execute an explicit plan.");
     if (["cam.status", "render.status"].includes(op.operation)) {
@@ -33632,8 +35898,8 @@ var FusionEngine = class {
     }
     return { args, ...artifact ? { artifact } : {} };
   }
-  async prepare(input) {
-    const op = parseOperation(input);
+  async prepare(input2) {
+    const op = parseOperation(input2);
     const definition = getOperation(op.operation);
     if (definition.effect === "read") throw new FusionError("READ_OPERATION", "Use the read tool for an operation without side effects.");
     return this.queue.run(async () => {
@@ -33729,7 +35995,8 @@ var FusionEngine = class {
             else args.output_path = staged.path;
           }
           dispatched = true;
-          const result = unwrap(await this.desktop.dispatch({ operation: plan.operation.operation, args, request_id: newId("execute"), ...plan.operation.document_id ? { document_id: plan.operation.document_id } : {}, expected_state: plan.expected_state }));
+          const response = await this.desktop.dispatch({ operation: plan.operation.operation, args, request_id: newId("execute"), ...plan.operation.document_id ? { document_id: plan.operation.document_id } : {}, expected_state: plan.expected_state });
+          const result = unwrap(response);
           const data = recordData(result.data);
           if (!data) throw new FusionError("INVALID_PROVIDER_RESPONSE", "Mutation response did not contain the reviewed structured result. Its outcome is unknown.", "unknown");
           if (["documents.create", "documents.import"].includes(plan.operation.operation)) {
@@ -33755,7 +36022,7 @@ var FusionEngine = class {
           let artifact;
           if (plan.artifact) {
             if (pending || failed) artifact = await this.artifacts.quarantine(plan.artifact.id, failed ? "failed" : "pending", failed ? "Provider reported failure or cancellation. Existing output remains quarantined; no rollback is inferred." : "Provider job is still running; an incomplete file is not validated.");
-            else artifact = await this.artifacts.complete(plan.artifact.id, { plan_id: plan.id, plan_hash: plan.hash });
+            else artifact = await this.artifacts.complete(plan.artifact.id, { plan_id: plan.id, plan_hash: plan.hash, evidence: this.artifactCompletionEvidence(response, desktopJob?.provider_id) });
           }
           let after;
           if (!["documents.close", "documents.create", "documents.open", "documents.import"].includes(plan.operation.operation)) {
@@ -33845,7 +36112,8 @@ var FusionEngine = class {
           return job;
         }
         try {
-          const result = unwrap(await this.desktop.dispatch({ operation: job.provider === "desktop_cam" ? "cam.status" : "render.status", args: { job_id: job.provider_id }, document_id: job.document_id, request_id: newId("job_poll"), ...expectedState ? { expected_state: expectedState } : {} }));
+          const response = await this.desktop.dispatch({ operation: job.provider === "desktop_cam" ? "cam.status" : "render.status", args: { job_id: job.provider_id }, document_id: job.document_id, request_id: newId("job_poll"), ...expectedState ? { expected_state: expectedState } : {} });
+          const result = unwrap(response);
           const data = recordData(result.data);
           if (!data || providerJobId(data) !== job.provider_id) throw new FusionError("INVALID_PROVIDER_JOB", "Job status did not identify the exact submitted future.", "unknown");
           const state = providerJobState(data);
@@ -33854,7 +36122,7 @@ var FusionEngine = class {
           let artifact;
           if (state === "succeeded") {
             if (job.artifact_id) {
-              artifact = await this.artifacts.complete(job.artifact_id, { plan_id: plan.id, plan_hash: plan.hash });
+              artifact = await this.artifacts.complete(job.artifact_id, { plan_id: plan.id, plan_hash: plan.hash, evidence: this.artifactCompletionEvidence(response, job.provider_id) });
               job.data = { provider: data, artifact };
             }
             job.status = "succeeded";
@@ -33890,12 +36158,37 @@ var FusionEngine = class {
       }
     });
   }
-  async handoff(title, planIds) {
-    const plans = await Promise.all(planIds.map((id3) => this.inspectPlan(id3)));
-    const id2 = newId("handoff");
-    const record2 = { id: id2, title, created_at: now(), state: "draft", profile_id: this.profile.id, plans: plans.map((p) => ({ id: p.id, hash: p.hash, operation: p.operation, status: p.status, result: p.result ?? null, limitations: p.limitations })), unresolved: ["Responsible engineer must review model/geometry and downstream manufacturing evidence.", "No sending, release transition or equipment control was performed."], integrity: hash(plans.map((p) => p.hash)) };
-    await this.store.put("handoff", id2, record2);
-    return record2;
+  async handoff(input2, planIds) {
+    return this.handoffs.prepare(typeof input2 === "string" ? { title: input2, plan_ids: planIds ?? [] } : input2);
+  }
+  async inspectHandoff(id2) {
+    return this.handoffs.inspect(id2);
+  }
+  retentionPlanner() {
+    return new RetentionPlanner(this.store, {
+      profileId: this.profile.id,
+      profileHash: profileHash(this.profile),
+      executionContractHash: this.executionContractHash,
+      policy: this.profile.retention?.policy,
+      holds: this.profile.retention?.holds,
+      readDocumentIds: this.profile.policy.readDocuments
+    });
+  }
+  async inventoryRetention() {
+    return this.queue.run(async () => {
+      await this.checkProfile();
+      const inventory = await this.retentionPlanner().inventory();
+      await this.checkProfile();
+      return inventory;
+    });
+  }
+  async prepareRetention(input2) {
+    return this.queue.run(async () => {
+      await this.checkProfile();
+      const plan = await this.retentionPlanner().prepare(input2);
+      await this.checkProfile();
+      return plan;
+    });
   }
   async close() {
     await this.desktop.close?.();
@@ -33907,262 +36200,6 @@ async function createFixtureEngine(profile, options = {}) {
   const engine = new FusionEngine(profile, provider, hashBytes("synthetic-fixture-schema-1"), options);
   await engine.init();
   return engine;
-}
-
-// src/cloud-http.ts
-import { createHash as createHash4 } from "node:crypto";
-var APS_ORIGIN = "https://developer.api.autodesk.com";
-var CloudError = class extends Error {
-  constructor(code, message, outcome = "none", retryable = false, httpStatus, retryAfterMs) {
-    super(message);
-    this.code = code;
-    this.outcome = outcome;
-    this.retryable = retryable;
-    this.httpStatus = httpStatus;
-    this.retryAfterMs = retryAfterMs;
-    this.name = "CloudError";
-  }
-  code;
-  outcome;
-  retryable;
-  httpStatus;
-  retryAfterMs;
-  toJSON() {
-    return { code: this.code, message: this.message, outcome: this.outcome, retryable: this.retryable, httpStatus: this.httpStatus, retryAfterMs: this.retryAfterMs };
-  }
-};
-function isCloudObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
-}
-function cloudString(value, name2, max = 2048) {
-  if (typeof value !== "string" || !value.length || value.length > max || /[\u0000-\u001f\u007f]/.test(value)) throw new CloudError("INVALID_ARGUMENT", `${name2} must be a bounded nonempty string.`);
-}
-function cloudId(value) {
-  cloudString(value, "Identifier");
-  if (/[\\/]/.test(value) || value === "." || value === "..") throw new CloudError("INVALID_ARGUMENT", "Identifier cannot contain path navigation.");
-  return encodeURIComponent(value);
-}
-function cloudTimestamp(value) {
-  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) throw new CloudError("INVALID_ARGUMENT", "An explicit ISO timestamp with timezone is required.");
-}
-function cloudCanonical(value) {
-  if (Array.isArray(value)) return `[${value.map(cloudCanonical).join(",")}]`;
-  if (isCloudObject(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${cloudCanonical(value[key])}`).join(",")}}`;
-  if (value === void 0 || typeof value === "number" && !Number.isFinite(value)) throw new CloudError("INVALID_ARGUMENT", "Only finite JSON values can be fingerprinted.");
-  const result = JSON.stringify(value);
-  if (result === void 0) throw new CloudError("INVALID_ARGUMENT", "Only JSON values can be fingerprinted.");
-  return result;
-}
-function cloudHash(value) {
-  return createHash4("sha256").update(cloudCanonical(value)).digest("hex");
-}
-function cloudSourceHash(source) {
-  return createHash4("sha256").update(source).digest("hex");
-}
-function redactCloudData(value, depth = 0) {
-  if (depth > 40) return "[depth limit]";
-  if (typeof value === "string") {
-    if (/\b(?:Bearer|Basic)\s+\S+/i.test(value)) return "[redacted credential]";
-    if (/^https?:\/\//i.test(value)) {
-      try {
-        const url2 = new URL(value);
-        if (url2.username || url2.password || [...url2.searchParams.keys()].some((key) => /token|secret|signature|credential|x-amz-|x-goog-|^sig$|^code$/i.test(key))) return "[redacted credential URL]";
-      } catch {
-        return "[invalid URL]";
-      }
-    }
-    return value;
-  }
-  if (Array.isArray(value)) return value.map((item) => redactCloudData(item, depth + 1));
-  if (isCloudObject(value)) {
-    const out = /* @__PURE__ */ Object.create(null);
-    for (const [key, item] of Object.entries(value)) {
-      if (/token|authorization|password|secret|cookie|signature|signedurl|reporturl/i.test(key)) out[key] = "[redacted]";
-      else if (!["__proto__", "prototype", "constructor"].includes(key)) out[key] = redactCloudData(item, depth + 1);
-    }
-    return out;
-  }
-  return value;
-}
-async function readBoundedJson(response, maxBytes) {
-  const length = response.headers.get("content-length");
-  if (length !== null && Number(length) > maxBytes) {
-    await response.body?.cancel();
-    throw new CloudError("RESPONSE_TOO_LARGE", "Provider response exceeds the configured byte limit.");
-  }
-  if (response.status === 204) {
-    await response.body?.cancel();
-    return null;
-  }
-  if (!response.body) throw new CloudError("INVALID_RESPONSE", "Provider returned an empty response.");
-  const reader = response.body.getReader();
-  const chunks = [];
-  let bytes = 0;
-  try {
-    for (; ; ) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      bytes += chunk.value.byteLength;
-      if (bytes > maxBytes) {
-        await reader.cancel();
-        throw new CloudError("RESPONSE_TOO_LARGE", "Provider response exceeds the configured byte limit.");
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new CloudError("INVALID_RESPONSE", "Provider did not return valid JSON.");
-  }
-}
-function validateAutodeskOrigin(origin, manageTenant) {
-  let url2;
-  try {
-    url2 = new URL(origin);
-  } catch {
-    throw new CloudError("INVALID_ENDPOINT", "Invalid Autodesk endpoint.");
-  }
-  const allowed = [APS_ORIGIN];
-  if (manageTenant !== void 0) {
-    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(manageTenant)) throw new CloudError("INVALID_ENDPOINT", "Fusion Manage tenant must be an exact DNS label.");
-    allowed.push(`https://${manageTenant}.autodeskplm360.net`);
-  }
-  if (url2.protocol !== "https:" || url2.username || url2.password || url2.port || url2.pathname !== "/" || url2.search || url2.hash || !allowed.includes(url2.origin) || origin !== url2.origin) throw new CloudError("INVALID_ENDPOINT", "Only the exact approved HTTPS Autodesk origin is allowed.");
-  return url2.origin;
-}
-var CloudRateLimiter = class {
-  constructor(intervalMs = 500, now2 = Date.now, sleep2 = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
-    this.intervalMs = intervalMs;
-    this.now = now2;
-    this.sleep = sleep2;
-    if (!Number.isFinite(intervalMs) || intervalMs < 400 || intervalMs > 6e4) throw new CloudError("INVALID_ARGUMENT", "Rate-limit interval must be between 400 and 60000 milliseconds.");
-  }
-  intervalMs;
-  now;
-  sleep;
-  #tail = Promise.resolve();
-  #next = 0;
-  async acquire() {
-    const pending = this.#tail.then(async () => {
-      const delay = Math.max(0, this.#next - this.now());
-      if (delay) await this.sleep(delay);
-      this.#next = this.now() + this.intervalMs;
-    });
-    this.#tail = pending.catch(() => {
-    });
-    return pending;
-  }
-};
-var ApsTransport = class {
-  #fetch;
-  #limiter;
-  #maxBytes;
-  #timeout;
-  #retries;
-  #now;
-  #sleep;
-  #random;
-  #opts;
-  constructor(options) {
-    cloudString(options.tenantId, "Tenant context", 256);
-    if (!options.tokenProvider || typeof options.tokenProvider.getToken !== "function") throw new CloudError("NOT_AUTHENTICATED", "An independently authorized APS token provider is required.");
-    if (options.manageTenant) validateAutodeskOrigin(`https://${options.manageTenant}.autodeskplm360.net`, options.manageTenant);
-    this.#opts = { ...options };
-    this.#fetch = options.fetch ?? globalThis.fetch;
-    this.#limiter = options.limiter ?? new CloudRateLimiter();
-    this.#maxBytes = options.maxResponseBytes ?? 2e6;
-    this.#timeout = options.timeoutMs ?? 3e4;
-    this.#retries = options.readRetries ?? 2;
-    this.#now = options.now ?? Date.now;
-    this.#sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-    this.#random = options.random ?? Math.random;
-    if (!Number.isSafeInteger(this.#maxBytes) || this.#maxBytes < 128 || this.#maxBytes > 2e7 || !Number.isSafeInteger(this.#retries) || this.#retries < 0 || this.#retries > 5 || !Number.isFinite(this.#timeout) || this.#timeout < 1 || this.#timeout > 12e4) throw new CloudError("INVALID_ARGUMENT", "Invalid cloud transport limits.");
-  }
-  async token(scopes, minValidityMs = 3e4) {
-    let grant;
-    try {
-      grant = await this.#opts.tokenProvider.getToken({ tenantId: this.#opts.tenantId, resource: APS_ORIGIN, scopes, minValidityMs });
-    } catch (error51) {
-      const safeCodes = /* @__PURE__ */ new Set(["NOT_AUTHENTICATED", "TOKEN_EXPIRED", "SCOPE_DENIED", "TENANT_MISMATCH", "REAUTHENTICATION_REQUIRED", "RATE_LIMITED", "OAUTH_TRANSPORT_ERROR", "OAUTH_PROVIDER_ERROR", "INVALID_OAUTH_RESPONSE"]);
-      const code = error51 instanceof CloudError && safeCodes.has(error51.code) ? error51.code : "NOT_AUTHENTICATED";
-      throw new CloudError(code, "APS credentials are unavailable or do not satisfy this request. Complete the configured Autodesk authorization flow; credential-provider diagnostics were withheld.");
-    }
-    if (!grant || grant.tenantId !== this.#opts.tenantId || grant.resource !== APS_ORIGIN || grant.issuer !== APS_ORIGIN) throw new CloudError("TENANT_MISMATCH", "Credential tenant, issuer or API resource does not match the configured scope.");
-    if (!Number.isFinite(grant.expiresAt) || grant.expiresAt < this.#now() + minValidityMs) throw new CloudError("TOKEN_EXPIRED", "APS authorization expires too soon for this operation.");
-    if (!Array.isArray(grant.scopes) || scopes.some((scope) => !grant.scopes.includes(scope))) throw new CloudError("SCOPE_DENIED", "APS authorization lacks a required direct API scope.");
-    if (typeof grant.accessToken !== "string" || !grant.accessToken.length || grant.accessToken.length > 32768 || /[\r\n\s]/.test(grant.accessToken)) throw new CloudError("INVALID_TOKEN", "The credential provider returned an invalid access token.");
-    if (!["authorization_code", "client_credentials"].includes(grant.grantType)) throw new CloudError("INVALID_TOKEN", "Unsupported APS authorization grant.");
-    return grant;
-  }
-  async send(request) {
-    const origin = validateAutodeskOrigin(request.origin ?? APS_ORIGIN, this.#opts.manageTenant);
-    if (!request.path.startsWith("/") || request.path.startsWith("//") || /[\\\r\n#]/.test(request.path)) throw new CloudError("INVALID_ENDPOINT", "Invalid API path.");
-    const url2 = new URL(request.path, origin);
-    if (url2.origin !== origin || url2.username || url2.password || /(?:^|\/)\.\.?(?:\/|$)/.test(decodeURIComponent(url2.pathname))) throw new CloudError("INVALID_ENDPOINT", "API path cannot escape its approved origin.");
-    const extra = request.headers ?? {};
-    if (Object.keys(extra).some((key) => !["x-tenant", "if-match"].includes(key.toLowerCase())) || Object.values(extra).some((value) => /[\r\n]/.test(value))) throw new CloudError("INVALID_ARGUMENT", "Unapproved cloud request header.");
-    if (!request.safeRead && request.method === "GET") throw new CloudError("INVALID_ARGUMENT", "Mutation cannot use GET.");
-    const body = request.body === void 0 ? void 0 : JSON.stringify(request.body);
-    if (body && Buffer.byteLength(body) > 2e6) throw new CloudError("REQUEST_TOO_LARGE", "Cloud request exceeds the configured byte limit.");
-    for (let attempt = 0; ; attempt++) {
-      await this.#limiter.acquire();
-      const grant = await this.token(request.scopes, request.minValidityMs);
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), this.#timeout);
-      try {
-        let response;
-        try {
-          response = await this.#fetch(url2, { method: request.method, redirect: "error", signal: controller.signal, headers: { accept: "application/json", ...body ? { "content-type": "application/json" } : {}, ...extra, authorization: `Bearer ${grant.accessToken}` }, ...body ? { body } : {} });
-        } catch {
-          if (request.safeRead && attempt < this.#retries) {
-            clearTimeout(timeout);
-            await this.#backoff(attempt);
-            continue;
-          }
-          throw new CloudError(request.safeRead ? "NETWORK_ERROR" : "OUTCOME_UNKNOWN", request.safeRead ? "Autodesk request failed before a response could be read." : "The mutation acknowledgement was lost. Reconcile provider state before retrying; the operation may have taken effect.", request.safeRead ? "none" : "unknown", request.safeRead);
-        }
-        const retryAfter = parseRetryAfter(response.headers.get("retry-after"), this.#now());
-        if (!response.ok) {
-          await response.body?.cancel().catch(() => {
-          });
-          const isTransient = response.status === 429 || [408, 500, 502, 503, 504].includes(response.status);
-          if (request.safeRead && isTransient && attempt < this.#retries && (retryAfter ?? 0) <= 6e4) {
-            clearTimeout(timeout);
-            await this.#backoff(attempt, retryAfter);
-            continue;
-          }
-          const outcome = !request.safeRead && (response.status === 408 || response.status >= 500) ? "unknown" : "none";
-          const code = outcome === "unknown" ? "OUTCOME_UNKNOWN" : response.status === 429 ? "RATE_LIMITED" : response.status === 401 ? "TOKEN_EXPIRED" : response.status === 403 ? "ACCESS_DENIED" : response.status === 404 ? "NOT_FOUND" : response.status === 409 || response.status === 412 ? "STALE_PLAN" : "PROVIDER_ERROR";
-          throw new CloudError(code, outcome === "unknown" ? "Autodesk returned an uncertain mutation result; reconcile it before any retry." : `Autodesk returned HTTP ${response.status}. Provider response content was withheld to protect credentials and customer data.`, outcome, request.safeRead && isTransient, response.status, retryAfter);
-        }
-        let data;
-        try {
-          data = await readBoundedJson(response, this.#maxBytes);
-        } catch (error51) {
-          if (!request.safeRead) throw new CloudError("OUTCOME_UNKNOWN", "Autodesk accepted the request but its response could not be safely read; reconcile before retrying.", "unknown");
-          if (error51 instanceof CloudError) throw error51;
-          throw new CloudError("NETWORK_ERROR", "The Autodesk response stream was interrupted.", "none", true);
-        }
-        const etag = response.headers.get("etag") ?? void 0;
-        return { data, status: response.status, ...etag ? { etag } : {} };
-      } finally {
-        clearTimeout(timeout);
-      }
-    }
-  }
-  async #backoff(attempt, retryAfter) {
-    const jitter = Math.max(0, Math.min(1, this.#random()));
-    await this.#sleep(Math.min(6e4, Math.max(retryAfter ?? 0, 500 * 2 ** attempt * (0.75 + jitter * 0.5))));
-  }
-};
-function parseRetryAfter(value, now2 = Date.now()) {
-  if (value === null) return void 0;
-  if (/^\d+(?:\.\d+)?$/.test(value.trim())) return Math.max(0, Number(value) * 1e3);
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? Math.max(0, parsed - now2) : void 0;
 }
 
 // src/oauth.ts
@@ -34472,11 +36509,11 @@ var BomError = class extends Error {
 function fail2(message) {
   throw new BomError("INVALID_BOM", message);
 }
-function textId(value, label, maximum = 1024) {
-  if (typeof value !== "string" || !value.length || value.length > maximum || /[\u0000-\u001f]/.test(value)) fail2(`${label} must be a bounded nonempty string.`);
+function textId(value, label2, maximum = 1024) {
+  if (typeof value !== "string" || !value.length || value.length > maximum || /[\u0000-\u001f]/.test(value)) fail2(`${label2} must be a bounded nonempty string.`);
 }
-function timestamp(value, label) {
-  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) fail2(`${label} must be an explicit ISO timestamp with timezone.`);
+function timestamp3(value, label2) {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(value) || !Number.isFinite(Date.parse(value))) fail2(`${label2} must be an explicit ISO timestamp with timezone.`);
 }
 function plain(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
@@ -34516,17 +36553,17 @@ function validateProperty(property) {
   if (!plain(property)) fail2("Properties must carry value, source, observation time and source reference.");
   if (!(property.value === null || typeof property.value === "boolean" || typeof property.value === "number" && Number.isFinite(property.value) || typeof property.value === "string" && property.value.length <= 16384)) fail2("Property values must be bounded scalars; missing is not null.");
   if (!["computed", "override", "product", "plm", "erp"].includes(String(property.source))) fail2("Unknown property authority.");
-  timestamp(property.observedAt, "Property observedAt");
+  timestamp3(property.observedAt, "Property observedAt");
   textId(property.sourceRef, "Property sourceRef");
   if (property.unit !== void 0 && property.unit !== null) textId(property.unit, "Property unit", 64);
 }
 function normalizeBom(snapshot, options = {}) {
   if (!plain(snapshot) || !plain(snapshot.context) || !Array.isArray(snapshot.rows)) fail2("A BOM requires explicit context and rows.");
-  const limit2 = options.maxRows ?? 1e4;
-  if (!Number.isSafeInteger(limit2) || limit2 < 1 || limit2 > 1e5 || snapshot.rows.length > limit2) fail2("BOM row limit exceeded.");
+  const limit3 = options.maxRows ?? 1e4;
+  if (!Number.isSafeInteger(limit3) || limit3 < 1 || limit3 > 1e5 || snapshot.rows.length > limit3) fail2("BOM row limit exceeded.");
   const context = structuredClone(snapshot.context);
   for (const key of ["tenantId", "modelId", "composition", "system"]) textId(context[key], `BOM ${key}`);
-  timestamp(context.timestamp, "BOM timestamp");
+  timestamp3(context.timestamp, "BOM timestamp");
   if (context.configurationId !== null) textId(context.configurationId, "BOM configurationId");
   if (context.revision !== void 0 && context.revision !== null) textId(context.revision, "BOM revision");
   if (typeof context.complete !== "boolean") fail2("BOM completeness must be declared explicitly.");
@@ -34988,8 +37025,8 @@ var ApsClient = class {
     const custom2 = Array.isArray(fields) ? fields.find((field) => isCloudObject(field) && field.name === "customProperties") : null;
     if (reply.partial || !isCloudObject(custom2) || !Array.isArray(custom2.args) || !custom2.args.some((arg) => isCloudObject(arg) && arg.name === "pagination")) throw new CloudError("UNQUALIFIED_SCHEMA", "The deployed v3 schema does not qualify the reviewed Component.customProperties pagination projection. Configure a reviewed enterprise observer or qualify this schema before mutation.");
     let clearSupported = false;
-    const inputs = reply.data && isCloudObject(reply.data.setInput) ? reply.data.setInput.inputFields : null;
-    const propertyInputs = Array.isArray(inputs) ? inputs.find((field) => isCloudObject(field) && field.name === "propertyInputs") : null;
+    const inputs2 = reply.data && isCloudObject(reply.data.setInput) ? reply.data.setInput.inputFields : null;
+    const propertyInputs = Array.isArray(inputs2) ? inputs2.find((field) => isCloudObject(field) && field.name === "propertyInputs") : null;
     if (isCloudObject(propertyInputs) && isCloudObject(propertyInputs.type)) {
       let type = propertyInputs.type;
       for (let i = 0; i < 3 && !type.name && isCloudObject(type.ofType); i++) type = type.ofType;
@@ -35103,10 +37140,10 @@ var ApsClient = class {
 
 // src/cloud-automation.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-function sha2(value, label) {
-  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new CloudError("INVALID_RECIPE", `${label} must be a SHA-256 digest.`);
+function sha5(value, label2) {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/.test(value)) throw new CloudError("INVALID_RECIPE", `${label2} must be a SHA-256 digest.`);
 }
-function reference(value) {
+function reference2(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\+[A-Za-z0-9_-]+$/.test(value) || value.length > 512) throw new CloudError("INVALID_RECIPE", "Automation references must be fully qualified, publisher-owned release aliases.");
 }
 function safeStorageOrigin(origin) {
@@ -35119,8 +37156,8 @@ function safeStorageOrigin(origin) {
   if (url2.protocol !== "https:" || url2.username || url2.password || url2.port || url2.pathname !== "/" || url2.search || url2.hash || origin !== url2.origin || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(url2.hostname) || /(?:^|\.)(?:localhost|local|internal|test|invalid)$/.test(url2.hostname)) throw new CloudError("INVALID_RECIPE", "Approved storage requires an exact public HTTPS origin without credentials or paths.");
   return url2.origin;
 }
-function positive(value, max, label, minimum = 1) {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > max) throw new CloudError("INVALID_RECIPE", `${label} is outside the configured admission range.`);
+function positive(value, max, label2, minimum = 1) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > max) throw new CloudError("INVALID_RECIPE", `${label2} is outside the configured admission range.`);
 }
 function activityDefinitionHash(value) {
   if (!isCloudObject(value) || typeof value.engine !== "string" || !Number.isSafeInteger(value.version) || !Array.isArray(value.commandLine) || value.commandLine.some((item) => typeof item !== "string") || value.appbundles !== void 0 && (!Array.isArray(value.appbundles) || value.appbundles.some((item) => typeof item !== "string"))) throw new CloudError("INVALID_RESPONSE", "Activity metadata is incomplete or has an unrecognized schema.");
@@ -35137,25 +37174,25 @@ function validateAutomationRecipe(recipe, scope) {
   cloudString(recipe.version, "Recipe version", 128);
   if (recipe.tenantId !== scope.tenantId) throw new CloudError("TENANT_MISMATCH", "Recipe belongs to another tenant context.");
   if (!["inline_script", "appbundle"].includes(recipe.delivery) || !isCloudObject(recipe.activity)) throw new CloudError("INVALID_RECIPE", "Recipe delivery model or activity binding is invalid.");
-  reference(recipe.activity.reference);
+  reference2(recipe.activity.reference);
   positive(recipe.activity.version, 1e6, "Activity version");
-  sha2(recipe.activity.definitionHash, "Activity definition hash");
+  sha5(recipe.activity.definitionHash, "Activity definition hash");
   if (!/^Autodesk\.Fusion\+[A-Za-z0-9_.-]+$/.test(recipe.activity.engine)) throw new CloudError("INVALID_RECIPE", "Recipe must bind an Autodesk Fusion engine reference.");
   if (recipe.activity.signature !== void 0) cloudString(recipe.activity.signature, "Activity signature", 8192);
   if (!Array.isArray(recipe.bundles) || recipe.bundles.length > 20) throw new CloudError("INVALID_RECIPE", "Recipe app-bundle dependencies must be bounded.");
   const bundles = /* @__PURE__ */ new Set();
   for (const bundle of recipe.bundles) {
-    reference(bundle.reference);
+    reference2(bundle.reference);
     positive(bundle.version, 1e6, "Bundle version");
-    sha2(bundle.definitionHash, "Bundle definition hash");
-    sha2(bundle.packageSha256, "Bundle package hash");
+    sha5(bundle.definitionHash, "Bundle definition hash");
+    sha5(bundle.packageSha256, "Bundle package hash");
     if (bundles.has(bundle.reference)) throw new CloudError("INVALID_RECIPE", "Duplicate app-bundle reference.");
     bundles.add(bundle.reference);
   }
   if (recipe.delivery === "inline_script") {
     if (!recipe.script || recipe.script.language !== "typescript") throw new CloudError("INVALID_RECIPE", "Inline recipes require reviewed TypeScript source and a qualified entry point.");
     if (typeof recipe.script.source !== "string" || !recipe.script.source.trim() || Buffer.byteLength(recipe.script.source) > 1e6 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(recipe.script.source)) throw new CloudError("INVALID_RECIPE", "Reviewed TypeScript source must be bounded text without binary control characters.");
-    sha2(recipe.script.sha256, "Script source hash");
+    sha5(recipe.script.sha256, "Script source hash");
     if (cloudSourceHash(recipe.script.source) !== recipe.script.sha256) throw new CloudError("STALE_RECIPE", "Reviewed recipe code hash does not match its installed source.");
     cloudString(recipe.script.entryPoint, "Recipe entry point", 128);
     cloudString(recipe.script.typeDefinitionsVersion, "Qualified TypeScript definitions", 128);
@@ -35250,8 +37287,8 @@ var AutomationClient = class {
     const data = response.data;
     const hash3 = activityDefinitionHash(data);
     if (!isCloudObject(data) || data.version !== recipe.activity.version || data.engine !== recipe.activity.engine || hash3 !== recipe.activity.definitionHash) throw new CloudError("STALE_RECIPE", "The activity alias, version, engine or executable definition changed after review.");
-    const refs2 = data.appbundles ?? [];
-    if (cloudCanonical([...refs2].sort()) !== cloudCanonical(recipe.bundles.map((bundle) => bundle.reference).sort())) throw new CloudError("STALE_RECIPE", "The activity's app-bundle dependencies differ from the approved recipe.");
+    const refs3 = data.appbundles ?? [];
+    if (cloudCanonical([...refs3].sort()) !== cloudCanonical(recipe.bundles.map((bundle) => bundle.reference).sort())) throw new CloudError("STALE_RECIPE", "The activity's app-bundle dependencies differ from the approved recipe.");
     if (!isCloudObject(data.parameters) || !isCloudObject(data.parameters.TaskParameters) || data.parameters.TaskParameters.verb !== "read") throw new CloudError("INVALID_RECIPE", "This adapter requires the reviewed Fusion TaskParameters string contract.");
     if (recipe.delivery === "inline_script" && (!isCloudObject(data.parameters.TaskScript) || data.parameters.TaskScript.verb !== "read")) throw new CloudError("INVALID_RECIPE", "The reviewed inline activity must accept Fusion TaskScript as a read argument.");
     if (Object.hasOwn(data.parameters, "PersonalAccessToken") && isCloudObject(data.parameters.PersonalAccessToken) && data.parameters.PersonalAccessToken.required === true) throw new CloudError("UNSUPPORTED_AUTH", "The activity still requires deprecated PAT authentication; republish it with supported OAuth.");
@@ -35264,14 +37301,14 @@ var AutomationClient = class {
     }
     return { reference: recipe.activity.reference, version: recipe.activity.version, engine: recipe.activity.engine, definitionHash: hash3, bundles, observedAt: new Date(this.#now()).toISOString(), rollingEngine: recipe.activity.engine.endsWith("+Latest"), aliasRacePossible: recipe.dependencyImmutability !== "provider_enforced" };
   }
-  #inputs(recipe, inputs) {
-    if (!isCloudObject(inputs) || Object.keys(inputs).some((key) => !Object.hasOwn(recipe.inputSchema, key))) throw new CloudError("INVALID_ARGUMENT", "Only approved recipe input fields are accepted.");
+  #inputs(recipe, inputs2) {
+    if (!isCloudObject(inputs2) || Object.keys(inputs2).some((key) => !Object.hasOwn(recipe.inputSchema, key))) throw new CloudError("INVALID_ARGUMENT", "Only approved recipe input fields are accepted.");
     for (const [key, rule] of Object.entries(recipe.inputSchema)) {
-      const value = inputs[key];
+      const value = inputs2[key];
       if (value === void 0 && !rule.required) continue;
       if (typeof value !== rule.type || typeof value === "string" && (value.length > (rule.maxLength ?? 0) || /^\s*(?:https?|file|data|javascript):/i.test(value)) || typeof value === "number" && (!Number.isFinite(value) || value < rule.minimum || value > rule.maximum) || rule.enum && !rule.enum.includes(value)) throw new CloudError("INVALID_ARGUMENT", "Recipe input does not satisfy its reviewed type, enumeration or bounds.");
     }
-    if (Buffer.byteLength(JSON.stringify(inputs)) > recipe.limits.maxInputBytes) throw new CloudError("BUDGET_EXCEEDED", "Recipe input bytes exceed the reviewed limit.");
+    if (Buffer.byteLength(JSON.stringify(inputs2)) > recipe.limits.maxInputBytes) throw new CloudError("BUDGET_EXCEEDED", "Recipe input bytes exceed the reviewed limit.");
   }
   async #sources(recipe, context) {
     if (!Array.isArray(context.sources) || context.sources.length > 100) throw new CloudError("INVALID_ARGUMENT", "Source dependencies must be explicitly frozen and bounded.");
@@ -35279,7 +37316,7 @@ var AutomationClient = class {
     for (const source of context.sources) {
       if (!recipe.allowedSources.some((allowed) => allowed.hubId === source.hubId && allowed.projectId === source.projectId && allowed.itemId === source.itemId)) throw new CloudError("SCOPE_DENIED", "Source dependency is outside this recipe's approved project/item scope.");
       cloudId(source.versionId);
-      sha2(source.resourceHash, "Source resource hash");
+      sha5(source.resourceHash, "Source resource hash");
       if (source.configurationId !== null) cloudString(source.configurationId, "Source configuration ID");
       if (seen.has(source.versionId)) throw new CloudError("INVALID_ARGUMENT", "Duplicate source version dependency.");
       seen.add(source.versionId);
@@ -35288,11 +37325,11 @@ var AutomationClient = class {
       if (!isCloudObject(item) || item.id !== source.itemId || current.fingerprint !== source.resourceHash) throw new CloudError("STALE_PLAN", "A source version, item binding or dependency resource changed after it was frozen.");
     }
   }
-  async prepare(recipeId, inputs, context) {
+  async prepare(recipeId, inputs2, context) {
     const recipe = this.#recipe(recipeId);
     if (!isCloudObject(context) || !Array.isArray(context.sources)) throw new CloudError("INVALID_ARGUMENT", "Automation requires an explicit tenant/source/destination context.");
     if (context.tenantId !== this.#scope.tenantId) throw new CloudError("TENANT_MISMATCH", "Automation context belongs to another tenant.");
-    this.#inputs(recipe, inputs);
+    this.#inputs(recipe, inputs2);
     if (!Number.isSafeInteger(context.variantCount) || context.variantCount < 1 || context.variantCount > recipe.limits.maxVariants) throw new CloudError("BUDGET_EXCEEDED", "Variant count exceeds the recipe admission limit.");
     const destination = recipe.destinations.find((value) => value.alias === context.destinationAlias);
     if (!destination) throw new CloudError("SCOPE_DENIED", "Destination is not approved for this recipe.");
@@ -35309,7 +37346,7 @@ var AutomationClient = class {
     if (activity.aliasRacePossible) warnings.push("Activity and bundle aliases are revalidated before submission, but a repointing race cannot be excluded.");
     if (recipe.cost.kind === "estimated") warnings.push("The reservation is an estimated admission budget; actual provider billing may exceed it.");
     if (recipe.authority === "assisted_public_client") warnings.push("This public-client activity is assisted only; signing a generic TaskScript activity does not enforce recipe-only authority.");
-    const fields = { id: randomUUID3(), recipeId, recipeVersion: recipe.version, recipeHash: cloudHash(recipe), inputs: structuredClone(inputs), context: structuredClone(context), activity, destination: structuredClone(destination), reservation: { amount, currency: recipe.cost.currency, kind: recipe.cost.kind, hardCap: recipe.cost.kind === "provider_enforced" }, createdAt: new Date(this.#now()).toISOString(), expiresAt: new Date(this.#now() + 15 * 6e4).toISOString(), warnings };
+    const fields = { id: randomUUID3(), recipeId, recipeVersion: recipe.version, recipeHash: cloudHash(recipe), inputs: structuredClone(inputs2), context: structuredClone(context), activity, destination: structuredClone(destination), reservation: { amount, currency: recipe.cost.currency, kind: recipe.cost.kind, hardCap: recipe.cost.kind === "provider_enforced" }, createdAt: new Date(this.#now()).toISOString(), expiresAt: new Date(this.#now() + 15 * 6e4).toISOString(), warnings };
     return { ...fields, requestHash: cloudHash(fields) };
   }
   async submit(prepared) {
@@ -35370,7 +37407,7 @@ var AutomationClient = class {
       }
       if (url2.protocol !== "https:" || url2.username || url2.password || url2.port || url2.hash || !this.#options.permittedTransferOrigins.includes(url2.origin)) throw new CloudError("INVALID_TRANSFER", "Artifact stager returned a transfer outside its approved origin.");
       if (transfer.verb === "get") {
-        sha2(transfer.sha256, "Input artifact hash");
+        sha5(transfer.sha256, "Input artifact hash");
         inputBytes += transfer.bytes;
       } else {
         outputCount++;
@@ -35622,10 +37659,10 @@ var NativeTokenStore = class {
     return [...generations.values()];
   }
   async cleanupGenerations(key) {
-    const record2 = await new RecordStore(this.grantDirectory(key)).get("cleanup", "generations");
-    if (record2 === void 0) return [];
-    if (!record2 || typeof record2 !== "object" || Array.isArray(record2) || Object.keys(record2).length !== 2 || record2.version !== 1 || !Array.isArray(record2.generations) || record2.generations.length > MAX_TRACKED_GENERATIONS) throw new FusionError("CREDENTIAL_STORE_CORRUPT", "Credential cleanup receipt is invalid.");
-    return this.mergeGenerations(record2.generations);
+    const record3 = await new RecordStore(this.grantDirectory(key)).get("cleanup", "generations");
+    if (record3 === void 0) return [];
+    if (!record3 || typeof record3 !== "object" || Array.isArray(record3) || Object.keys(record3).length !== 2 || record3.version !== 1 || !Array.isArray(record3.generations) || record3.generations.length > MAX_TRACKED_GENERATIONS) throw new FusionError("CREDENTIAL_STORE_CORRUPT", "Credential cleanup receipt is invalid.");
+    return this.mergeGenerations(record3.generations);
   }
   async writeCleanupGenerations(key, generations) {
     const directory = this.grantDirectory(key);
@@ -35777,7 +37814,7 @@ function dataBinding(plan) {
   return { id: plan.id, profile_hash: plan.profile_hash, scope_hash: plan.scope_hash, authorization_binding: plan.authorization_binding, created_at: plan.created_at, expires_at: plan.expires_at, operation: plan.operation, draft: plan.draft, require_atomic_concurrency: plan.require_atomic_concurrency };
 }
 function jobBinding2(job) {
-  return { id: job.id, created_at: job.created_at, prepared: job.prepared, profile: job.profile_hash, scope: job.scope_hash, authorization: job.authorization_binding, profile_id: job.profile_id, budget_period: job.budget_period };
+  return { id: job.id, created_at: job.created_at, prepared: job.prepared, profile: job.profile_hash, scope: job.scope_hash, authorization: job.authorization_binding, profile_id: job.profile_id, budget_period: job.budget_period, ...job.batch ? { batch: job.batch } : {} };
 }
 function assertJobIntegrity(job) {
   if (hash(jobBinding2(job)) !== job.plan_hash) throw new FusionError("PLAN_TAMPERED", "Cloud job does not match its prepared content hash.");
@@ -35789,6 +37826,10 @@ function assertJobIntegrity(job) {
   if (job.validation) {
     const { receipt_hash, ...receipt } = job.validation;
     if (hash(receipt) !== receipt_hash || receipt.job_id !== job.id || receipt.provider_id !== job.provider_id || receipt.request_hash !== job.prepared.requestHash || receipt.recipe_hash !== job.prepared.recipeHash) throw new FusionError("RECEIPT_TAMPERED", "Stored output validation evidence changed or belongs to another job.");
+  }
+  if (job.validation_in_progress) {
+    const intent = job.validation_in_progress;
+    if (!job.batch || !/^validation_[a-f0-9-]{36}$/.test(intent.attempt_id) || !Number.isFinite(Date.parse(intent.started_at)) || intent.job_id !== job.id || intent.batch_id !== job.batch.batch_id || intent.request_hash !== job.prepared.requestHash || !job.submitted || !job.provider_id) throw new FusionError("INVALID_JOB_RECORD", "The unresolved batch-validation intent changed or belongs to another job.");
   }
 }
 async function readRecipes(filename) {
@@ -35863,9 +37904,9 @@ var CloudCoordinator = class _CloudCoordinator {
         if (tenantId !== options.profile.cloud.tenantId || !(await options.store.list("cloudjob")).some((job) => job.provider_id === providerId && job.submitted && job.scope_hash === coordinator.scopeBinding() && job.prepared.context.tenantId === tenantId)) throw new FusionError("JOB_SCOPE_DENIED", "Provider job is outside this tenant/profile ledger.");
       }, authorizeSubmission: async (prepared) => {
         await coordinator.check();
-        const record2 = (await options.store.list("cloudjob")).find((job) => job.prepared.id === prepared.id && job.prepared.requestHash === prepared.requestHash && job.scope_hash === coordinator.scopeBinding() && job.status === "submitting" && job.submitted);
-        if (!record2) throw new FusionError("SUBMISSION_INTENT_REQUIRED", "Dispatch requires the exact durable submitting intent and reservation.");
-        await coordinator.ensureAccount(record2.authorization_binding);
+        const record3 = (await options.store.list("cloudjob")).find((job) => job.prepared.id === prepared.id && job.prepared.requestHash === prepared.requestHash && job.scope_hash === coordinator.scopeBinding() && job.status === "submitting" && job.submitted);
+        if (!record3) throw new FusionError("SUBMISSION_INTENT_REQUIRED", "Dispatch requires the exact durable submitting intent and reservation.");
+        await coordinator.ensureAccount(record3.authorization_binding);
         authorize(options.profile, "cloud.job_submit", "cloud_compute");
       } });
     }
@@ -35974,204 +38015,458 @@ var CloudCoordinator = class _CloudCoordinator {
       }
     });
   }
-  async prepareJob(recipeId, inputs, context) {
+  async prepareJob(recipeId, inputs2, context) {
     if (!this.automation) throw new FusionError("AUTOMATION_NOT_CONFIGURED", "No reviewed Automation recipe registry is installed.");
     return this.guarded(async () => {
       const binding2 = await this.accountBinding();
-      const prepared = await this.automation.prepare(recipeId, inputs, context);
+      const prepared = await this.automation.prepare(recipeId, inputs2, context);
       await this.ensureAccount(binding2);
-      const id2 = newId("cloudjob");
-      const record2 = { id: id2, prepared, plan_hash: "", profile_hash: profileHash(this.options.profile), scope_hash: this.scopeBinding(), authorization_binding: binding2, profile_id: this.options.profile.id, status: "prepared", created_at: now(), updated_at: now(), reserved_units: 0, budget_period: this.options.profile.cloud?.budget?.period ?? "unconfigured", submitted: false };
-      record2.plan_hash = hash(jobBinding2(record2));
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_job_prepared", { id: id2, plan_hash: record2.plan_hash, recipe_id: recipeId, reservation: prepared.reservation });
-      return record2;
+      const record3 = this.initialJob(prepared, binding2);
+      await this.options.store.put("cloudjob", record3.id, record3);
+      await this.options.store.audit("cloud_job_prepared", { id: record3.id, plan_hash: record3.plan_hash, recipe_id: recipeId, reservation: prepared.reservation });
+      return record3;
+    });
+  }
+  initialJob(prepared, binding2, batch) {
+    const record3 = { id: newId("cloudjob"), prepared: structuredClone(prepared), plan_hash: "", profile_hash: profileHash(this.options.profile), scope_hash: this.scopeBinding(), authorization_binding: binding2, profile_id: this.options.profile.id, status: "prepared", created_at: now(), updated_at: now(), reserved_units: 0, budget_period: this.options.profile.cloud?.budget?.period ?? "unconfigured", submitted: false, ...batch ? { batch } : {} };
+    record3.plan_hash = hash(jobBinding2(record3));
+    return record3;
+  }
+  assertPreparedJob(record3) {
+    if (record3.profile_hash !== profileHash(this.options.profile)) throw new FusionError("PLAN_BINDING_CHANGED", "Cloud plan profile changed.");
+    const expiresAt = Math.min(Date.parse(record3.prepared.expiresAt), Date.parse(record3.created_at) + this.options.profile.policy.planMaxAgeMs);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new FusionError("PLAN_EXPIRED", "Cloud preparation expired before submission. Prepare and review a fresh job.");
+  }
+  async admissionSnapshot() {
+    const budget = this.options.profile.cloud?.budget;
+    if (!budget) throw new FusionError("BUDGET_REQUIRED", "Cloud submission requires an explicit admission budget.");
+    const allJobs = await this.options.store.list("cloudjob");
+    const jobs = allJobs.filter((job) => job.profile_id === this.options.profile.id && job.prepared.context.tenantId === this.options.profile.cloud.tenantId);
+    jobs.forEach(assertJobIntegrity);
+    const active = jobs.filter((job) => ["submitting", "queued", "running", "validating", "outcome_unknown", "cancel_requested"].includes(job.status));
+    const period = jobs.filter((job) => job.budget_period === budget.period && job.submitted);
+    const exposure = jobs.filter((job) => job.submitted && !job.settlement);
+    if (exposure.some((job) => job.prepared.reservation.currency !== budget.currency)) throw new FusionError("BUDGET_UNIT_MISMATCH", "Unsettled job exposure has a different currency; reconcile it before changing this budget pool.");
+    const reserved = period.reduce((sum, job) => sum + (job.settlement?.actual_amount ?? job.reserved_units), 0) + exposure.filter((job) => job.budget_period !== budget.period).reduce((sum, job) => sum + job.reserved_units, 0);
+    if (!Number.isFinite(reserved)) throw new FusionError("INVALID_JOB_RECORD", "Stored aggregate cost exposure is invalid; admissions are blocked.");
+    return { budget, jobs, active, period, reserved };
+  }
+  async readBatchRecord(id2) {
+    await this.check();
+    const batch = await this.options.store.get("cloudbatch", id2);
+    if (!batch) throw new FusionError("NOT_FOUND", "Cloud batch is outside this profile ledger.");
+    assertCloudBatchIntegrity(batch);
+    batch.variants.forEach((variant) => assertJobIntegrity(variant.initial_job));
+    if (batch.id !== id2) throw new FusionError("BATCH_TAMPERED", "The stored batch identity does not match its ledger reference.");
+    if (batch.profile_id !== this.options.profile.id || batch.scope_hash !== this.scopeBinding() || batch.request.context.tenantId !== this.options.profile.cloud.tenantId) throw new FusionError("JOB_SCOPE_DENIED", "Cloud batch belongs to a different profile/account/data scope.");
+    await this.ensureAccount(batch.authorization_binding);
+    return batch;
+  }
+  assertBatchChild(batch, variant, job) {
+    assertJobIntegrity(job);
+    if (job.id !== variant.initial_job.id || job.plan_hash !== variant.initial_job.plan_hash || !job.batch || hash(job.batch) !== hash(variant.initial_job.batch)) throw new FusionError("BATCH_BINDING_CHANGED", "A batch child no longer matches its immutable variant mapping.");
+    if (!["prepared", "submitting", "queued", "running", "validating", "succeeded", "failed", "cancel_requested", "cancelled", "outcome_unknown"].includes(job.status) || job.status === "prepared" && hash(job) !== hash(variant.initial_job) || job.status !== "prepared" && job.idempotency_key !== variant.idempotency_key || !["prepared", "failed"].includes(job.status) && !job.submitted) throw new FusionError("BATCH_LEDGER_INCOMPLETE", "A batch child has inconsistent attempt state; reconcile the ledger before further admission.");
+    if (batch.phase === "materializing" && hash(job) !== hash(variant.initial_job)) throw new FusionError("BATCH_MATERIALIZATION_BLOCKED", "An unsealed batch contains an attempted or changed child; missing records cannot be recreated.", "unknown");
+  }
+  async batchJobs(batch) {
+    const jobs = [];
+    const providers = /* @__PURE__ */ new Set();
+    const conflict = await this.readBatchConflict(batch);
+    for (const variant of batch.variants) {
+      const job = await this.options.store.get("cloudjob", variant.initial_job.id);
+      if (!job && batch.phase === "ready") throw new FusionError("BATCH_LEDGER_INCOMPLETE", "A ready batch has a missing child ledger record. It is never recreated because a previous submission cannot be excluded.", "unknown");
+      if (job) {
+        this.assertBatchChild(batch, variant, job);
+        if (job.provider_id && providers.has(job.provider_id)) throw new FusionError("BATCH_IDENTITY_CONFLICT", "Two batch variants refer to the same provider job; do not submit further work.", "unknown");
+        if (job.provider_id) providers.add(job.provider_id);
+        this.applyBatchConflict(job, conflict);
+      }
+      jobs.push(job);
+    }
+    return jobs;
+  }
+  async readBatchConflict(batch) {
+    const conflict = await this.options.store.get("cloudbatchconflict", batch.id);
+    if (conflict) {
+      assertCloudBatchConflictIntegrity(conflict, batch);
+      if (batch.phase !== "ready") throw new FusionError("BATCH_CONFLICT_TAMPERED", "Output-conflict evidence cannot precede the ready batch fence.");
+    }
+    return conflict;
+  }
+  applyBatchConflict(job, conflict) {
+    const involved = conflict?.job_bindings.some((binding2) => binding2.job_id === job.id);
+    if (job.output_identity_conflict && (!involved || job.output_identity_conflict.batch_id !== conflict.batch_id || job.output_identity_conflict.receipt_hash !== conflict.receipt_hash || job.output_identity_conflict.disposition !== "historical_validation_unusable")) throw new FusionError("BATCH_CONFLICT_LEDGER_INCOMPLETE", "An implicated job is missing its exact durable output-conflict receipt. Do not clear the flag or resume work.", "unknown");
+    if (involved) {
+      job.output_identity_conflict = { batch_id: conflict.batch_id, receipt_hash: conflict.receipt_hash, disposition: "historical_validation_unusable" };
+      job.validation_usable = false;
+      job.status = "failed";
+      job.error = { code: "OUTPUT_IDENTITY_CONFLICT", message: "A trusted output validator observed a shared artifact identity between variants. Cached validation remains historical evidence and is not usable for acceptance. This batch has no automatic reconciliation or clearing path.", outcome: "partial" };
+    } else if (job.validation_in_progress) job.validation_usable = false;
+    else delete job.validation_usable;
+  }
+  async batchView(batch, jobs) {
+    return inspectCloudBatch(batch, jobs, await this.readBatchConflict(batch));
+  }
+  async materializeBatch(batch) {
+    const jobs = await this.batchJobs(batch);
+    if (batch.phase === "ready") return jobs;
+    for (const [index, variant] of batch.variants.entries()) if (!jobs[index]) {
+      await this.options.store.put("cloudjob", variant.initial_job.id, variant.initial_job);
+      jobs[index] = structuredClone(variant.initial_job);
+    }
+    batch.phase = "ready";
+    await this.options.store.put("cloudbatch", batch.id, batch);
+    await this.options.store.audit("cloud_batch_ready", { id: batch.id, plan_hash: batch.plan_hash, job_ids: batch.variants.map((variant) => variant.initial_job.id) });
+    return jobs;
+  }
+  async prepareBatch(input2) {
+    const parsed = parseCloudBatchInput(input2), { request_key, ...request } = parsed;
+    if (!this.automation) throw new FusionError("AUTOMATION_NOT_CONFIGURED", "No reviewed Automation recipe registry is installed.");
+    return this.guarded(async () => {
+      const requestKeyHash = hash(request_key), id2 = cloudBatchId(this.options.profile.id, requestKeyHash), requestHash = hash(request);
+      if (await this.options.store.get("cloudbatch", id2)) {
+        const existing = await this.readBatchRecord(id2);
+        if (existing.request_hash !== requestHash) throw new FusionError("IDEMPOTENCY_CONFLICT", "This batch request key is already bound to a different ordered request.");
+        return this.batchView(existing, await this.materializeBatch(existing));
+      }
+      const binding2 = await this.accountBinding();
+      const recipe = this.automation.listRecipes().find((recipe2) => recipe2.id === request.recipe_id);
+      if (!recipe || !Number.isSafeInteger(recipe.limits.maxVariants) || request.variants.length > recipe.limits.maxVariants) throw new FusionError("BATCH_RECIPE_LIMIT", "The whole batch must fit the installed reviewed recipe variant limit.");
+      if (!this.options.profile.cloud?.budget) throw new FusionError("BUDGET_REQUIRED", "Whole-batch preparation requires an explicit admission budget.");
+      const variants = [];
+      for (const variant of request.variants) {
+        let prepared;
+        try {
+          prepared = await this.automation.prepare(request.recipe_id, variant.inputs, cloudBatchContext(request));
+        } catch (error51) {
+          throw new FusionError("BATCH_PREFLIGHT_FAILED", "A variant failed whole-batch preparation. No workitem was submitted.", "none", { variant_id: variant.variant_id, cause: batchErrorCode(error51) });
+        }
+        assertPreparedBatchVariant(request, variant, prepared);
+        const job = this.initialJob(prepared, binding2, { batch_id: id2, variant_id: variant.variant_id, request_hash: requestHash });
+        this.assertPreparedJob(job);
+        variants.push({ variant_id: variant.variant_id, idempotency_key: cloudBatchChildKey(id2, variant.variant_id), initial_job: job });
+      }
+      await this.check();
+      await this.ensureAccount(binding2);
+      const { budget, period, reserved } = await this.admissionSnapshot();
+      const amount = variants.reduce((sum, variant) => sum + variant.initial_job.prepared.reservation.amount, 0);
+      if (variants.some((variant) => variant.initial_job.prepared.reservation.currency !== budget.currency)) throw new FusionError("BUDGET_UNIT_MISMATCH", "Every batch child must use the configured budget currency.");
+      if (!Number.isFinite(amount) || period.length + variants.length > budget.maxSubmissions || reserved + amount > budget.maxReservedUnits) throw new FusionError("BATCH_BUDGET_EXHAUSTED", "The whole batch does not fit the current total submission and estimated reservation budget. Preparation reserves no capacity.");
+      const batch = { schema_version: 1, id: id2, plan_hash: "", request_hash: requestHash, request_key_hash: requestKeyHash, request, created_at: now(), expires_at: new Date(Math.min(...variants.map((variant) => Math.min(Date.parse(variant.initial_job.prepared.expiresAt), Date.parse(variant.initial_job.created_at) + this.options.profile.policy.planMaxAgeMs)))).toISOString(), profile_id: this.options.profile.id, profile_hash: profileHash(this.options.profile), scope_hash: this.scopeBinding(), authorization_binding: binding2, budget_period: budget.period, currency: budget.currency, estimated_reservation: amount, variants, phase: "materializing" };
+      batch.plan_hash = hash(cloudBatchBinding(batch));
+      assertCloudBatchIntegrity(batch);
+      await this.options.store.put("cloudbatch", id2, batch);
+      await this.options.store.audit("cloud_batch_prepared", { id: id2, plan_hash: batch.plan_hash, request_hash: requestHash, variants: variants.length, currency: budget.currency, estimated_reservation: amount });
+      return this.batchView(batch, await this.materializeBatch(batch));
+    });
+  }
+  async inspectBatch(id2) {
+    return this.guarded(async () => {
+      const batch = await this.readBatchRecord(id2);
+      return this.batchView(batch, await this.batchJobs(batch));
+    });
+  }
+  async resumeBatch(id2, expectedHash, maxSubmissions) {
+    if (!/^[a-f0-9]{64}$/.test(expectedHash) || !Number.isSafeInteger(maxSubmissions) || maxSubmissions < 1 || maxSubmissions > 100) throw new FusionError("INVALID_BATCH_INPUT", "Resume requires the exact plan hash and a submission-wave bound from 1 to 100.");
+    if (!this.automation) throw new FusionError("AUTOMATION_NOT_CONFIGURED", "No reviewed Automation client is configured.");
+    return this.guarded(async () => {
+      const batch = await this.readBatchRecord(id2);
+      if (batch.plan_hash !== expectedHash || batch.profile_hash !== profileHash(this.options.profile)) throw new FusionError("PLAN_BINDING_CHANGED", "Cloud batch plan hash or profile changed.");
+      let jobs = await this.materializeBatch(batch);
+      const conflict = await this.readBatchConflict(batch);
+      const attempted = [];
+      let blocked = null;
+      if (!conflict) {
+        for (const [index, job] of jobs.entries()) if (job.status === "submitting") jobs[index] = await this.submitJobLocked(job.id, job.plan_hash, batch.variants[index].idempotency_key, batch);
+      }
+      if (conflict) blocked = { code: "OUTPUT_IDENTITY_CONFLICT", outcome: "partial" };
+      else if (jobs.some((job) => job.status === "outcome_unknown" || job.validation_in_progress) || batchArtifactConflicts(jobs).length > 0) blocked = { code: "BATCH_RECONCILIATION_REQUIRED", outcome: "none" };
+      const pending = jobs.flatMap((job, index) => job.status === "prepared" ? [{ job, index }] : []);
+      if (!blocked && pending.length > 0) {
+        for (const { job } of pending) this.assertPreparedJob(job);
+        await this.check();
+        await this.ensureAccount(batch.authorization_binding);
+        authorize(this.options.profile, "cloud.job_submit", "cloud_compute");
+        for (const { job, index } of pending.slice(0, maxSubmissions)) {
+          const variant = batch.variants[index];
+          try {
+            const result2 = await this.submitJobLocked(job.id, job.plan_hash, variant.idempotency_key, batch);
+            jobs[index] = result2;
+            if (result2.status !== "prepared") attempted.push(variant.variant_id);
+            if (["failed", "outcome_unknown", "cancelled"].includes(result2.status)) {
+              blocked = { code: "BATCH_CHILD_REQUIRES_REVIEW", outcome: "none", variant_id: variant.variant_id };
+              break;
+            }
+          } catch (error51) {
+            jobs = await this.batchJobs(batch);
+            if (jobs[index].status !== "prepared") attempted.push(variant.variant_id);
+            blocked = { ...batchErrorCode(error51), variant_id: variant.variant_id };
+            break;
+          }
+        }
+      }
+      const result = { ...await this.batchView(batch, jobs), wave: { max_submissions: maxSubmissions, attempted_variant_ids: attempted, admission_blocked: blocked } };
+      await this.options.store.audit("cloud_batch_resume", { id: id2, plan_hash: expectedHash, attempted_variant_ids: attempted, admission_blocked: blocked });
+      return result;
     });
   }
   async inspectJob(id2) {
     await this.check();
-    const record2 = await this.options.store.get("cloudjob", id2);
-    if (!record2) throw new FusionError("NOT_FOUND", "Cloud job is outside this profile ledger.");
-    if (record2.id !== id2) throw new FusionError("PLAN_TAMPERED", "The stored cloud job identity does not match its ledger reference.");
-    if (record2.scope_hash !== this.scopeBinding() || record2.profile_id !== this.options.profile.id || record2.prepared.context.tenantId !== this.options.profile.cloud.tenantId) throw new FusionError("JOB_SCOPE_DENIED", "Cloud job belongs to a different profile/account/data scope.");
-    assertJobIntegrity(record2);
-    if (record2.authorization_binding !== await this.accountBinding()) throw new FusionError("ACCOUNT_CHANGED", "The Autodesk authorization session changed; an old account plan cannot be reused or read through the new account.");
-    return record2;
+    const record3 = await this.options.store.get("cloudjob", id2);
+    if (!record3) throw new FusionError("NOT_FOUND", "Cloud job is outside this profile ledger.");
+    if (record3.id !== id2) throw new FusionError("PLAN_TAMPERED", "The stored cloud job identity does not match its ledger reference.");
+    if (record3.scope_hash !== this.scopeBinding() || record3.profile_id !== this.options.profile.id || record3.prepared.context.tenantId !== this.options.profile.cloud.tenantId) throw new FusionError("JOB_SCOPE_DENIED", "Cloud job belongs to a different profile/account/data scope.");
+    assertJobIntegrity(record3);
+    if (record3.authorization_binding !== await this.accountBinding()) throw new FusionError("ACCOUNT_CHANGED", "The Autodesk authorization session changed; an old account plan cannot be reused or read through the new account.");
+    if (record3.batch) {
+      const batch = await this.readBatchRecord(record3.batch.batch_id), variant = batch.variants.find((variant2) => variant2.initial_job.id === id2);
+      if (!variant) throw new FusionError("BATCH_BINDING_CHANGED", "Cloud job is not in its owning batch manifest.");
+      this.assertBatchChild(batch, variant, record3);
+      this.applyBatchConflict(record3, await this.readBatchConflict(batch));
+      if (record3.validation && (await this.batchJobs(batch)).some((job) => job?.validation_in_progress)) record3.validation_usable = false;
+    }
+    return record3;
   }
   async submitJob(id2, expectedHash, key) {
     if (!this.automation) throw new FusionError("AUTOMATION_NOT_CONFIGURED", "No reviewed Automation client is configured.");
     if (!/^[A-Za-z0-9._:-]{8,160}$/.test(key)) throw new FusionError("INVALID_IDEMPOTENCY_KEY", "Use a unique safe idempotency key.");
-    return this.guarded(async () => {
-      const record2 = await this.inspectJob(id2);
-      if (record2.plan_hash !== expectedHash || record2.profile_hash !== profileHash(this.options.profile)) throw new FusionError("PLAN_BINDING_CHANGED", "Cloud plan hash or profile changed.");
-      const keyId = hash({ cloud: this.options.profile.id, key });
-      const previous = await this.options.store.get("idempotency", keyId);
-      if (previous && previous.job_id !== id2) throw new FusionError("IDEMPOTENCY_CONFLICT", "This key is bound to another cloud submission.");
-      if (record2.status !== "prepared") {
-        if (record2.idempotency_key !== key) throw new FusionError("ALREADY_ATTEMPTED", "This cloud job was already attempted with another key.");
-        if (record2.status === "submitting") {
-          record2.status = "outcome_unknown";
-          record2.error = { code: "OUTCOME_UNKNOWN", message: "Submission intent has no final provider receipt. Do not resubmit; retain the reservation and reconcile with Autodesk.", outcome: "unknown" };
-          await this.options.store.put("cloudjob", id2, record2);
-        }
-        return record2;
+    return this.guarded(() => this.submitJobLocked(id2, expectedHash, key));
+  }
+  /** Caller holds the shared queue/lease; batch waves must not nest guarded(). */
+  async submitJobLocked(id2, expectedHash, key, batch) {
+    const record3 = await this.inspectJob(id2);
+    if (record3.batch && (!batch || batch.phase !== "ready" || record3.batch.batch_id !== batch.id)) throw new FusionError("BATCH_SUBMISSION_REQUIRED", "Submit a batch-owned child only through its unchanged ready batch manifest.");
+    if (batch && await this.readBatchConflict(batch)) throw new FusionError("OUTPUT_IDENTITY_CONFLICT", "A durable output conflict blocks all further submissions from this batch.", "partial");
+    if (record3.plan_hash !== expectedHash || record3.profile_hash !== profileHash(this.options.profile)) throw new FusionError("PLAN_BINDING_CHANGED", "Cloud plan hash or profile changed.");
+    const keyId = hash({ cloud: this.options.profile.id, key });
+    const previous = await this.options.store.get("idempotency", keyId);
+    if (previous && previous.job_id !== id2) throw new FusionError("IDEMPOTENCY_CONFLICT", "This key is bound to another cloud submission.");
+    if (record3.status !== "prepared") {
+      if (record3.idempotency_key !== key) throw new FusionError("ALREADY_ATTEMPTED", "This cloud job was already attempted with another key.");
+      if (record3.status === "submitting") {
+        record3.status = "outcome_unknown";
+        record3.error = { code: "OUTCOME_UNKNOWN", message: "Submission intent has no final provider receipt. Do not resubmit; retain the reservation and reconcile with Autodesk.", outcome: "unknown" };
+        await this.options.store.put("cloudjob", id2, record3);
       }
-      const expiresAt = Math.min(Date.parse(record2.prepared.expiresAt), Date.parse(record2.created_at) + this.options.profile.policy.planMaxAgeMs);
-      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) throw new FusionError("PLAN_EXPIRED", "Cloud preparation expired before submission. Prepare and review a fresh job.");
-      authorize(this.options.profile, "cloud.job_submit", "cloud_compute");
-      const budget = this.options.profile.cloud?.budget;
-      if (!budget) throw new FusionError("BUDGET_REQUIRED", "Cloud submission requires an explicit admission budget.");
-      const allJobs = await this.options.store.list("cloudjob");
-      const jobs = allJobs.filter((job) => job.profile_id === this.options.profile.id && job.prepared.context.tenantId === this.options.profile.cloud.tenantId);
-      jobs.forEach(assertJobIntegrity);
-      const active = jobs.filter((j) => ["submitting", "queued", "running", "validating", "outcome_unknown", "cancel_requested"].includes(j.status));
-      const period = jobs.filter((j) => j.budget_period === budget.period && j.submitted);
-      const exposure = jobs.filter((job) => job.submitted && !job.settlement);
-      if (exposure.some((job) => job.prepared.reservation.currency !== budget.currency)) throw new FusionError("BUDGET_UNIT_MISMATCH", "Unsettled job exposure has a different currency; reconcile it before changing this budget pool.");
-      const reserved = period.reduce((sum, j) => sum + (j.settlement?.actual_amount ?? j.reserved_units), 0) + exposure.filter((j) => j.budget_period !== budget.period).reduce((sum, j) => sum + j.reserved_units, 0);
-      if (active.length >= budget.maxConcurrentJobs || period.length >= budget.maxSubmissions || reserved + record2.prepared.reservation.amount > budget.maxReservedUnits) throw new FusionError("BUDGET_EXHAUSTED", "Cloud admission exceeds concurrency, submission count or reserved-cost limits. Unknown work retains its reservation.");
-      if (record2.prepared.reservation.currency !== budget.currency) throw new FusionError("BUDGET_UNIT_MISMATCH", "Recipe cost units do not match the profile budget.");
-      record2.status = "submitting";
-      record2.submitted = true;
-      record2.idempotency_key = key;
-      record2.reserved_units = record2.prepared.reservation.amount;
-      record2.updated_at = now();
-      await this.options.store.put("idempotency", keyId, { job_id: id2, plan_hash: expectedHash });
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_submission_intent", { id: id2, plan_hash: expectedHash, reserved_units: record2.reserved_units, budget_period: record2.budget_period });
-      try {
-        const status = await this.automation.submit(record2.prepared);
-        if (typeof status.providerId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(status.providerId)) throw new FusionError("OUTCOME_UNKNOWN", "Submission response has no valid provider identity; retain the intent and reservation.", "unknown");
-        record2.provider_id = status.providerId;
-        this.applyProviderStatus(record2, status);
-      } catch (error51) {
-        record2.error = errorResult(error51);
-        record2.status = record2.error.outcome === "none" ? "failed" : "outcome_unknown";
-        if (record2.error.outcome === "none") {
-          record2.submitted = false;
-          record2.reserved_units = 0;
-        }
+      return record3;
+    }
+    this.assertPreparedJob(record3);
+    authorize(this.options.profile, "cloud.job_submit", "cloud_compute");
+    const { budget, jobs, active, period, reserved } = await this.admissionSnapshot();
+    if (active.length >= budget.maxConcurrentJobs || period.length >= budget.maxSubmissions || reserved + record3.prepared.reservation.amount > budget.maxReservedUnits) throw new FusionError("BUDGET_EXHAUSTED", "Cloud admission exceeds concurrency, submission count or reserved-cost limits. Unknown work retains its reservation.");
+    if (record3.prepared.reservation.currency !== budget.currency) throw new FusionError("BUDGET_UNIT_MISMATCH", "Recipe cost units do not match the profile budget.");
+    record3.status = "submitting";
+    record3.submitted = true;
+    record3.idempotency_key = key;
+    record3.reserved_units = record3.prepared.reservation.amount;
+    record3.updated_at = now();
+    await this.options.store.put("idempotency", keyId, { job_id: id2, plan_hash: expectedHash });
+    await this.options.store.put("cloudjob", id2, record3);
+    await this.options.store.audit("cloud_submission_intent", { id: id2, plan_hash: expectedHash, reserved_units: record3.reserved_units, budget_period: record3.budget_period });
+    try {
+      const status = await this.automation.submit(record3.prepared);
+      if (typeof status.providerId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(status.providerId)) throw new FusionError("OUTCOME_UNKNOWN", "Submission response has no valid provider identity; retain the intent and reservation.", "unknown");
+      if (jobs.some((job) => job.id !== record3.id && job.submitted && job.provider_id === status.providerId)) throw new FusionError("PROVIDER_IDENTITY_CONFLICT", "Submission returned another ledger job's provider identity; retain this intent and reservation without polling the ambiguous ID.", "unknown");
+      record3.provider_id = status.providerId;
+      this.applyProviderStatus(record3, status);
+    } catch (error51) {
+      record3.error = errorResult(error51);
+      record3.status = record3.error.outcome === "none" ? "failed" : "outcome_unknown";
+      if (record3.error.outcome === "none") {
+        record3.submitted = false;
+        record3.reserved_units = 0;
       }
-      record2.updated_at = now();
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_submission_result", { id: id2, status: record2.status, provider_id: record2.provider_id ?? null, error: record2.error ?? null });
-      return record2;
-    });
+    }
+    record3.updated_at = now();
+    await this.options.store.put("cloudjob", id2, record3);
+    await this.options.store.audit("cloud_submission_result", { id: id2, status: record3.status, provider_id: record3.provider_id ?? null, error: record3.error ?? null });
+    return record3;
   }
   async jobStatus(id2) {
     return this.guarded(async () => {
-      const record2 = await this.inspectJob(id2);
-      if (record2.provider_id && this.automation) {
+      const record3 = await this.inspectJob(id2);
+      if (record3.provider_id && this.automation) {
         try {
-          this.applyProviderStatus(record2, await this.automation.status(record2.provider_id));
-          record2.updated_at = now();
+          this.applyProviderStatus(record3, await this.automation.status(record3.provider_id));
+          record3.updated_at = now();
         } catch (error51) {
-          record2.error = errorResult(error51);
+          record3.error = errorResult(error51);
         }
-        await this.options.store.put("cloudjob", id2, record2);
+        await this.options.store.put("cloudjob", id2, record3);
       }
-      return record2;
+      return record3;
     });
   }
-  applyProviderStatus(record2, status) {
+  applyProviderStatus(record3, status) {
     const terminal = ["validating", "failed", "cancelled"].includes(status.status);
-    if (status.providerId !== record2.provider_id || !["queued", "running", "validating", "failed", "cancelled", "outcome_unknown"].includes(status.status) || terminal !== status.completionConfirmed || terminal && status.cancelSupported || record2.provider?.completionConfirmed && !terminal) throw new FusionError("INVALID_PROVIDER_STATE", "Provider job identity or completion evidence is inconsistent.", "unknown");
-    record2.provider = status;
-    if (status.status === "validating" && record2.validation) {
-      const { receipt_hash, ...receipt } = record2.validation;
+    if (status.providerId !== record3.provider_id || !["queued", "running", "validating", "failed", "cancelled", "outcome_unknown"].includes(status.status) || terminal !== status.completionConfirmed || terminal && status.cancelSupported || record3.provider?.completionConfirmed && !terminal) throw new FusionError("INVALID_PROVIDER_STATE", "Provider job identity or completion evidence is inconsistent.", "unknown");
+    record3.provider = status;
+    if (record3.output_identity_conflict) {
+      record3.status = "failed";
+      record3.validation_usable = false;
+      return;
+    }
+    if (status.status === "validating" && record3.validation) {
+      const { receipt_hash, ...receipt } = record3.validation;
       if (hash(receipt) !== receipt_hash) throw new FusionError("RECEIPT_TAMPERED", "Stored output validation receipt changed.", "unknown");
-      record2.status = receipt.checks.every((check2) => check2.outcome === "passed") ? "succeeded" : "failed";
-    } else if (record2.status === "cancel_requested" && ["queued", "running"].includes(status.status)) {
-    } else record2.status = status.status;
+      record3.status = receipt.checks.every((check2) => check2.outcome === "passed") ? "succeeded" : "failed";
+    } else if (record3.status === "cancel_requested" && ["queued", "running"].includes(status.status)) {
+    } else record3.status = status.status;
   }
   async cancelJob(id2) {
     return this.guarded(async () => {
-      const record2 = await this.inspectJob(id2);
-      if (!record2.provider_id || !this.automation) throw new FusionError("PROVIDER_ID_REQUIRED", "Cannot cancel a job without an unambiguous provider ID.");
+      const record3 = await this.inspectJob(id2);
+      if (!record3.provider_id || !this.automation) throw new FusionError("PROVIDER_ID_REQUIRED", "Cannot cancel a job without an unambiguous provider ID.");
       authorize(this.options.profile, "cloud.job_cancel", "cloud_compute");
-      this.applyProviderStatus(record2, await this.automation.status(record2.provider_id));
-      if (record2.cancellation) return { job: record2, cancellation_requested: true, acknowledgement: record2.cancellation.acknowledgement, rollback_promised: false };
-      if (!record2.provider?.cancelSupported) return { job: record2, cancellation_requested: false, reason: "Cancellation is not qualified for this provider activity. Its reservation remains held." };
-      record2.status = "cancel_requested";
-      record2.cancellation = { attempted_at: now(), acknowledgement: "pending" };
-      record2.updated_at = now();
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_cancel_intent", { id: id2, provider_id: record2.provider_id });
+      this.applyProviderStatus(record3, await this.automation.status(record3.provider_id));
+      if (record3.cancellation || !record3.provider?.cancelSupported) {
+        record3.updated_at = now();
+        await this.options.store.put("cloudjob", id2, record3);
+        if (record3.cancellation) return { job: record3, cancellation_requested: true, acknowledgement: record3.cancellation.acknowledgement, rollback_promised: false };
+        return { job: record3, cancellation_requested: false, reason: "Cancellation is not qualified or no longer applicable to this provider state. Its reservation remains held." };
+      }
+      record3.status = "cancel_requested";
+      record3.cancellation = { attempted_at: now(), acknowledgement: "pending" };
+      record3.updated_at = now();
+      await this.options.store.put("cloudjob", id2, record3);
+      await this.options.store.audit("cloud_cancel_intent", { id: id2, provider_id: record3.provider_id });
       let result;
       try {
-        result = await this.automation.cancel(record2.provider_id);
-        record2.cancellation.acknowledgement = "confirmed";
+        result = await this.automation.cancel(record3.provider_id);
+        record3.cancellation.acknowledgement = "confirmed";
       } catch (error51) {
-        record2.error = errorResult(error51);
-        record2.cancellation.acknowledgement = record2.error.outcome === "none" ? "rejected" : "unknown";
-        result = { error: record2.error };
+        record3.error = errorResult(error51);
+        record3.cancellation.acknowledgement = record3.error.outcome === "none" ? "rejected" : "unknown";
+        result = { error: record3.error };
       }
-      record2.updated_at = now();
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_cancel_requested", { id: id2, provider_id: record2.provider_id });
-      return { job: record2, cancellation: result, rollback_promised: false };
+      record3.updated_at = now();
+      await this.options.store.put("cloudjob", id2, record3);
+      await this.options.store.audit("cloud_cancel_requested", { id: id2, provider_id: record3.provider_id });
+      return { job: record3, cancellation: result, rollback_promised: false };
     });
   }
   async validateJob(id2) {
     return this.guarded(async () => {
-      const record2 = await this.inspectJob(id2);
+      const record3 = await this.inspectJob(id2);
+      const batch = record3.batch ? await this.readBatchRecord(record3.batch.batch_id) : void 0;
+      if (batch) {
+        if (await this.readBatchConflict(batch)) throw new FusionError("OUTPUT_IDENTITY_CONFLICT", "This batch has a durable output-identity conflict. Changing a later validation receipt cannot clear historical evidence; no reconciliation API is implemented.", "partial");
+        if ((await this.batchJobs(batch)).some((job) => job?.validation_in_progress)) throw new FusionError("VALIDATION_RECONCILIATION_REQUIRED", "An earlier batch validation has no durable outcome. Do not rerun it or submit remaining variants; preserve the ledger for explicit reconciliation.", "unknown");
+      }
       const validateOutputs = this.outputValidator();
       if (!validateOutputs) throw new FusionError("VALIDATION_NOT_CONFIGURED", "This deployment has no trusted recipe output validator. Provider success remains validating; configure a qualified validator instead of asserting success through model input.");
-      if (!record2.provider_id || !this.automation) throw new FusionError("PROVIDER_ID_REQUIRED", "Validation requires an unambiguous submitted workitem.");
-      if (record2.validation) {
-        const { receipt_hash, ...receipt2 } = record2.validation;
+      if (!record3.provider_id || !this.automation) throw new FusionError("PROVIDER_ID_REQUIRED", "Validation requires an unambiguous submitted workitem.");
+      if (record3.validation) {
+        const { receipt_hash, ...receipt2 } = record3.validation;
         if (hash(receipt2) !== receipt_hash) throw new FusionError("RECEIPT_TAMPERED", "Stored validation evidence changed.");
-        return record2;
+        return record3;
       }
-      this.applyProviderStatus(record2, await this.automation.status(record2.provider_id));
-      if (record2.provider?.status !== "validating" || !record2.provider.completionConfirmed) throw new FusionError("PROVIDER_NOT_COMPLETE", "Output validation requires confirmed successful provider processing.");
-      const recipe = this.automation.listRecipes().find((recipe2) => recipe2.id === record2.prepared.recipeId && recipe2.version === record2.prepared.recipeVersion);
+      this.applyProviderStatus(record3, await this.automation.status(record3.provider_id));
+      if (record3.provider?.status !== "validating" || !record3.provider.completionConfirmed) throw new FusionError("PROVIDER_NOT_COMPLETE", "Output validation requires confirmed successful provider processing.");
+      const recipe = this.automation.listRecipes().find((recipe2) => recipe2.id === record3.prepared.recipeId && recipe2.version === record3.prepared.recipeVersion);
       if (!recipe || recipe.verification.validatorIds.length === 0) throw new FusionError("RECIPE_CHANGED", "The original recipe validation contract is not available.");
-      let receipt;
-      try {
-        receipt = structuredClone(await validateOutputs(structuredClone(record2)));
-      } catch {
-        throw new FusionError("VALIDATION_FAILED", "The trusted output validator could not produce a complete receipt; no successful validation was recorded.");
+      if (batch) {
+        record3.validation_in_progress = { attempt_id: newId("validation"), started_at: now(), job_id: id2, batch_id: batch.id, request_hash: record3.prepared.requestHash };
+        record3.updated_at = now();
+        await this.options.store.put("cloudjob", id2, record3);
       }
-      assertJson(receipt, 1048576);
-      if (!exactKeys(receipt, ["job_id", "provider_id", "request_hash", "recipe_hash", "observed_at", "artifacts", "checks"]) || receipt.job_id !== id2 || receipt.provider_id !== record2.provider_id || receipt.request_hash !== record2.prepared.requestHash || receipt.recipe_hash !== record2.prepared.recipeHash || !freshEvidence(receipt.observed_at, record2.created_at)) throw new FusionError("INVALID_VALIDATION_EVIDENCE", "Output evidence is stale or does not match the exact stored job and recipe.");
-      if (!Array.isArray(receipt.artifacts) || receipt.artifacts.length < 1 || receipt.artifacts.length > 100 || receipt.artifacts.some((artifact) => !exactKeys(artifact, ["artifact_id", "sha256", "bytes"]) || !evidenceRef(artifact.artifact_id) || !/^[a-f0-9]{64}$/.test(artifact.sha256) || !Number.isSafeInteger(artifact.bytes) || artifact.bytes < 1) || new Set(receipt.artifacts.map((artifact) => artifact.artifact_id)).size !== receipt.artifacts.length || receipt.artifacts.reduce((bytes, artifact) => bytes + artifact.bytes, 0) > recipe.limits.maxOutputBytes) throw new FusionError("INVALID_VALIDATION_EVIDENCE", "Validated artifact identities, hashes or byte totals are invalid.");
-      if (!Array.isArray(receipt.checks) || receipt.checks.length !== recipe.verification.validatorIds.length || receipt.checks.some((check2) => !exactKeys(check2, ["validator_id", "outcome", "evidence_ref"]) || !recipe.verification.validatorIds.includes(check2.validator_id) || !["passed", "failed"].includes(check2.outcome) || !evidenceRef(check2.evidence_ref)) || new Set(receipt.checks.map((check2) => check2.validator_id)).size !== receipt.checks.length) throw new FusionError("INVALID_VALIDATION_EVIDENCE", "Every required recipe validator must supply exactly one bound pass/fail result and an opaque evidence reference.");
-      record2.validation = { ...receipt, receipt_hash: hash(receipt) };
-      record2.status = receipt.checks.every((check2) => check2.outcome === "passed") ? "succeeded" : "failed";
-      record2.updated_at = now();
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_output_validation", { id: id2, status: record2.status, validation: record2.validation, publication_performed: false });
-      return record2;
+      let receipt;
+      let conflictDetected = false;
+      try {
+        try {
+          receipt = structuredClone(await validateOutputs(structuredClone(record3)));
+        } catch {
+          throw new FusionError("VALIDATION_FAILED", "The trusted output validator could not produce a complete receipt; no successful validation was recorded.");
+        }
+        assertJson(receipt, 1048576);
+        if (!exactKeys(receipt, ["job_id", "provider_id", "request_hash", "recipe_hash", "observed_at", "artifacts", "checks"]) || receipt.job_id !== id2 || receipt.provider_id !== record3.provider_id || receipt.request_hash !== record3.prepared.requestHash || receipt.recipe_hash !== record3.prepared.recipeHash || !freshEvidence(receipt.observed_at, record3.created_at)) throw new FusionError("INVALID_VALIDATION_EVIDENCE", "Output evidence is stale or does not match the exact stored job and recipe.");
+        if (!Array.isArray(receipt.artifacts) || receipt.artifacts.length < 1 || receipt.artifacts.length > 100 || receipt.artifacts.some((artifact) => !exactKeys(artifact, ["artifact_id", "sha256", "bytes"]) || !evidenceRef(artifact.artifact_id) || !/^[a-f0-9]{64}$/.test(artifact.sha256) || !Number.isSafeInteger(artifact.bytes) || artifact.bytes < 1) || new Set(receipt.artifacts.map((artifact) => artifact.artifact_id)).size !== receipt.artifacts.length || receipt.artifacts.reduce((bytes, artifact) => bytes + artifact.bytes, 0) > recipe.limits.maxOutputBytes) throw new FusionError("INVALID_VALIDATION_EVIDENCE", "Validated artifact identities, hashes or byte totals are invalid.");
+        if (!Array.isArray(receipt.checks) || receipt.checks.length !== recipe.verification.validatorIds.length || receipt.checks.some((check2) => !exactKeys(check2, ["validator_id", "outcome", "evidence_ref"]) || !recipe.verification.validatorIds.includes(check2.validator_id) || !["passed", "failed"].includes(check2.outcome) || !evidenceRef(check2.evidence_ref)) || new Set(receipt.checks.map((check2) => check2.validator_id)).size !== receipt.checks.length) throw new FusionError("INVALID_VALIDATION_EVIDENCE", "Every required recipe validator must supply exactly one bound pass/fail result and an opaque evidence reference.");
+        if (batch) {
+          const jobs = await this.batchJobs(batch);
+          const candidate = { ...record3, validation: { ...receipt, receipt_hash: hash(receipt) } };
+          const conflicts = batchArtifactConflicts(jobs.map((job) => job?.id === record3.id ? candidate : job));
+          if (conflicts.length > 0) {
+            conflictDetected = true;
+            await this.recordOutputConflict(batch, jobs, record3, receipt, conflicts);
+          }
+        }
+      } catch (error51) {
+        if (batch && !conflictDetected) {
+          delete record3.validation_in_progress;
+          record3.updated_at = now();
+          await this.options.store.put("cloudjob", id2, record3);
+        }
+        throw error51;
+      }
+      record3.validation = { ...receipt, receipt_hash: hash(receipt) };
+      record3.status = receipt.checks.every((check2) => check2.outcome === "passed") ? "succeeded" : "failed";
+      delete record3.validation_in_progress;
+      record3.updated_at = now();
+      await this.options.store.put("cloudjob", id2, record3);
+      await this.options.store.audit("cloud_output_validation", { id: id2, status: record3.status, validation: record3.validation, publication_performed: false });
+      return record3;
     });
+  }
+  async recordOutputConflict(batch, jobs, trigger, candidate, conflicts) {
+    const involved = new Set(conflicts.flatMap((conflict) => conflict.job_ids));
+    const candidateHash = hash(candidate);
+    const fence = {
+      schema_version: 1,
+      id: batch.id,
+      batch_id: batch.id,
+      batch_plan_hash: batch.plan_hash,
+      request_hash: batch.request_hash,
+      detected_at: now(),
+      trigger_job_id: trigger.id,
+      code: "OUTPUT_IDENTITY_CONFLICT",
+      source: "trusted_output_validator",
+      resolution: "blocked_no_reconciliation_api",
+      candidate_receipt_sha256: candidateHash,
+      conflicts: structuredClone(conflicts),
+      job_bindings: jobs.filter((job) => involved.has(job.id)).map((job) => ({ job_id: job.id, plan_hash: job.plan_hash, validation_receipt_sha256: job.id === trigger.id ? candidateHash : job.validation.receipt_hash })),
+      receipt_hash: ""
+    };
+    fence.receipt_hash = hash(cloudBatchConflictBinding(fence));
+    assertCloudBatchConflictIntegrity(fence, batch);
+    if (await this.readBatchConflict(batch)) throw new FusionError("OUTPUT_IDENTITY_CONFLICT", "This batch already has a durable output conflict.", "partial");
+    await this.options.store.put("cloudbatchconflict", batch.id, fence);
+    for (const job of jobs.filter((job2) => involved.has(job2.id))) {
+      this.applyBatchConflict(job, fence);
+      delete job.validation_in_progress;
+      job.updated_at = now();
+      await this.options.store.put("cloudjob", job.id, job);
+    }
+    await this.options.store.audit("cloud_batch_output_conflict", { batch_id: batch.id, batch_plan_hash: batch.plan_hash, conflict_receipt_hash: fence.receipt_hash, job_ids: fence.job_bindings.map((job) => job.job_id) });
+    throw new FusionError("OUTPUT_IDENTITY_CONFLICT", "A trusted validator observed a shared artifact identity between batch variants. The durable conflict blocks further batch submissions and invalidates implicated cached validation for acceptance. No clearing or reconciliation API is implemented.", "partial");
   }
   async settleJob(id2) {
     return this.guarded(async () => {
-      const record2 = await this.inspectJob(id2);
+      const record3 = await this.inspectJob(id2);
       const reconcileBilling = this.billingReconciler();
       if (!reconcileBilling) throw new FusionError("BILLING_RECONCILIATION_NOT_CONFIGURED", "This deployment has no trusted provider metering or invoice reconciler. Estimated reservations remain unresolved; no model-supplied amount can release them.");
-      if (!record2.provider_id || !this.automation || !record2.submitted) throw new FusionError("PROVIDER_ID_REQUIRED", "Settlement requires a submitted job with an unambiguous provider ID.");
-      if (record2.settlement) {
-        const { receipt_hash, ...receipt2 } = record2.settlement;
+      if (!record3.provider_id || !this.automation || !record3.submitted) throw new FusionError("PROVIDER_ID_REQUIRED", "Settlement requires a submitted job with an unambiguous provider ID.");
+      if (record3.settlement) {
+        const { receipt_hash, ...receipt2 } = record3.settlement;
         if (hash(receipt2) !== receipt_hash) throw new FusionError("RECEIPT_TAMPERED", "Stored billing evidence changed.");
-        return record2;
+        return record3;
       }
-      this.applyProviderStatus(record2, await this.automation.status(record2.provider_id));
-      if (!record2.provider?.completionConfirmed || !["validating", "failed", "cancelled"].includes(record2.provider.status)) throw new FusionError("PROVIDER_NOT_COMPLETE", "Running, pending and uncertain workitems cannot release their billing exposure.");
+      this.applyProviderStatus(record3, await this.automation.status(record3.provider_id));
+      if (!record3.provider?.completionConfirmed || !["validating", "failed", "cancelled"].includes(record3.provider.status)) throw new FusionError("PROVIDER_NOT_COMPLETE", "Running, pending and uncertain workitems cannot release their billing exposure.");
       let receipt;
       try {
-        receipt = structuredClone(await reconcileBilling(structuredClone(record2)));
+        receipt = structuredClone(await reconcileBilling(structuredClone(record3)));
       } catch {
         throw new FusionError("BILLING_UNRESOLVED", "The trusted billing integration could not produce final actual-cost evidence; the reservation remains held.");
       }
       assertJson(receipt, 65536);
-      if (!exactKeys(receipt, ["job_id", "provider_id", "request_hash", "currency", "actual_amount", "observed_at", "evidence_ref", "source", "final"]) || receipt.job_id !== id2 || receipt.provider_id !== record2.provider_id || receipt.request_hash !== record2.prepared.requestHash || receipt.currency !== record2.prepared.reservation.currency || !Number.isFinite(receipt.actual_amount) || receipt.actual_amount < 0 || receipt.final !== true || !["provider_meter", "provider_invoice", "enterprise_billing_reconciliation"].includes(receipt.source) || !evidenceRef(receipt.evidence_ref) || !freshEvidence(receipt.observed_at, record2.created_at)) throw new FusionError("INVALID_BILLING_EVIDENCE", "Final actual-cost evidence is stale, unqualified or does not match the exact stored job and currency.");
-      record2.settlement = { ...receipt, receipt_hash: hash(receipt) };
-      record2.reserved_units = 0;
-      record2.updated_at = now();
-      await this.options.store.put("cloudjob", id2, record2);
-      await this.options.store.audit("cloud_billing_reconciled", { id: id2, actual_amount: receipt.actual_amount, currency: receipt.currency, evidence_ref: receipt.evidence_ref, cost_exceeds_estimate: receipt.actual_amount > record2.prepared.reservation.amount });
-      return record2;
+      if (!exactKeys(receipt, ["job_id", "provider_id", "request_hash", "currency", "actual_amount", "observed_at", "evidence_ref", "source", "final"]) || receipt.job_id !== id2 || receipt.provider_id !== record3.provider_id || receipt.request_hash !== record3.prepared.requestHash || receipt.currency !== record3.prepared.reservation.currency || !Number.isFinite(receipt.actual_amount) || receipt.actual_amount < 0 || receipt.final !== true || !["provider_meter", "provider_invoice", "enterprise_billing_reconciliation"].includes(receipt.source) || !evidenceRef(receipt.evidence_ref) || !freshEvidence(receipt.observed_at, record3.created_at)) throw new FusionError("INVALID_BILLING_EVIDENCE", "Final actual-cost evidence is stale, unqualified or does not match the exact stored job and currency.");
+      record3.settlement = { ...receipt, receipt_hash: hash(receipt) };
+      record3.reserved_units = 0;
+      record3.updated_at = now();
+      await this.options.store.put("cloudjob", id2, record3);
+      await this.options.store.audit("cloud_billing_reconciled", { id: id2, actual_amount: receipt.actual_amount, currency: receipt.currency, evidence_ref: receipt.evidence_ref, cost_exceeds_estimate: receipt.actual_amount > record3.prepared.reservation.amount });
+      return record3;
     });
   }
   async prepareBomSync(source, target, ownership, mappings) {
@@ -36364,6 +38659,42 @@ export {
   lazy,
   preprocess,
   external_exports,
+  operationCatalog,
+  describeOperations,
+  getOperation,
+  parseOperation,
+  capabilityBoundaries,
+  APS_ORIGIN,
+  CloudError,
+  cloudHash,
+  cloudSourceHash,
+  redactCloudData,
+  validateAutodeskOrigin,
+  CloudRateLimiter,
+  parseRetryAfter,
+  cloudBatchPrepareSchema,
+  cloudBatchConflictBinding,
+  assertCloudBatchConflictIntegrity,
+  parseCloudBatchInput,
+  cloudBatchId,
+  cloudBatchChildKey,
+  cloudBatchBinding,
+  cloudBatchContext,
+  assertPreparedBatchVariant,
+  assertCloudBatchIntegrity,
+  batchArtifactConflicts,
+  batchErrorCode,
+  inspectCloudBatch,
+  handoffAssertionSchema,
+  handoffInputSchema,
+  verifyHandoffManifest,
+  HandoffManager,
+  retentionRecordReferenceSchema,
+  retentionPolicySchema,
+  retentionHoldsSchema,
+  retentionSelectionSchema,
+  RetentionPlanner,
+  verifyRetentionPlan,
   defaultStateRoot,
   fixtureProfile,
   parseProfile,
@@ -36372,11 +38703,8 @@ export {
   readTrustedFile,
   verifyTrustedExecutableAsset,
   authorize,
-  operationCatalog,
-  describeOperations,
-  getOperation,
-  parseOperation,
-  capabilityBoundaries,
+  validatePngContent,
+  validateStlContent,
   validateFilename,
   readPinnedAsset,
   ArtifactManager,
@@ -36580,14 +38908,6 @@ export {
   AddinDesktopProvider,
   FusionEngine,
   createFixtureEngine,
-  APS_ORIGIN,
-  CloudError,
-  cloudHash,
-  cloudSourceHash,
-  redactCloudData,
-  validateAutodeskOrigin,
-  CloudRateLimiter,
-  parseRetryAfter,
   MemoryTokenStore,
   ApsPkceClient,
   BomError,

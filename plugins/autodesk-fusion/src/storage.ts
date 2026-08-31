@@ -1,12 +1,76 @@
 import { execFile } from 'node:child_process';
 import { constants, type BigIntStats } from 'node:fs';
-import { lstat, mkdir, open, readFile, realpath, rename, readdir, unlink } from 'node:fs/promises';
+import { lstat, mkdir, open, opendir, readFile, realpath, rename, readdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { FusionError, assertJson, canonicalJson, hash, newId, now, redact } from './safety.js';
+import { FusionError, assertJson, canonicalJson, hash, hashBytes, newId, now, redact } from './safety.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_RECORD_BYTES = 16_777_216;
+
+/** Internal input for retention analysis. Never return record payloads directly through MCP. */
+export interface ReadOnlyRecordSnapshotEntry {
+  ref: string;
+  kind?: string;
+  id?: string;
+  entry_type: 'file' | 'directory' | 'symlink' | 'other';
+  status: 'read' | 'protected' | 'unknown';
+  bytes?: number;
+  sha256?: string;
+  value?: unknown;
+  issue?: string;
+}
+export interface ReadOnlyRecordSnapshot {
+  schema_version: 1;
+  scope: 'top_level_local_state_records';
+  root_hash: string;
+  observed_at: string;
+  complete: boolean;
+  entries: ReadOnlyRecordSnapshotEntry[];
+  entry_count_lower_bound: number;
+  total_entry_count: number | null;
+  issues: string[];
+  excluded_subtrees: string[];
+}
+export interface ReadOnlyRecordSnapshotOptions {
+  /** Only these known record kinds are read. All other payloads stay unopened. */
+  readKinds: readonly string[];
+  maxEntries?: number;
+  maxTotalBytes?: number;
+  maxDurationMs?: number;
+}
+
+function snapshotIdentity(info: BigIntStats): string {
+  return hash({ dev: String(info.dev), ino: String(info.ino), size: String(info.size), mtime: String(info.mtimeNs), ctime: String(info.ctimeNs), mode: String(info.mode), uid: String(info.uid), links: String(info.nlink) });
+}
+
+async function snapshotRoot(root: string, expected?: BigIntStats): Promise<BigIntStats> {
+  if (process.platform === 'win32') return windowsRootIdentity(root, expected);
+  const info = await lstat(root, { bigint: true });
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== BigInt(process.getuid!()) || (info.mode & 0o077n) !== 0n || (expected && !sameIdentity(info, expected)) || await realpath(root) !== root) throw new FusionError('UNSAFE_PATH', 'A read-only snapshot requires an existing private unchanged directory.');
+  return info;
+}
+
+async function readSnapshotRecord(root: string, filename: string, rootIdentity: BigIntStats, expected: BigIntStats): Promise<Buffer> {
+  if (process.platform === 'win32') {
+    await checkWindowsStorage(root, { file: filename });
+    await windowsFileIdentity(filename, MAX_RECORD_BYTES, expected);
+  }
+  if (!expected.isFile() || expected.isSymbolicLink() || expected.nlink !== 1n || expected.size > BigInt(MAX_RECORD_BYTES) || (process.platform !== 'win32' && (expected.uid !== BigInt(process.getuid!()) || (expected.mode & 0o077n) !== 0n))) throw new FusionError('UNSAFE_RECORD', 'Read-only inventory does not read shared, linked or oversized records.');
+  const handle = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const opened = await handle.stat({ bigint: true });
+    if (snapshotIdentity(opened) !== snapshotIdentity(expected)) throw new FusionError('SNAPSHOT_CHANGED', 'A record changed while opening.');
+    await snapshotRoot(root, rootIdentity);
+    const bytes = Buffer.alloc(Number(opened.size) + 1);
+    let length = 0;
+    while (length < bytes.length) { const result = await handle.read(bytes, length, bytes.length - length, length); if (!result.bytesRead) break; length += result.bytesRead; }
+    const after = await handle.stat({ bigint: true }), linked = await lstat(filename, { bigint: true });
+    if (length !== Number(opened.size) || snapshotIdentity(after) !== snapshotIdentity(opened) || snapshotIdentity(linked) !== snapshotIdentity(opened) || linked.isSymbolicLink()) throw new FusionError('SNAPSHOT_CHANGED', 'A record changed while reading.');
+    await snapshotRoot(root, rootIdentity);
+    return bytes.subarray(0, length);
+  } finally { await handle.close(); }
+}
 // Fixed code only: paths and operation choices are JSON data in the child's
 // environment. Do not use ExecutionPolicy bypass or repair an existing ACL.
 // The .NET Framework creation overload installs the DACL at creation time:
@@ -232,6 +296,95 @@ export class RecordStore {
     const values: T[] = [];
     for (const name of files) { const value = await this.get<T>(kind, name.slice(kind.length + 2, -5)); if (value) values.push(value); }
     return values;
+  }
+  /** Observes existing top-level ledger records only; never initializes, repairs or removes storage. */
+  async snapshotReadOnly(options: ReadOnlyRecordSnapshotOptions): Promise<ReadOnlyRecordSnapshot> {
+    const maxEntries = options.maxEntries ?? 10_000, maxTotalBytes = options.maxTotalBytes ?? 67_108_864, maxDurationMs = options.maxDurationMs ?? 30_000;
+    if (!Array.isArray(options.readKinds) || options.readKinds.length > 64 || options.readKinds.some(kind => !/^[a-z][a-z0-9_-]{0,40}$/.test(kind)) || !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 10_000 || !Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 || maxTotalBytes > 268_435_456 || !Number.isSafeInteger(maxDurationMs) || maxDurationMs < 1 || maxDurationMs > 60_000) throw new FusionError('INVALID_SNAPSHOT_LIMIT', 'Read-only inventory requires bounded explicit record kinds and limits.');
+    const result: ReadOnlyRecordSnapshot = { schema_version: 1, scope: 'top_level_local_state_records', root_hash: hash(this.root), observed_at: now(), complete: true, entries: [], entry_count_lower_bound: 0, total_entry_count: null, issues: [], excluded_subtrees: [] };
+    const issue = (code: string): void => { result.complete = false; if (!result.issues.includes(code)) result.issues.push(code); };
+    const deadline = Date.now() + maxDurationMs, kinds = new Set(options.readKinds);
+    let root: string, rootIdentity: BigIntStats;
+    try {
+      if (!path.isAbsolute(this.root)) throw new Error('absolute root required');
+      const named = await lstat(this.root, { bigint: true });
+      if (named.isSymbolicLink() || !named.isDirectory()) throw new Error('ordinary root required');
+      root = await realpath(this.root);
+      if (root.split(/[\\/]/u).some(part => ['credential-locks', 'native-credentials'].includes(part.toLowerCase()))) {
+        issue('CREDENTIAL_OR_NATIVE_ROOT_EXCLUDED'); return result;
+      }
+      if (process.platform === 'win32') await checkWindowsStorage(root);
+      rootIdentity = await snapshotRoot(root);
+      if (!sameIdentity(named, rootIdentity)) throw new Error('root changed');
+      result.root_hash = hash({ path: root, dev: String(rootIdentity.dev), ino: String(rootIdentity.ino) });
+    } catch { issue('ROOT_UNAVAILABLE_OR_UNSAFE'); return result; }
+
+    const enumerate = async (): Promise<{ names: string[]; complete: boolean }> => {
+      const names: string[] = [];
+      const directory = await opendir(root);
+      for await (const entry of directory) {
+        names.push(entry.name);
+        if (names.length > maxEntries) return { names, complete: false };
+        if (Date.now() > deadline) return { names, complete: false };
+      }
+      names.sort(); return { names, complete: true };
+    };
+    const identities = new Map<string, string>();
+    let names: string[] = [], totalBytes = 0;
+    try {
+      const first = await enumerate(); names = first.names;
+      result.entry_count_lower_bound = names.length;
+      if (!first.complete) issue(Date.now() > deadline ? 'SNAPSHOT_TIME_LIMIT' : 'SNAPSHOT_ENTRY_LIMIT');
+      else result.total_entry_count = names.length;
+      for (const name of names.slice(0, maxEntries)) {
+        const entry: ReadOnlyRecordSnapshotEntry = { ref: `entry:${hash(name)}`, entry_type: 'other', status: 'unknown' };
+        result.entries.push(entry);
+        if (Date.now() > deadline) { entry.issue = 'SNAPSHOT_TIME_LIMIT'; issue(entry.issue); continue; }
+        const filename = path.join(root, name);
+        try {
+          const info = await lstat(filename, { bigint: true });
+          identities.set(name, snapshotIdentity(info));
+          entry.entry_type = info.isSymbolicLink() ? 'symlink' : info.isDirectory() ? 'directory' : info.isFile() ? 'file' : 'other';
+          if (info.size <= BigInt(Number.MAX_SAFE_INTEGER)) entry.bytes = Number(info.size);
+          if (name === 'credential-locks' && entry.entry_type === 'directory') {
+            entry.status = 'protected'; entry.issue = 'CREDENTIAL_SUBTREE_EXCLUDED'; result.excluded_subtrees.push('credential-locks'); continue;
+          }
+          if (name === '.execution.lock') { entry.status = 'protected'; entry.issue = 'EXECUTION_LOCK_PRESENT'; issue(entry.issue); continue; }
+          const match = /^([a-z][a-z0-9_-]{0,40})--([a-zA-Z0-9_-]{1,120})\.json$/u.exec(name);
+          if (!match || !kinds.has(match[1]!)) { entry.issue = 'UNKNOWN_ENTRY_NOT_READ'; issue(entry.issue); continue; }
+          entry.kind = match[1]!; entry.id = match[2]!;
+          if (entry.entry_type !== 'file' || info.nlink !== 1n || (process.platform !== 'win32' && (info.uid !== BigInt(process.getuid!()) || (info.mode & 0o077n) !== 0n))) { entry.issue = 'UNSAFE_RECORD_TYPE_OR_ACCESS'; issue(entry.issue); continue; }
+          if (['refresh', 'cleanup', 'fixture'].includes(entry.kind)) { entry.status = 'protected'; entry.issue = 'RUNTIME_STATE_NOT_READ'; continue; }
+          if (entry.kind === 'tmp') { entry.status = 'protected'; entry.issue = 'UNFINISHED_WRITE_RECORD'; issue(entry.issue); continue; }
+          if (entry.entry_type !== 'file' || info.size > BigInt(MAX_RECORD_BYTES) || totalBytes + Number(info.size) > maxTotalBytes) { entry.issue = entry.entry_type !== 'file' ? 'UNSAFE_RECORD_TYPE' : 'SNAPSHOT_BYTE_LIMIT'; issue(entry.issue); continue; }
+          totalBytes += Number(info.size);
+          const bytes = await readSnapshotRecord(root, filename, rootIdentity, info);
+          entry.sha256 = hashBytes(bytes); entry.bytes = bytes.length;
+          try {
+            const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+            const value: unknown = JSON.parse(text); assertJson(value, MAX_RECORD_BYTES);
+            entry.value = value; entry.status = 'read';
+          } catch { entry.issue = 'INVALID_RECORD_JSON'; issue(entry.issue); }
+        } catch { entry.issue = 'RECORD_UNAVAILABLE_UNSAFE_OR_CHANGED'; issue(entry.issue); }
+      }
+      const last = await enumerate();
+      if (!last.complete || first.complete !== last.complete || JSON.stringify(names) !== JSON.stringify(last.names)) {
+        result.entry_count_lower_bound = Math.max(result.entry_count_lower_bound, last.names.length);
+        result.total_entry_count = null;
+        issue('SNAPSHOT_DIRECTORY_CHANGED_OR_INCOMPLETE');
+      }
+      for (const [name, expected] of identities) {
+        if (Date.now() > deadline) { issue('SNAPSHOT_TIME_LIMIT'); break; }
+        try { if (snapshotIdentity(await lstat(path.join(root, name), { bigint: true })) !== expected) issue('SNAPSHOT_RECORD_CHANGED'); }
+        catch { issue('SNAPSHOT_RECORD_CHANGED'); }
+      }
+      if (process.platform === 'win32') await checkWindowsStorage(root);
+      const after = await snapshotRoot(root, rootIdentity);
+      if (snapshotIdentity(after) !== snapshotIdentity(rootIdentity) || await realpath(this.root) !== root) { result.total_entry_count = null; issue('SNAPSHOT_ROOT_CHANGED'); }
+    } catch { result.total_entry_count = null; issue('SNAPSHOT_UNAVAILABLE_OR_CHANGED'); }
+    result.entries.sort((left, right) => left.ref < right.ref ? -1 : left.ref > right.ref ? 1 : 0);
+    result.issues.sort(); result.excluded_subtrees.sort();
+    return result;
   }
   async acquireLease(): Promise<() => Promise<void>> {
     await this.init();

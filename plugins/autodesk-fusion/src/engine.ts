@@ -1,11 +1,13 @@
 import path from 'node:path';
 import os from 'node:os';
-import { ArtifactManager, readPinnedAsset, type ArtifactReservation } from './artifacts.js';
+import { ArtifactManager, readPinnedAsset, type ArtifactReservation, type ArtifactCompletionEvidence } from './artifacts.js';
 import { capabilityBoundaries, describeOperations, getOperation, parseOperation } from './catalog.js';
 import { FixtureDesktopProvider } from './fixture.js';
 import { authorize, loadProfile, profileHash, readTrustedFile, verifyTrustedExecutableAsset, type FusionProfile } from './profile.js';
 import { NativeFusionClient } from './native.js';
 import { AddinDesktopProvider } from './addin.js';
+import { HandoffManager, type HandoffManifest } from './handoff.js';
+import { RetentionPlanner, type RetentionInventory, type RetentionPlan, type RetentionSelection } from './retention.js';
 import { FusionError, SerialQueue, errorResult, hash, hashBytes, newId, now, redact } from './safety.js';
 import { RecordStore } from './storage.js';
 import type { DesktopProvider, DesktopResponse, JsonObject, OperationInput, PlanRecord, JobRecord } from './types.js';
@@ -64,6 +66,7 @@ function jobBinding(job: DesktopJobRecord): unknown {
 export class FusionEngine {
   readonly store: RecordStore;
   readonly artifacts: ArtifactManager;
+  readonly handoffs: HandoffManager;
   readonly executionContractHash: string;
   readonly executionContractKind: 'installed_code' | 'schema_only';
   private queue = new SerialQueue();
@@ -76,6 +79,11 @@ export class FusionEngine {
     this.executionContractHash = options.executionContractHash ?? hash({ schema: 2, handler: handlerHash, operations: describeOperations(undefined, true) });
     this.executionContractKind = options.executionContractFiles?.length ? 'installed_code' : 'schema_only';
     this.store = new RecordStore(this.profile.stateRoot); this.artifacts = new ArtifactManager(this.profile, this.store, () => this.checkProfile());
+    this.handoffs = new HandoffManager(this.store, {
+      profileId: this.profile.id, profileHash: profileHash(this.profile), handlerHash: this.handlerHash, executionContractHash: this.executionContractHash,
+      verifyAccess: () => this.assertTrustedConfiguration(), authorizeDocument: id => this.authorizeOperation('document.inspect', 'read', id),
+      inspectPlan: id => this.inspectPlan(id), read: request => this.read(request), inspectArtifact: id => this.artifacts.inspect(id, true)
+    });
   }
   async init(): Promise<void> { if (!this.initialized) { await this.store.init(); this.initialized = true; } }
   async assertTrustedConfiguration(): Promise<void> { await this.queue.run(async () => { await this.init(); await this.checkProfile(); }); }
@@ -114,6 +122,14 @@ export class FusionEngine {
   }
   private assertPlanBinding(plan: ManagedPlan): void {
     if (plan.handler_hash !== this.handlerHash || plan.profile_hash !== profileHash(this.profile) || plan.execution_contract_hash !== this.executionContractHash) throw new FusionError('PLAN_BINDING_CHANGED', 'Handler, execution contract or trusted profile changed since preparation.');
+  }
+  private artifactCompletionEvidence(response: DesktopResponse, providerJobId?: string): ArtifactCompletionEvidence {
+    if (!response.ok) throw new FusionError('INVALID_ARTIFACT_COMPLETION', 'An unsuccessful provider response cannot finalize an artifact.', 'unknown');
+    return {
+      provider_kind: this.desktop instanceof FixtureDesktopProvider ? 'synthetic_fixture' : this.desktop instanceof NativeFusionClient ? 'native_mcp' : this.desktop instanceof AddinDesktopProvider ? 'typed_addin' : 'unverified_provider',
+      response,
+      ...(providerJobId ? { provider_job_id: providerJobId } : {})
+    };
   }
   private async recordJob(plan: ManagedPlan, providerId: string, status: DesktopJobRecord['status'], submissionError?: ReturnType<typeof errorResult>): Promise<DesktopJobRecord> {
     const job: DesktopJobRecord = { id: newId('job'), provider: plan.operation.operation === 'render.start' ? 'desktop_render' : 'desktop_cam', provider_id: providerId, plan_id: plan.id, document_id: plan.operation.document_id!, status, created_at: now(), updated_at: now(), request_hash: plan.hash, execution_contract_hash: this.executionContractHash, binding_hash: '', cancel_supported: false, ...(plan.artifact ? { artifact_id: plan.artifact.id } : {}), ...(submissionError ? { submission_error: submissionError } : {}) };
@@ -365,7 +381,8 @@ export class FusionEngine {
             else args.output_path = staged.path;
           }
           dispatched = true;
-          const result = unwrap(await this.desktop.dispatch({ operation: plan.operation.operation, args, request_id: newId('execute'), ...(plan.operation.document_id ? { document_id: plan.operation.document_id } : {}), expected_state: plan.expected_state! }));
+          const response = await this.desktop.dispatch({ operation: plan.operation.operation, args, request_id: newId('execute'), ...(plan.operation.document_id ? { document_id: plan.operation.document_id } : {}), expected_state: plan.expected_state! });
+          const result = unwrap(response);
           const data = recordData(result.data);
           if (!data) throw new FusionError('INVALID_PROVIDER_RESPONSE', 'Mutation response did not contain the reviewed structured result. Its outcome is unknown.', 'unknown');
           if (['documents.create', 'documents.import'].includes(plan.operation.operation)) {
@@ -393,7 +410,7 @@ export class FusionEngine {
           let artifact: ArtifactReservation | undefined;
           if (plan.artifact) {
             if (pending || failed) artifact = await this.artifacts.quarantine(plan.artifact.id, failed ? 'failed' : 'pending', failed ? 'Provider reported failure or cancellation. Existing output remains quarantined; no rollback is inferred.' : 'Provider job is still running; an incomplete file is not validated.');
-            else artifact = await this.artifacts.complete(plan.artifact.id, { plan_id: plan.id, plan_hash: plan.hash });
+            else artifact = await this.artifacts.complete(plan.artifact.id, { plan_id: plan.id, plan_hash: plan.hash, evidence: this.artifactCompletionEvidence(response, desktopJob?.provider_id) });
           }
           let after: unknown;
           if (!['documents.close', 'documents.create', 'documents.open', 'documents.import'].includes(plan.operation.operation)) {
@@ -455,7 +472,8 @@ export class FusionEngine {
           if (job.status === 'succeeded' && job.artifact_id) await this.artifacts.inspect(job.artifact_id); return job;
         }
         try {
-          const result = unwrap(await this.desktop.dispatch({ operation: job.provider === 'desktop_cam' ? 'cam.status' : 'render.status', args: { job_id: job.provider_id }, document_id: job.document_id, request_id: newId('job_poll'), ...(expectedState ? { expected_state: expectedState } : {}) }));
+          const response = await this.desktop.dispatch({ operation: job.provider === 'desktop_cam' ? 'cam.status' : 'render.status', args: { job_id: job.provider_id }, document_id: job.document_id, request_id: newId('job_poll'), ...(expectedState ? { expected_state: expectedState } : {}) });
+          const result = unwrap(response);
           const data = recordData(result.data);
           if (!data || providerJobId(data) !== job.provider_id) throw new FusionError('INVALID_PROVIDER_JOB', 'Job status did not identify the exact submitted future.', 'unknown');
           const state = providerJobState(data);
@@ -463,7 +481,7 @@ export class FusionEngine {
           job.data = { provider: data };
           let artifact: ArtifactReservation | undefined;
           if (state === 'succeeded') {
-            if (job.artifact_id) { artifact = await this.artifacts.complete(job.artifact_id, { plan_id: plan.id, plan_hash: plan.hash }); job.data = { provider: data, artifact }; }
+            if (job.artifact_id) { artifact = await this.artifacts.complete(job.artifact_id, { plan_id: plan.id, plan_hash: plan.hash, evidence: this.artifactCompletionEvidence(response, job.provider_id) }); job.data = { provider: data, artifact }; }
             job.status = 'succeeded'; plan.status = job.submission_error ? 'failed' : 'succeeded';
           } else if (['failed', 'cancelled'].includes(state)) {
             plan.status = 'failed';
@@ -485,11 +503,34 @@ export class FusionEngine {
       } finally { await release(); }
     });
   }
-  async handoff(title: string, planIds: string[]): Promise<unknown> {
-    const plans = await Promise.all(planIds.map(id => this.inspectPlan(id)));
-    const id = newId('handoff');
-    const record = { id, title, created_at: now(), state: 'draft', profile_id: this.profile.id, plans: plans.map(p => ({ id: p.id, hash: p.hash, operation: p.operation, status: p.status, result: p.result ?? null, limitations: p.limitations })), unresolved: ['Responsible engineer must review model/geometry and downstream manufacturing evidence.', 'No sending, release transition or equipment control was performed.'], integrity: hash(plans.map(p => p.hash)) };
-    await this.store.put('handoff', id, record); return record;
+  async handoff(input: unknown, planIds?: string[]): Promise<HandoffManifest> {
+    return this.handoffs.prepare(typeof input === 'string' ? { title: input, plan_ids: planIds ?? [] } : input);
+  }
+  async inspectHandoff(id: string): Promise<Awaited<ReturnType<HandoffManager['inspect']>>> { return this.handoffs.inspect(id); }
+  private retentionPlanner(): RetentionPlanner {
+    // Optional retention analysis must not add startup requirements to existing
+    // desktop-only profiles. Its bounded context is validated when requested.
+    return new RetentionPlanner(this.store, {
+      profileId: this.profile.id, profileHash: profileHash(this.profile), executionContractHash: this.executionContractHash,
+      policy: this.profile.retention?.policy, holds: this.profile.retention?.holds, readDocumentIds: this.profile.policy.readDocuments
+    });
+  }
+  async inventoryRetention(): Promise<RetentionInventory> {
+    return this.queue.run(async () => {
+      // Deliberately do not initialize or audit: an absent ledger must stay absent.
+      await this.checkProfile();
+      const inventory = await this.retentionPlanner().inventory();
+      await this.checkProfile();
+      return inventory;
+    });
+  }
+  async prepareRetention(input: RetentionSelection): Promise<RetentionPlan> {
+    return this.queue.run(async () => {
+      await this.checkProfile();
+      const plan = await this.retentionPlanner().prepare(input);
+      await this.checkProfile();
+      return plan;
+    });
   }
   async close(): Promise<void> { await this.desktop.close?.(); }
 }

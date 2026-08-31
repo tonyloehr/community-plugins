@@ -108,7 +108,7 @@ add('flatpattern.export', 'Export an existing sheet-metal flat pattern as DXF', 
 
 export const operationCatalog: ReadonlyMap<string, Entry> = new Map(entries.map(entry => [entry.id, entry]));
 export function describeOperations(family?: string, includeSchema = false): unknown[] {
-  return entries.filter(e => !family || e.family === family).map(({ schema, document, ...entry }) => ({ ...entry, document_required: document, ...(includeSchema ? { input_schema: z.toJSONSchema(schema) } : {}) }));
+  return entries.filter(e => !family || e.family === family).map(({ schema, document, ...entry }) => ({ ...entry, document_required: document, ...(includeSchema ? { input_schema: z.toJSONSchema(schema, { io: 'input' }) } : {}) }));
 }
 export function getOperation(id: string): Entry {
   const entry = operationCatalog.get(id);

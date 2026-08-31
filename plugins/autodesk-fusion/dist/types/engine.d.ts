@@ -1,5 +1,7 @@
 import { ArtifactManager, type ArtifactReservation } from './artifacts.js';
 import { type FusionProfile } from './profile.js';
+import { HandoffManager, type HandoffManifest } from './handoff.js';
+import { type RetentionInventory, type RetentionPlan, type RetentionSelection } from './retention.js';
 import { errorResult } from './safety.js';
 import { RecordStore } from './storage.js';
 import type { DesktopProvider, JsonObject, PlanRecord, JobRecord } from './types.js';
@@ -40,6 +42,7 @@ export declare class FusionEngine {
     readonly options: FusionEngineOptions;
     readonly store: RecordStore;
     readonly artifacts: ArtifactManager;
+    readonly handoffs: HandoffManager;
     readonly executionContractHash: string;
     readonly executionContractKind: 'installed_code' | 'schema_only';
     private queue;
@@ -53,6 +56,7 @@ export declare class FusionEngine {
     private verifyDesktopQualification;
     private checkProfile;
     private assertPlanBinding;
+    private artifactCompletionEvidence;
     private recordJob;
     private readScope;
     private discoverDocuments;
@@ -68,7 +72,11 @@ export declare class FusionEngine {
     execute(id: string, expectedHash: string, idempotencyKey: string): Promise<ManagedPlan>;
     recovery(id: string): Promise<unknown>;
     jobStatus(id: string, expectedDocument?: string, expectedProvider?: 'desktop_cam' | 'desktop_render', expectedState?: string): Promise<DesktopJobRecord>;
-    handoff(title: string, planIds: string[]): Promise<unknown>;
+    handoff(input: unknown, planIds?: string[]): Promise<HandoffManifest>;
+    inspectHandoff(id: string): Promise<Awaited<ReturnType<HandoffManager['inspect']>>>;
+    private retentionPlanner;
+    inventoryRetention(): Promise<RetentionInventory>;
+    prepareRetention(input: RetentionSelection): Promise<RetentionPlan>;
     close(): Promise<void>;
 }
 export declare function createFixtureEngine(profile: FusionProfile, options?: FusionEngineOptions): Promise<FusionEngine>;
