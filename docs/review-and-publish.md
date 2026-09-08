@@ -72,7 +72,10 @@ repository's cold-package unit/integration/security tests, then runs the deeper
 plugin and Python API contracts and validates the regenerated package. The
 catalog-discovered `npm run test:marketplace` includes this same master. See the
 [Fusion test guide](../tests/autodesk-fusion/README.md) for coverage and process
-cleanup boundaries.
+cleanup boundaries. The single `Autodesk Fusion E2E` job runs this master on
+Node 22.19, 24 and 26 sequentially, and includes cold-package verification, the
+runtime audit and a pinned host native source build with a candidate receipt.
+Keep those checks together as required by [AGENTS.md](../AGENTS.md).
 
 An implementation-preview PR must preserve the explicit limitations in the
 [Fusion status report](autodesk-fusion-implementation-status.md). Synthetic

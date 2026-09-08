@@ -4,6 +4,30 @@ Date: August 31, 2026. Package: `autodesk-fusion` 0.1.0. Branch: `codex/autodesk
 
 The user authorized implementation, testing and a pull request after the [research plan](autodesk-fusion-360-plugin-implementation-plan.md). The repository now contains an installable interoperability layer. **It is an implementation preview, not a qualified enterprise release.** The original acceptance contract remains in force; missing licensed tests, undeveloped variants and enterprise release work are not counted as complete.
 
+## September 8, 2026 test-suite correction
+
+The canonical root command remains `npm run test:autodesk-fusion`. The single
+`Autodesk Fusion E2E` job now contains the cold-package check, complete JavaScript
+and Python suites on Node 22.19/24/26, package reproducibility checks, runtime
+dependency audit, and pinned host native source build. The former platform matrix
+and separate native workflow were removed to match the neighboring plugins.
+Repository `AGENTS.md` and contributor/test guides document this convention.
+
+The add-in loopback listener now binds its numeric address without a synchronous
+DNS lookup; a regression forces DNS resolution to fail while startup succeeds.
+The packaged client preserves Windows OS startup paths while still excluding
+user credentials and module/preload overrides. Windows ACL checks retain their
+existing access policy and deadline, with sanitized process-failure diagnostics.
+Real Windows execution is still required to confirm that environment fix.
+
+Review regressions also cover private POSIX storage beneath replaceable ancestors
+or a replaced root, and actual cloud batch audit events blocking unrelated
+retention reviews. The implementation now validates storage ancestry/root
+identity and recognizes the coordinator's real batch event names and bindings.
+The ReviewOps dependency lock also updates `fast-uri` to 3.1.7 to fix the shared
+marketplace audit failure. Earlier qualification results below remain historical
+and do not qualify these new bytes or other operating systems.
+
 ## Delivered interoperability
 
 | Layer | Delivered behavior | Practical boundary |
@@ -94,7 +118,7 @@ The benchmark report hashes to `686c61ba598b2224512a8d3e1767a2e516ddc192fe7bdd02
 
 ## Community integration and callable-path corrections
 
-The community catalog now uses optional authentication for the credential-free synthetic startup. The root `test:autodesk-fusion` master validates the committed package before any rebuild, runs the repository-style unit/integration/security companion suite, then invokes the existing deep JavaScript/Python verification and validates the rebuilt receipt. The marketplace runner discovers that master alongside all other catalog plugins. Marketplace CI now runs those masters after installing each applicable locked development dependency set without lifecycle scripts. A primary Fusion E2E job covers Node 22.19, 24 and 26; supplemental Windows/macOS contract jobs and native source-build jobs remain separate. CI definitions are not hosted execution evidence.
+The community catalog now uses optional authentication for the credential-free synthetic startup. The root `test:autodesk-fusion` master validates the committed package before any rebuild, runs the repository-style unit/integration/security companion suite, then invokes the existing deep JavaScript/Python verification and validates the rebuilt receipt. The marketplace runner discovers that master alongside all other catalog plugins. Marketplace CI now runs those masters after installing each applicable locked development dependency set without lifecycle scripts. The single Fusion E2E job covers Node 22.19, 24 and 26 sequentially on macOS, including the runtime audit and a host native source build with its receipt upload. All Autodesk checks stay in that one job; separate platform and native jobs have been removed. CI definitions are not hosted execution evidence.
 
 Review found and corrected a nonfunctional native enrollment path: required fixed arguments could not be supplied, an overridden endpoint was not saved, and discovery could overwrite a changed profile. The CLI now accepts a bounded trusted JSON-object file, validates the complete updated profile and exact sanitized confirmation before writing, pins the selected endpoint, and detects profile changes. It does not inherit old fixed values, override the script argument, switch fixture/add-in transports or execute a native tool. A further composition regression reproduced valid standalone arguments becoming an invalid nested profile; the original failing runs remain retained separately from the corrected tests. The checks do not lock out a concurrent trusted profile owner.
 

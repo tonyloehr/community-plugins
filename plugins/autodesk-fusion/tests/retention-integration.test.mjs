@@ -4,7 +4,7 @@ import { lstat, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { FixtureDesktopProvider, FusionEngine, createFusionServer, fixtureProfile, hash, hashBytes, parseProfile, verifyRetentionPlan } from '../dist/index.mjs';
+import { CloudCoordinator, FixtureDesktopProvider, FusionEngine, MemoryTokenStore, createFusionServer, fixtureProfile, hash, hashBytes, cloudHash, parseProfile, verifyRetentionPlan } from '../dist/index.mjs';
 
 function retentionConfiguration() {
   return {
@@ -12,12 +12,16 @@ function retentionConfiguration() {
     holds: { version: 1, ownerRef: 'test-owner', evidenceRef: 'synthetic-current-holds-review', reviewedAt: new Date(Date.now() - 60_000).toISOString(), expiresAt: new Date(Date.now() + 86_400_000).toISOString(), complete: true, holds: [] }
   };
 }
-async function setup(t, { configure = true, trustedFile = false, id } = {}) {
+async function setup(t, { configure = true, trustedFile = false, id, cloud = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'fusion-retention-integration-'));
   const raw = fixtureProfile(path.join(root, 'ledger'));
   raw.policy.planMaxAgeMs = 1000;
   if (configure) raw.retention = retentionConfiguration();
   if (id) raw.id = id;
+  if (cloud) {
+    raw.policy.operations.push('cloud.job_submit'); raw.policy.effects.push('cloud_compute');
+    raw.cloud = { clientId: 'retention-test-client', tenantId: 'retention-test-tenant', scopes: ['code:all', 'data:read'], redirectUri: 'http://127.0.0.1:8765/callback', hubIds: ['hub-1'], projects: [{ hubId: 'hub-1', projectId: 'project-1' }], budget: { maxConcurrentJobs: 1, maxSubmissions: 10, maxReservedUnits: 10, currency: 'USD', period: 'retention-test' } };
+  }
   const profile = parseProfile(raw), profileFile = path.join(root, 'profile.json');
   if (trustedFile) await writeFile(profileFile, JSON.stringify(profile), { mode: 0o600 });
   // The actual analytic provider is in memory. Retention must never dispatch it.
@@ -100,6 +104,51 @@ test('real prepared-plan and audit records produce a pure copy-review plan after
   assert.equal(review.archive_execution_supported, false);
   assert.deepEqual(await ledgerBytes(engine), before);
   assert.equal((await lstat(engine.store.root)).mtimeMs, rootBefore.mtimeMs);
+  assert.equal(calls.length, 0);
+});
+
+test('real cloud batch preparation and resume audit events preserve unrelated retention review', async t => {
+  const { root, profile, engine, calls, plan } = await expiredPreparation(t, { cloud: true });
+  const providerCalls = [];
+  // Only the external provider is synthetic; the coordinator writes every batch,
+  // child, replay receipt and audit consumed by the real retention planner.
+  const automation = {
+    listRecipes: () => [{ id: 'retention-protocol-only', limits: { maxVariants: 2 } }],
+    async prepare(recipeId, inputs, context) {
+      providerCalls.push('prepare');
+      const fields = { id: `retention-request-${inputs.width}`, recipeId, recipeVersion: '1', recipeHash: 'a'.repeat(64), inputs, context,
+        activity: { reference: 'fixture.Retention+v1', version: 1, engine: 'Autodesk.Fusion+test', definitionHash: 'b'.repeat(64), bundles: [], observedAt: new Date().toISOString(), rollingEngine: false, aliasRacePossible: false },
+        destination: { alias: 'quarantine', kind: 'object_storage' }, reservation: { amount: 1, currency: 'USD', kind: 'estimated', hardCap: false },
+        createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), warnings: [] };
+      return { ...fields, requestHash: cloudHash(fields) };
+    },
+    async submit(prepared) {
+      providerCalls.push('submit');
+      return { providerId: `provider-${prepared.id}`, providerStatus: 'queued', status: 'queued', completionConfirmed: false, validationRequired: false, cancelSupported: true, observedAt: new Date().toISOString(), statistics: {} };
+    }
+  };
+  const coordinator = await CloudCoordinator.create({ profile, root, store: engine.store, tokenStore: new MemoryTokenStore(), automation,
+    aps: { scope: { tenantId: profile.cloud.tenantId, hubIds: profile.cloud.hubIds, projects: profile.cloud.projects, mfgModels: [] } }, authorizationBinding: async () => 'retention-test-account' });
+  const batch = await coordinator.prepareBatch({ request_key: 'retention-batch-001', recipe_id: 'retention-protocol-only', context: { tenantId: profile.cloud.tenantId, sources: [], destinationAlias: 'quarantine' }, variants: [10, 20].map(width => ({ variant_id: `width-${width}`, inputs: { width } })) });
+  for (const phase of ['prepared', 'resumed', 'admission blocked']) {
+    if (phase !== 'prepared') await coordinator.resumeBatch(batch.id, batch.plan_hash, 1);
+    const before = await ledgerBytes(engine), callsBefore = [...providerCalls];
+    const inventory = await engine.inventoryRetention();
+    assert.equal(inventory.complete, true, `${phase}: ${inventory.issues.join(', ')}`);
+    const selected = inventory.entries.find(entry => entry.record_id === plan.id);
+    const review = await engine.prepareRetention({ inventory_hash: inventory.inventory_hash, record_refs: [selected.record_ref] });
+    assert.equal(review.records.length, 2);
+    assert.equal(verifyRetentionPlan(review), true);
+    assert.equal(inventory.counts.archive_review_candidate, 2);
+    assert.equal(inventory.counts.protected, inventory.entries.length - 2);
+    assert.deepEqual(await ledgerBytes(engine), before);
+    assert.deepEqual(providerCalls, callsBefore);
+  }
+  const events = (await engine.store.list('audit')).filter(record => record.event.startsWith('cloud_batch_'));
+  assert.deepEqual(events.map(record => record.event).sort(), ['cloud_batch_prepared', 'cloud_batch_ready', 'cloud_batch_resume', 'cloud_batch_resume']);
+  assert.ok(events.every(record => record.details.id === batch.id && record.details.plan_hash === batch.plan_hash));
+  assert.ok(events.some(record => record.details.admission_blocked?.code === 'BUDGET_EXHAUSTED'));
+  assert.deepEqual(providerCalls, ['prepare', 'prepare', 'submit']);
   assert.equal(calls.length, 0);
 });
 

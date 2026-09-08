@@ -95,7 +95,7 @@ async function rawHttp(url, { headers, body = "", method = "POST" }) {
 
 test("optional add-in Python queue, main-thread, package and lifecycle doubles pass", async () => {
   const { stderr } = await execFileAsync(process.env.FUSION_TEST_PYTHON ?? (process.platform === 'win32' ? 'python' : 'python3'), [path.join(plugin, "addin", "tests", "test_bridge.py")], { timeout: 20_000, maxBuffer: 64_000, env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" } });
-  assert.match(stderr, /Ran 11 tests/u);
+  assert.match(stderr, /Ran 12 tests/u);
   assert.match(stderr, /OK/u);
 });
 

@@ -31,10 +31,15 @@ export function sha256(bytes) {
 
 // An explicit private fixture profile is always passed. Never inherit the
 // caller's Autodesk profile, tokens, Node preload hooks, or proxy settings.
-export function isolatedEnvironment(profileFile) {
+export function isolatedEnvironment(profileFile, source = process.env) {
   const env = { LANG: "C", TZ: "UTC" };
-  for (const key of ["PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "TMPDIR", "TMP", "TEMP"]) {
-    if (typeof process.env[key] === "string") env[key] = process.env[key];
+  // Windows PowerShell discovers its built-in modules and startup caches using
+  // OS profile/application paths even with -NoProfile. Keep those paths while
+  // excluding user module overrides and application configuration/credentials.
+  // Canonicalize Windows key spellings to avoid duplicate Path/PATH entries.
+  for (const key of ["PATH", "SystemRoot", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "HOMEDRIVE", "HOMEPATH", "TMPDIR", "TMP", "TEMP"]) {
+    const supplied = Object.keys(source).find(candidate => candidate.toLowerCase() === key.toLowerCase());
+    if (supplied && typeof source[supplied] === "string") env[key] = source[supplied];
   }
   if (profileFile) env.FUSION_PROFILE = profileFile;
   return env;

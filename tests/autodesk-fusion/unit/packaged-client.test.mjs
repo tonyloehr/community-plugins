@@ -1,9 +1,37 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { runCli } from "../support/packaged-client.mjs";
+import { isolatedEnvironment, runCli } from "../support/packaged-client.mjs";
+
+test("isolated subprocesses retain Windows startup paths without application secrets or preload hooks", () => {
+  const env = isolatedEnvironment("fixture-profile.json", {
+    Path: "fixture-bin", SYSTEMROOT: "C:\\Windows", USERPROFILE: "C:\\Users\\fixture",
+    APPDATA: "fixture-roaming", LOCALAPPDATA: "fixture-local", ProgramFiles: "fixture-programs",
+    "ProgramFiles(x86)": "fixture-programs-x86", ProgramW6432: "fixture-programs-native",
+    COMSPEC: "fixture-command", PATHEXT: ".EXE", TEMP: "fixture-temp",
+    FUSION_PROFILE: "caller-profile", APS_CLIENT_SECRET: "must-not-leak", NODE_OPTIONS: "must-not-load",
+    NODE_PATH: "must-not-load", PSModulePath: "must-not-load", HTTP_PROXY: "must-not-connect", HOME: "caller-home",
+  });
+  assert.deepEqual(env, {
+    LANG: "C", TZ: "UTC", PATH: "fixture-bin", SystemRoot: "C:\\Windows", USERPROFILE: "C:\\Users\\fixture",
+    APPDATA: "fixture-roaming", LOCALAPPDATA: "fixture-local", ProgramFiles: "fixture-programs",
+    "ProgramFiles(x86)": "fixture-programs-x86", ProgramW6432: "fixture-programs-native",
+    COMSPEC: "fixture-command", PATHEXT: ".EXE", TEMP: "fixture-temp", FUSION_PROFILE: "fixture-profile.json",
+  });
+});
+
+test("isolated Windows PowerShell can load the ACL commands before the storage deadline", { skip: process.platform !== "win32" ? "Requires Windows PowerShell and Windows ACLs." : false }, () => {
+  const env = isolatedEnvironment();
+  const executable = path.join(env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const script = "[void](Get-Item -LiteralPath $env:TEMP -Force); [void](Get-Acl -LiteralPath $env:TEMP); @{ ready = $true } | ConvertTo-Json -Compress";
+  const result = spawnSync(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 16_384, windowsHide: true });
+  assert.equal(result.error?.code, undefined, "The isolated OS environment must support PowerShell startup without timing out");
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { ready: true });
+});
 
 test("CLI helper rejects unbounded timeout overrides before spawning a child", () => {
   for (const timeoutMs of [-1, 0, 99, 20_001, 100.5, Infinity, NaN, "100"]) {

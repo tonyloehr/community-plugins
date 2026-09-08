@@ -25,7 +25,7 @@ import {
   redact,
   schemaFingerprint,
   validateEnrollment
-} from "./chunk-WDURP6MK.mjs";
+} from "./chunk-EDY766MB.mjs";
 
 // src/cli.ts
 import { constants } from "node:fs";

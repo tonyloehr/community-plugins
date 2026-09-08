@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import secrets
 import socket
-from socketserver import ThreadingMixIn
+from socketserver import TCPServer, ThreadingMixIn
 import threading
 import time
 
@@ -127,7 +127,10 @@ class _LimitedServer(ThreadingMixIn, HTTPServer):
     def server_bind(self):
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+        # HTTPServer resolves its address with getfqdn while binding. This
+        # numeric loopback endpoint must start even when host DNS is stalled.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def process_request(self, request, client_address):
         if not self.bridge._http_slots.acquire(blocking=False):

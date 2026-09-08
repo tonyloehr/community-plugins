@@ -497,6 +497,35 @@ test('batch manifest, child and replay record form one protected group', async t
   assert.equal(inventory.counts.archive_review_candidate, 0);
 });
 
+test('batch audit bindings reject changed hashes and references even with recomputed audit integrity', async t => {
+  for (const [event, patch, reason] of [
+    ['cloud_batch_prepared', { plan_hash: 'f'.repeat(64) }, 'DEPENDENCY_HASH_MISMATCH'],
+    ['cloud_batch_ready', { plan_hash: 'f'.repeat(64) }, 'DEPENDENCY_HASH_MISMATCH'],
+    ['cloud_batch_resume', { plan_hash: 'f'.repeat(64) }, 'DEPENDENCY_HASH_MISMATCH'],
+    ['cloud_batch_ready', { plan_hash: undefined }, 'MALFORMED_OR_CHANGED_RECORD'],
+    ['cloud_batch_prepared', { request_hash: 'f'.repeat(64) }, 'MALFORMED_OR_CHANGED_RECORD'],
+    ['cloud_batch_ready', { job_ids: [newId('cloudjob')] }, 'MALFORMED_OR_CHANGED_RECORD'],
+    ['cloud_batch_resume', { attempted_variant_ids: ['unknown-variant'] }, 'MALFORMED_OR_CHANGED_RECORD'],
+    ['cloud_batch_resume', { admission_blocked: { code: 'BUDGET_EXHAUSTED', outcome: 'none', variant_id: 'unknown-variant' } }, 'MALFORMED_OR_CHANGED_RECORD']
+  ]) await t.test(`${event}: ${Object.keys(patch)[0]}`, async t => {
+    const { store } = await workspace(t), { batch, jobs } = batchManifest();
+    await putPreparation(store);
+    await store.put('cloudbatch', batch.id, batch);
+    for (const job of jobs) await store.put('cloudjob', job.id, job);
+    const fields = event === 'cloud_batch_prepared' ? { request_hash: batch.request_hash, variants: batch.variants.length, currency: batch.currency, estimated_reservation: batch.estimated_reservation }
+      : event === 'cloud_batch_ready' ? { job_ids: jobs.map(job => job.id) }
+        : { attempted_variant_ids: [], admission_blocked: null };
+    const details = { id: batch.id, plan_hash: batch.plan_hash, ...fields, ...patch };
+    if (details.plan_hash === undefined) delete details.plan_hash;
+    const audit = { id: newId('event'), event, time: EXPIRED, details, integrity: hash(details) };
+    await store.put('audit', audit.id, audit);
+    const inventory = await planner(store, configuration({ readDocumentIds: undefined })).inventory();
+    assert.equal(inventory.complete, false);
+    assert.equal(inventory.counts.archive_review_candidate, 0);
+    assert.ok(inventory.entries.some(entry => entry.reasons.includes(reason)));
+  });
+});
+
 test('missing batch children remain incomplete during materialization and after ready', async t => {
   for (const phase of ['materializing', 'ready']) await t.test(phase, async t => {
     const { store } = await workspace(t), { batch } = batchManifest(phase); await store.put('cloudbatch', batch.id, batch);

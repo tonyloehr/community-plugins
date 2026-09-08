@@ -388,7 +388,19 @@ function analyzeSnapshot(snapshot: ReadOnlyRecordSnapshot, context: RetentionCon
           if (!draft || details.provider_write_performed !== false || details.stored_draft_hash !== draft.draftHash || details.workspace_id !== draft.workspaceId || details.item_id !== draft.itemId) throw new Error('Manage draft audit binding');
         }
         else if (['cloud_job_prepared', 'cloud_submission_intent', 'cloud_submission_result', 'cloud_cancel_intent', 'cloud_cancel_requested', 'cloud_output_validation', 'cloud_billing_reconciled'].includes(String(event))) connect(node, 'cloudjob', details.id, details.plan_hash);
-        else if (['cloud_batch_prepared', 'cloud_batch_materialized', 'cloud_batch_execution'].includes(String(event))) connect(node, 'cloudbatch', details.id ?? details.batch_id);
+        else if (['cloud_batch_prepared', 'cloud_batch_ready', 'cloud_batch_resume'].includes(String(event))) {
+          if (!hashString(details.plan_hash)) throw new Error('batch audit plan hash');
+          const target = connect(node, 'cloudbatch', details.id, details.plan_hash), batch = target?.data as unknown as CloudBatchRecord;
+          assertCloudBatchIntegrity(batch);
+          if (event === 'cloud_batch_prepared') {
+            if (details.request_hash !== batch.request_hash || details.variants !== batch.variants.length || details.currency !== batch.currency || details.estimated_reservation !== batch.estimated_reservation) throw new Error('batch preparation audit binding');
+          } else if (event === 'cloud_batch_ready') {
+            if (!Array.isArray(details.job_ids) || hash(details.job_ids) !== hash(batch.variants.map(variant => variant.initial_job.id))) throw new Error('batch ready audit children');
+          } else {
+            const variants = new Set(batch.variants.map(variant => variant.variant_id)), blocked = object(details.admission_blocked);
+            if (!Array.isArray(details.attempted_variant_ids) || !details.attempted_variant_ids.every(string) || !unique(details.attempted_variant_ids) || details.attempted_variant_ids.some(id => !variants.has(id)) || details.admission_blocked !== null && (!blocked || !string(blocked.code) || !string(blocked.outcome) || blocked.variant_id !== undefined && (!string(blocked.variant_id) || !variants.has(blocked.variant_id)))) throw new Error('batch resume audit variants');
+          }
+        }
         else if (event === 'cloud_batch_output_conflict') {
           connect(node, 'cloudbatch', details.batch_id, details.batch_plan_hash);
           connect(node, 'cloudbatchconflict', details.batch_id, details.conflict_receipt_hash);

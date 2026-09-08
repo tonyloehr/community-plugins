@@ -52,6 +52,13 @@ class BridgeTests(unittest.TestCase):
         worker.start()
         return worker, result
 
+    def test_loopback_start_does_not_require_dns(self):
+        with patch("socket.getfqdn", side_effect=AssertionError("Loopback startup must not resolve DNS")) as lookup:
+            bridge = self.create()
+            self.assertEqual(bridge._server.server_name, "127.0.0.1")
+            self.assertEqual(bridge._server.server_port, bridge.port)
+            lookup.assert_not_called()
+
     def test_workers_only_enqueue_and_main_thread_dispatches_once(self):
         bridge = self.create()
         worker, result = self.submit(request())

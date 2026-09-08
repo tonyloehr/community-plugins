@@ -1,14 +1,14 @@
 import {
   createFusionServer,
   startServer
-} from "./chunk-TTRCU3QR.mjs";
+} from "./chunk-3LB6HVWO.mjs";
 import {
   checkQualificationAssertions,
   cliMain,
   jsonPointer,
   runCli,
   runQualification
-} from "./chunk-HQL3E7C5.mjs";
+} from "./chunk-G7JUW2VC.mjs";
 import {
   APS_ORIGIN,
   AddinDesktopProvider,
@@ -115,7 +115,7 @@ import {
   verifyManageSdkDraft,
   verifyRetentionPlan,
   verifyTrustedExecutableAsset
-} from "./chunk-WDURP6MK.mjs";
+} from "./chunk-EDY766MB.mjs";
 import "./chunk-7P6ASYW6.mjs";
 export {
   APS_ORIGIN,

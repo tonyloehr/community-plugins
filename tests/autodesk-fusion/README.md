@@ -59,7 +59,12 @@ release. These companion checks neither replace the deep tests nor promote their
 licensed-provider and platform skips into passes. CI results must be reported
 separately after CI runs.
 
-The primary Fusion E2E job invokes this root master on Node 22.19, 24 and 26.
-Supplemental Windows/macOS jobs use the same master, while native source-build
-jobs remain separate. Marketplace CI calls the catalog-discovered masters, so
-adding a catalog entry without its matching test command fails the shared gate.
+The single `Autodesk Fusion E2E` job in
+`.github/workflows/autodesk-fusion.yml` invokes this root master sequentially on
+Node 22.19, 24 and 26 on macOS. Cold-package verification, the runtime dependency
+audit, a pinned host native source build and its receipt upload are steps in that
+same job. There are no separate Autodesk platform or native-build jobs. See
+[AGENTS.md](../../AGENTS.md) for this repository convention. Marketplace CI calls
+the catalog-discovered masters, so adding a catalog entry without its matching
+test command fails the shared gate. Host CI does not qualify other operating
+systems; use the same master command on those hosts for platform evidence.

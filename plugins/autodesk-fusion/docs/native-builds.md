@@ -8,7 +8,7 @@ Our source starts at [keyring-node commit e46be75c3ba8d5fde6b88a17c6153b87ffe4b9
 
 [native-dependencies.json](native-dependencies.json) inventories the complete conservative lock graph, verified registry checksums, license provenance, and recorded target features. [UPSTREAM_NOTICES.txt](../native/UPSTREAM_NOTICES.txt) supplies the collected license texts, including NAPI notices recovered from exact published source commits, D-Bus's native-library terms, Rust standard-library notices, and compiler-builtins/libm/LLVM runtime attribution. Compiler-only copyright inputs are inventoried separately because rustc and LLVM build tools are not shipped. Optional, build, and other-platform dependencies remain in the inventory; inclusion does not assert linkage into every binary. Changing the source, lock, toolchain, or runtime dependencies requires corresponding inventory and notice review.
 
-The build matrix covers these **credential-broker** targets, not Fusion desktop availability on every operating system:
+The build helper supports these **credential-broker** host targets, not Fusion desktop availability on every operating system:
 
 | Host | Rust target |
 | --- | --- |
@@ -19,7 +19,7 @@ The build matrix covers these **credential-broker** targets, not Fusion desktop 
 | Windows arm64, MSVC | `aarch64-pc-windows-msvc` |
 | Windows x64, MSVC | `x86_64-pc-windows-msvc` |
 
-The actual six-target CI matrix has not yet been validated here. Local macOS evidence does not establish Windows, Linux, other SDK, or other workstation behavior. Consult the exact candidate and qualification records before making a platform claim.
+The single Autodesk Fusion E2E job builds and loads the macOS runner's host target. To check another target, run the same helper on its matching host using the table above. Local or hosted macOS evidence does not establish Windows, Linux, other SDK, or other workstation behavior. Consult the exact candidate and qualification records before making a platform claim.
 
 Use this maintainer sequence:
 
@@ -35,7 +35,7 @@ Use this maintainer sequence:
 
    Select an empty output directory outside the plugin tree whose parent already exists. The packaged [build helper](../scripts/build-native.mjs) verifies the exact source, uses a private Cargo cache and `cargo +1.98.0 build --locked --release`, rejects inherited build overrides and ancestor Cargo configuration, and preserves managed network routing. Cargo may retrieve the locked public crate sources during this explicit build. The helper checks diagnostics, remaps private paths, loads the module without constructing credential entries, and produces a `.node` candidate plus its `.build.json` receipt. It does not admit or publish them.
 
-4. **Review CI provenance separately.** The repository-only workflow is `.github/workflows/autodesk-fusion-native.yml`; it is not an installed-plugin command. It defines the six host jobs and uploads candidate binaries and receipts without vault access or publication. Obtain artifacts from the exact reviewed repository, workflow, run ID, run attempt, and head commit. For pull requests, distinguish the checked-out merge commit from the PR head. Compare the receipt's source, helper, compiler, target, and output hashes with independently obtained evidence. Never accept an artifact merely because its filename or JSON claims the right identity.
+4. **Review CI provenance separately.** The repository-only workflow is `.github/workflows/autodesk-fusion.yml`; it is not an installed-plugin command. Its one `Autodesk Fusion E2E` job runs the full root suite on Node 22.19, 24 and 26, the runtime audit, and a host native build with candidate/receipt upload. All checks are sequential steps in that job; there is no separate native workflow or platform matrix. The native build does not access the vault or publish the candidate. Obtain artifacts from the exact reviewed repository, workflow, run ID, run attempt, and head commit. For pull requests, distinguish the checked-out merge commit from the PR head. Compare the receipt's source, helper, compiler, target, and output hashes with independently obtained evidence. Never accept an artifact merely because its filename or JSON claims the right identity.
 
 5. **Qualify before release admission.** Review the actual platform module load, ABI/export behavior, linked libraries, deployment baseline, warnings, and private-path scan. Exercise the real OS credential service on the intended platform in a private qualification copy. Stage only the candidate and matching receipt there, build that copy to create its integrity receipt, then explicitly set `FUSION_TEST_OS_VAULT=1` when running `npm run test:vault`. The test uses unique synthetic entries in this plugin's namespace and verifies removal. Its default skip and protocol doubles are not OS qualification. A denied or unavailable vault requires a recorded limitation and normal operator remediation; do not bypass access controls. Keep the real-vault evidence separate from the helper's credential-free load receipt.
 

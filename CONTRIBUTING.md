@@ -23,7 +23,10 @@ can understand and verify it from a cold start.
    run the plugin's functional, integration/E2E, security, and packaged checks
    as applicable. The marketplace-wide CI job discovers each catalog entry
    and runs that matching test script; plugin-specific CI should expose one
-   plugin-level job that invokes the same master suite.
+   master job that invokes the same master suite. Put Node versions, native
+   builds, audits and reproducibility checks in sequential steps in that job;
+   do not split them across platform matrices or additional plugin workflows.
+   See [AGENTS.md](AGENTS.md) for the repository's organization convention.
 
 Never commit credentials, OAuth tokens, customer data, private URLs, personal
 paths, or generated caches.
@@ -62,8 +65,10 @@ The [Fusion test guide](tests/autodesk-fusion/README.md) describes its root
 unit/integration/security checks, deeper plugin contracts, Python requirement
 and explicit external qualification gates. Marketplace CI installs packages'
 locked development dependencies without lifecycle scripts before invoking the
-catalog-discovered master suites. Individual plugin CI uses those same masters;
-platform and native-build jobs provide supplemental evidence.
+catalog-discovered master suites. Autodesk's single `Autodesk Fusion E2E` job
+runs its master on Node 22.19, 24 and 26, plus the runtime audit and a host native
+source build. Other-platform and licensed-provider qualification are documented
+separately from that hosted job.
 
 ## Pull requests
 

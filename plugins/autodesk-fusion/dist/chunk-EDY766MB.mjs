@@ -180,8 +180,18 @@ function snapshotIdentity(info) {
 async function snapshotRoot(root, expected) {
   if (process.platform === "win32") return windowsRootIdentity(root, expected);
   const info = await lstat(root, { bigint: true });
-  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== BigInt(process.getuid()) || (info.mode & 0o077n) !== 0n || expected && !sameIdentity(info, expected) || await realpath(root) !== root) throw new FusionError("UNSAFE_PATH", "A read-only snapshot requires an existing private unchanged directory.");
+  if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== BigInt(process.getuid()) || (info.mode & 0o077n) !== 0n || expected && !sameIdentity(info, expected) || await realpath(root) !== root) throw new FusionError("UNSAFE_PATH", "Storage requires an existing private unchanged directory.");
+  await checkPosixAncestors(root);
   return info;
+}
+async function checkPosixAncestors(directory) {
+  const uid = BigInt(process.getuid());
+  for (let current = directory; ; current = path.dirname(current)) {
+    const info = await lstat(current, { bigint: true });
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== uid && info.uid !== 0n) throw new FusionError("UNSAFE_PATH", "Storage ancestry must consist of real directories owned by the current user or root.");
+    if ((info.mode & 0o022n) !== 0n && (info.mode & 0o1000n) === 0n) throw new FusionError("UNSAFE_PATH", "Storage ancestry must not allow other users to replace the private directory.");
+    if (current === path.dirname(current)) break;
+  }
 }
 async function readSnapshotRecord(root, filename, rootIdentity, expected) {
   if (process.platform === "win32") {
@@ -296,8 +306,10 @@ async function checkWindowsStorage(root, options = {}) {
   try {
     const result = await execFileAsync(path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_STORAGE_CHECK, "utf16le").toString("base64")], { env: { ...process.env, CODEX_FUSION_STORAGE_REQUEST: JSON.stringify(request) }, timeout: 15e3, maxBuffer: 16384, windowsHide: true });
     if (result.stdout.trim() !== "PRIVATE") throw new Error("Unverified ACL");
-  } catch {
-    throw new FusionError("ACL_UNVERIFIED", "Windows storage must be private to the current user, SYSTEM and administrators, with no reparse points or replaceable ancestors. Existing shared paths are never repermissioned.");
+  } catch (error51) {
+    const failure = error51;
+    const status = failure.killed ? "verification_process_terminated" : typeof failure.code === "number" ? "verification_process_failed" : failure.code === "ENOENT" ? "verification_process_unavailable" : "verification_failed";
+    throw new FusionError("ACL_UNVERIFIED", "Windows storage must be private to the current user, SYSTEM and administrators, with no reparse points or replaceable ancestors. Existing shared paths are never repermissioned.", "none", { verification_status: status });
   }
 }
 function sameIdentity(left, right) {
@@ -339,22 +351,36 @@ async function readWindowsStateFile(root, filename, rootIdentity, maximum) {
 async function ensurePrivateDirectory(directory) {
   if (!path.isAbsolute(directory)) throw new FusionError("UNSAFE_PATH", "Storage root must be absolute.");
   if (process.platform === "win32") {
-    const root = windowsLocalPath(directory);
-    await checkWindowsStorage(root, { create: true });
-    await windowsRootIdentity(root);
-    return realpath(root);
+    const root2 = windowsLocalPath(directory);
+    await checkWindowsStorage(root2, { create: true });
+    await windowsRootIdentity(root2);
+    return realpath(root2);
   }
-  await mkdir(directory, { recursive: true, mode: 448 });
-  const stat2 = await lstat(directory);
-  if (!stat2.isDirectory() || stat2.isSymbolicLink()) throw new FusionError("UNSAFE_PATH", "Storage root must be a real directory.");
-  if (stat2.uid !== process.getuid?.()) throw new FusionError("UNSAFE_PATH", "Storage root must belong to the current user.");
-  if (stat2.mode & 63) throw new FusionError("UNSAFE_PATH", "Use a private directory (mode 0700). Existing shared directories are not silently repermissioned.");
-  return realpath(directory);
+  let existing = directory;
+  const missing = [];
+  for (; ; ) {
+    try {
+      const info = await lstat(existing);
+      if (!missing.length && info.isSymbolicLink()) throw new FusionError("UNSAFE_PATH", "Storage root must be a real directory.");
+      break;
+    } catch (error51) {
+      if (error51.code !== "ENOENT") throw error51;
+      missing.unshift(path.basename(existing));
+      existing = path.dirname(existing);
+    }
+  }
+  const ancestor = await realpath(existing);
+  await checkPosixAncestors(ancestor);
+  const root = path.join(ancestor, ...missing);
+  await mkdir(root, { recursive: true, mode: 448 });
+  await snapshotRoot(root);
+  return root;
 }
 var RecordStore = class {
   root;
   ready;
   windowsRoot;
+  posixRoot;
   constructor(root) {
     this.root = root;
   }
@@ -362,11 +388,15 @@ var RecordStore = class {
     this.ready ??= (async () => {
       this.root = await ensurePrivateDirectory(this.root);
       if (process.platform === "win32") this.windowsRoot = await windowsRootIdentity(this.root);
+      else this.posixRoot = await snapshotRoot(this.root);
     })();
     return this.ready;
   }
-  async checkWindows(file2, missingAllowed = false) {
-    if (process.platform !== "win32") return;
+  async checkStorage(file2, missingAllowed = false) {
+    if (process.platform !== "win32") {
+      await snapshotRoot(this.root, this.posixRoot);
+      return;
+    }
     await checkWindowsStorage(this.root, { ...file2 ? { file: file2 } : {}, missingAllowed });
     await windowsRootIdentity(this.root, this.windowsRoot);
     if (file2) {
@@ -378,9 +408,10 @@ var RecordStore = class {
     }
   }
   async removeOwnedTemporary(filename, created) {
+    if (process.platform !== "win32") await snapshotRoot(this.root, this.posixRoot);
     if (process.platform === "win32") {
       if (!created) return;
-      await this.checkWindows(filename);
+      await this.checkStorage(filename);
       await windowsFileIdentity(filename, MAX_RECORD_BYTES, created);
     }
     await unlink(filename);
@@ -392,22 +423,27 @@ var RecordStore = class {
   async get(kind, id2) {
     await this.init();
     const filename = this.filename(kind, id2);
+    await this.checkStorage(filename, true);
     let handle;
     try {
       if (process.platform === "win32") {
-        await this.checkWindows(filename, true);
         const value2 = JSON.parse(await readWindowsStateFile(this.root, filename, this.windowsRoot, MAX_RECORD_BYTES));
         assertJson(value2, MAX_RECORD_BYTES);
         return value2;
       }
       handle = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const info = await handle.stat();
-      if (!info.isFile() || info.nlink !== 1 || info.size > 16777216) throw new FusionError("UNSAFE_RECORD", "Stored record failed file validation.");
+      if (!info.isFile() || info.nlink !== 1 || info.size > MAX_RECORD_BYTES || info.uid !== process.getuid() || (info.mode & 63) !== 0) throw new FusionError("UNSAFE_RECORD", "Stored record failed file validation.");
+      await snapshotRoot(this.root, this.posixRoot);
       const value = JSON.parse(await handle.readFile("utf8"));
-      assertJson(value, 16777216);
+      await snapshotRoot(this.root, this.posixRoot);
+      assertJson(value, MAX_RECORD_BYTES);
       return value;
     } catch (error51) {
-      if (error51.code === "ENOENT") return void 0;
+      if (error51.code === "ENOENT") {
+        await this.checkStorage();
+        return void 0;
+      }
       throw error51;
     } finally {
       await handle?.close();
@@ -420,7 +456,7 @@ var RecordStore = class {
     await this.init();
     const destination = this.filename(kind, id2);
     const temporary = this.filename("tmp", newId("record"));
-    await this.checkWindows(destination, true);
+    await this.checkStorage(destination, true);
     const file2 = await open(temporary, "wx", 384);
     let created;
     try {
@@ -428,7 +464,7 @@ var RecordStore = class {
         created = await file2.stat({ bigint: true });
         await windowsFileIdentity(temporary, MAX_RECORD_BYTES, created);
         await windowsRootIdentity(this.root, this.windowsRoot);
-      }
+      } else await snapshotRoot(this.root, this.posixRoot);
       await file2.writeFile(encoded);
       await file2.sync();
     } catch (error51) {
@@ -438,9 +474,10 @@ var RecordStore = class {
     }
     await file2.close();
     try {
-      await this.checkWindows(destination, true);
+      await this.checkStorage(destination, true);
       await rename(temporary, destination);
       if (created) await windowsFileIdentity(destination, MAX_RECORD_BYTES, created);
+      else await snapshotRoot(this.root, this.posixRoot);
     } catch (error51) {
       await this.removeOwnedTemporary(temporary, created).catch(() => void 0);
       throw error51;
@@ -456,7 +493,7 @@ var RecordStore = class {
   }
   async list(kind) {
     await this.init();
-    await this.checkWindows();
+    await this.checkStorage();
     const files = (await readdir(this.root)).filter((n) => n.startsWith(`${kind}--`) && n.endsWith(".json")).sort();
     if (files.length > 1e4) throw new FusionError("STORE_LIMIT", "Archive old records before continuing.");
     const values = [];
@@ -487,7 +524,7 @@ var RecordStore = class {
         return result;
       }
       if (process.platform === "win32") await checkWindowsStorage(root);
-      rootIdentity = await snapshotRoot(root);
+      rootIdentity = await snapshotRoot(root, this.windowsRoot ?? this.posixRoot);
       if (!sameIdentity(named, rootIdentity)) throw new Error("root changed");
       result.root_hash = hash({ path: root, dev: String(rootIdentity.dev), ino: String(rootIdentity.ino) });
     } catch {
@@ -622,7 +659,7 @@ var RecordStore = class {
   async acquireLease() {
     await this.init();
     const filename = path.join(this.root, ".execution.lock");
-    await this.checkWindows(filename, true);
+    await this.checkStorage(filename, true);
     let file2;
     try {
       file2 = await open(filename, "wx", 384);
@@ -636,7 +673,7 @@ var RecordStore = class {
       if (created) {
         await windowsFileIdentity(filename, 4096, created);
         await windowsRootIdentity(this.root, this.windowsRoot);
-      }
+      } else await snapshotRoot(this.root, this.posixRoot);
       await file2.writeFile(JSON.stringify({ pid: process.pid, created_at: now() }));
       await file2.sync();
     } catch (error51) {
@@ -647,9 +684,9 @@ var RecordStore = class {
     await file2.close();
     return async () => {
       if (created) {
-        await this.checkWindows(filename);
+        await this.checkStorage(filename);
         await windowsFileIdentity(filename, 4096, created);
-      }
+      } else await this.checkStorage();
       await unlink(filename);
     };
   }
@@ -17289,8 +17326,19 @@ function analyzeSnapshot(snapshot, context, policy, holds, analyzedAt, at) {
           const target = connect(node, "managedraft", details.id, details.record_hash), draft = object2(target?.data?.draft);
           if (!draft || details.provider_write_performed !== false || details.stored_draft_hash !== draft.draftHash || details.workspace_id !== draft.workspaceId || details.item_id !== draft.itemId) throw new Error("Manage draft audit binding");
         } else if (["cloud_job_prepared", "cloud_submission_intent", "cloud_submission_result", "cloud_cancel_intent", "cloud_cancel_requested", "cloud_output_validation", "cloud_billing_reconciled"].includes(String(event))) connect(node, "cloudjob", details.id, details.plan_hash);
-        else if (["cloud_batch_prepared", "cloud_batch_materialized", "cloud_batch_execution"].includes(String(event))) connect(node, "cloudbatch", details.id ?? details.batch_id);
-        else if (event === "cloud_batch_output_conflict") {
+        else if (["cloud_batch_prepared", "cloud_batch_ready", "cloud_batch_resume"].includes(String(event))) {
+          if (!hashString(details.plan_hash)) throw new Error("batch audit plan hash");
+          const target = connect(node, "cloudbatch", details.id, details.plan_hash), batch = target?.data;
+          assertCloudBatchIntegrity(batch);
+          if (event === "cloud_batch_prepared") {
+            if (details.request_hash !== batch.request_hash || details.variants !== batch.variants.length || details.currency !== batch.currency || details.estimated_reservation !== batch.estimated_reservation) throw new Error("batch preparation audit binding");
+          } else if (event === "cloud_batch_ready") {
+            if (!Array.isArray(details.job_ids) || hash(details.job_ids) !== hash(batch.variants.map((variant) => variant.initial_job.id))) throw new Error("batch ready audit children");
+          } else {
+            const variants = new Set(batch.variants.map((variant) => variant.variant_id)), blocked = object2(details.admission_blocked);
+            if (!Array.isArray(details.attempted_variant_ids) || !details.attempted_variant_ids.every(string4) || !unique2(details.attempted_variant_ids) || details.attempted_variant_ids.some((id2) => !variants.has(id2)) || details.admission_blocked !== null && (!blocked || !string4(blocked.code) || !string4(blocked.outcome) || blocked.variant_id !== void 0 && (!string4(blocked.variant_id) || !variants.has(blocked.variant_id)))) throw new Error("batch resume audit variants");
+          }
+        } else if (event === "cloud_batch_output_conflict") {
           connect(node, "cloudbatch", details.batch_id, details.batch_plan_hash);
           connect(node, "cloudbatchconflict", details.batch_id, details.conflict_receipt_hash);
           if (!Array.isArray(details.job_ids) || details.job_ids.length < 2 || details.job_ids.length > 100 || !details.job_ids.every(string4) || !unique2(details.job_ids)) throw new Error("conflict audit references");

@@ -10,6 +10,7 @@ import { promisify } from 'node:util';
 const { RecordStore, ensurePrivateDirectory, recoverDeadLease } = await import(process.env.FUSION_STORAGE_TEST_ENTRY ?? '../dist/index.mjs');
 const execFileAsync = promisify(execFile);
 const windowsOnly = { skip: process.platform !== 'win32' ? 'Requires real Windows ACL and reparse-point behavior; no platform spoofing.' : false };
+const posixOnly = { skip: process.platform === 'win32' ? 'Requires POSIX ownership and mode-bit behavior.' : false };
 async function fixture(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'fusion-storage-contract-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -92,6 +93,77 @@ test('POSIX root symlinks remain rejected', { skip: process.platform === 'win32'
   const target = path.join(base, 'target'); await mkdir(target, { mode: 0o700 });
   const alias = path.join(base, 'alias'); await symlink(target, alias);
   await assert.rejects(ensurePrivateDirectory(alias), error => error.code === 'UNSAFE_PATH');
+});
+
+test('POSIX private roots reject replaceable ancestors before creating or accepting state', posixOnly, async t => {
+  const base = await fixture(t);
+  const shared = path.join(base, 'shared');
+  await mkdir(shared, { mode: 0o777 }); await chmod(shared, 0o777);
+  const existing = path.join(shared, 'existing');
+  await mkdir(existing, { mode: 0o700 });
+  for (const root of [existing, path.join(shared, 'not-created', 'state')]) {
+    await assert.rejects(ensurePrivateDirectory(root), error => error.code === 'UNSAFE_PATH');
+  }
+  await assert.rejects(lstat(path.join(shared, 'not-created')), error => error.code === 'ENOENT');
+  assert.equal((await lstat(shared)).mode & 0o7777, 0o777);
+  assert.equal((await lstat(existing)).mode & 0o777, 0o700);
+});
+
+test('POSIX sticky temporary parents preserve support for private owned roots', posixOnly, async t => {
+  const base = await fixture(t);
+  const shared = path.join(base, 'sticky');
+  await mkdir(shared, { mode: 0o1777 }); await chmod(shared, 0o1777);
+  const store = new RecordStore(path.join(shared, 'private', 'state'));
+  await store.put('plan', 'record', { private: true });
+  assert.deepEqual(await store.get('plan', 'record'), { private: true });
+  assert.equal((await lstat(shared)).mode & 0o7777, 0o1777);
+});
+
+test('POSIX root replacement cannot substitute records or redirect writes, leases or snapshots', posixOnly, async t => {
+  const base = await fixture(t);
+  const store = new RecordStore(path.join(base, 'state'));
+  await store.put('plan', 'original', { marker: 'trusted' });
+  const release = await store.acquireLease();
+  const retained = path.join(base, 'original-state');
+  await rename(store.root, retained);
+  await mkdir(store.root, { mode: 0o700 });
+  const planted = path.join(store.root, 'plan--original.json');
+  await writeFile(planted, JSON.stringify({ marker: 'planted' }), { mode: 0o600 });
+  const operations = [
+    () => store.get('plan', 'original'), () => store.put('plan', 'replacement', { marker: 'must-not-write' }),
+    () => store.list('plan'), () => store.acquireLease(), release,
+  ];
+  for (const operation of operations) await assert.rejects(operation, error => error.code === 'UNSAFE_PATH');
+  const snapshot = await store.snapshotReadOnly({ readKinds: ['plan'] });
+  assert.equal(snapshot.complete, false);
+  assert.ok(snapshot.issues.includes('ROOT_UNAVAILABLE_OR_UNSAFE'));
+  assert.deepEqual(snapshot.entries, []);
+  assert.deepEqual(JSON.parse(await readFile(planted, 'utf8')), { marker: 'planted' });
+  assert.deepEqual(JSON.parse(await readFile(path.join(retained, 'plan--original.json'), 'utf8')), { marker: 'trusted' });
+  await assert.rejects(lstat(path.join(store.root, 'plan--replacement.json')), error => error.code === 'ENOENT');
+  assert.ok((await lstat(path.join(retained, '.execution.lock'))).isFile());
+});
+
+test('POSIX root and ancestor access drift fails before ledger operations', posixOnly, async t => {
+  const base = await fixture(t);
+  for (const change of ['root', 'ancestor']) {
+    const parent = path.join(base, change); await mkdir(parent, { mode: 0o700 });
+    const store = new RecordStore(path.join(parent, 'state'));
+    await store.put('plan', 'original', { marker: 'trusted' });
+    await chmod(change === 'root' ? store.root : parent, change === 'root' ? 0o755 : 0o777);
+    await assert.rejects(store.get('plan', 'original'), error => error.code === 'UNSAFE_PATH');
+    await assert.rejects(store.put('plan', 'replacement', {}), error => error.code === 'UNSAFE_PATH');
+    await assert.rejects(lstat(path.join(store.root, 'plan--replacement.json')), error => error.code === 'ENOENT');
+  }
+});
+
+test('POSIX record privacy drift is rejected before consuming data', posixOnly, async t => {
+  const base = await fixture(t);
+  const store = new RecordStore(path.join(base, 'state'));
+  await store.put('plan', 'shared', { marker: 'must-not-read' });
+  const filename = path.join(store.root, 'plan--shared.json'); await chmod(filename, 0o644);
+  await assert.rejects(store.get('plan', 'shared'), error => error.code === 'UNSAFE_RECORD');
+  assert.equal((await lstat(filename)).mode & 0o777, 0o644);
 });
 
 test('new Windows roots have protected inheritable private ACLs, including literal path punctuation', windowsOnly, async t => {

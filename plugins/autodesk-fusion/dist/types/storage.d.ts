@@ -34,9 +34,10 @@ export declare class RecordStore {
     root: string;
     private ready?;
     private windowsRoot?;
+    private posixRoot?;
     constructor(root: string);
     init(): Promise<void>;
-    private checkWindows;
+    private checkStorage;
     private removeOwnedTemporary;
     private filename;
     get<T>(kind: string, id: string): Promise<T | undefined>;
