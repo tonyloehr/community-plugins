@@ -17,7 +17,9 @@ OpenAI's official Plugins Directory requires a separate review.
   Verify the CLA integration and branch rules are configured and that each
   required check runs for relevant pull requests. A documented requirement or
   missing check is not active enforcement; hold merges until the controls are
-  configured and verified.
+  configured and verified, except for the reviewed one-time CLA bootstrap
+  [described below](#ci-and-cla-configuration). Keep external contribution
+  merges blocked throughout that bootstrap.
 - Apply the [review checklist](review-and-publish.md) to code, skills, setup,
   dependencies, file access, off-machine data flows, and secrets. Protect
   `CODEOWNERS`, workflows, and this policy with the same review requirements.

@@ -100,7 +100,9 @@ Automation recipe just to make a setup or test result appear complete.
 3. Verify the applicable CLA and obtain approval of the latest changes from a
    CDE maintainer listed in `CODEOWNERS`. Merge through a pull request under the
    [maintainer policy](maintainer-guide.md). Missing CLA integration or required
-   checks block merge until configured and verified.
+   checks block merge until configured and verified. For the one-time CLA setup,
+   follow the [reviewed bootstrap sequence](maintainer-guide.md#ci-and-cla-configuration)
+   and keep external contribution merges blocked until enforcement is verified.
 4. From a clean checkout of `main`, install the GitHub-backed marketplace:
 
    ```sh
