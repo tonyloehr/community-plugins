@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Fusion Deliverables"
+  short_description: "Stage and verify scoped engineering artifacts."
+  default_prompt: "Use $create-fusion-deliverables for the selected Autodesk Fusion workflow."

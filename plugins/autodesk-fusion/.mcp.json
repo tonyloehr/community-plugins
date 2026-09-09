@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "autodesk-fusion": {
+      "command": "node",
+      "args": ["./mcp/server.mjs"],
+      "cwd": ".",
+      "env_vars": ["FUSION_PROFILE"],
+      "tool_timeout_sec": 3600
+    }
+  }
+}

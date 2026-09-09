@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "origin": "Community-patched source builds; original npm platform binaries are not redistributed.",
+  "source_tree_sha256": "2b12e5268ffb4e98c75894be0abab6dd5594a3da6f45f4757d51568b087dc222",
+  "source_manifest_sha256": "b1292219f61974e35ac089780671a14557c0b2343b94d7f33dd4509c1955ac39",
+  "community_patch_sha256": "71155a06a00f88f62c051cd41fb1bb50aa1647b962c26ba1e95d11efe7aed216",
+  "cargo_lock_sha256": "e08809525623788a684fdf8a01e4e25fd013cbe2dcb7b3cfc3ca4cd6212ae63c",
+  "rust_toolchain": "1.98.0",
+  "assets": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "target": "aarch64-apple-darwin",
+      "path": "native/keyring.darwin-arm64.node",
+      "sha256": "d746d09e60aa7a6c595b3eae1ae76cb2cdd64a1696a8988d90338dec7c2daa9d",
+      "size_bytes": 525696,
+      "receipt_path": "native/receipts/keyring.darwin-arm64.build.json",
+      "receipt_sha256": "eb9fda34cf414dede9389191338201fe3f3734d60a5c2809500f8aabc5b3f6f6",
+      "ci": {
+        "repository": null,
+        "commit": null,
+        "head_commit": null,
+        "run_id": null,
+        "run_attempt": null,
+        "job": null,
+        "runner_image": null,
+        "runner_image_version": null
+      }
+    },
+    {
+      "platform": "darwin",
+      "arch": "x64",
+      "target": "x86_64-apple-darwin",
+      "path": "native/keyring.darwin-x64.node",
+      "sha256": "2a5017f41c226b551897d52e48f146dc6af5179a87957dfd494d746d2a16cebe",
+      "size_bytes": 546400,
+      "receipt_path": "native/receipts/keyring.darwin-x64.build.json",
+      "receipt_sha256": "43e092af3e8a9a52390e79fe843211958db668140eeef25b6692923c70e8d4f4",
+      "ci": {
+        "repository": null,
+        "commit": null,
+        "head_commit": null,
+        "run_id": null,
+        "run_attempt": null,
+        "job": null,
+        "runner_image": null,
+        "runner_image_version": null
+      }
+    }
+  ],
+  "notices_sha256": "bc17c1fa16024825a7f718efd281b7d3c4362d72e0591721410b7b2aff1be3e7",
+  "dependency_inventory_sha256": "82519146df032e1ab6bfcc2d8de66ef4fa98ac221a5929e204513f10acd4f147",
+  "limitation": "Receipts pin inputs and output bytes. They are not builder authentication, a reconstructed upstream binary SBOM, cross-SDK bit reproducibility, live Fusion qualification or production signing."
+}

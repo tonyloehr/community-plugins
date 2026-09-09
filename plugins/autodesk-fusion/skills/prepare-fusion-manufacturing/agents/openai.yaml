@@ -1,0 +1,4 @@
+interface:
+  display_name: "Prepare Fusion Manufacturing"
+  short_description: "Prepare reviewed CAM and quarantined NC candidates."
+  default_prompt: "Use $prepare-fusion-manufacturing for the selected Autodesk Fusion workflow."

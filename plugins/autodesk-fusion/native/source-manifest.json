@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "upstream": {
+    "repository": "https://github.com/Brooooooklyn/keyring-node",
+    "commit": "e46be75c3ba8d5fde6b88a17c6153b87ffe4b946",
+    "npmVersion": "1.3.0",
+    "rustPackage": "napi-keyring",
+    "rustPackageVersion": "0.1.0"
+  },
+  "changes": [
+    "Community patch distinguishes only keyring-core Error::NoEntry from failures in sync and async credential reads and deletes; all other read/delete errors use a constant credential-safe message.",
+    "macOS cdylib links with a fixed @rpath/libnapi_keyring.dylib install name to prevent private build-path disclosure.",
+    "Correct async getter type annotations to reflect actual napi Option::None to null and Vec<u8> to JavaScript number array conversions; no runtime wire change.",
+    "Cargo.lock is a new exact dependency resolution, not reconstruction of the upstream npm binary inputs."
+  ],
+  "patch": {
+    "path": "community-credential-errors.patch",
+    "bytes": 9469,
+    "sha256": "71155a06a00f88f62c051cd41fb1bb50aa1647b962c26ba1e95d11efe7aed216"
+  },
+  "sourceIdentityAlgorithm": "SHA256 of sorted-key compact JSON array of relative path, byte length and SHA256 records, sorted by path; UTF-8, no trailing newline",
+  "sourceIdentitySha256": "2b12e5268ffb4e98c75894be0abab6dd5594a3da6f45f4757d51568b087dc222",
+  "files": [
+    {
+      "path": "Cargo.lock",
+      "bytes": 42465,
+      "sha256": "e08809525623788a684fdf8a01e4e25fd013cbe2dcb7b3cfc3ca4cd6212ae63c"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 1482,
+      "sha256": "b2002f67465ded6267a8255723971154df773517c72093647d302db615e86a57"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 1071,
+      "sha256": "02965ed67e29f871a53f7a7afa593a0ddc8020f86ccce0faaf1aa59215b5269e"
+    },
+    {
+      "path": "build.rs",
+      "bytes": 380,
+      "sha256": "1deabac8209cf86d6dd6f4950bb5bf213ac9c9b4af31b64c2a72b4642d483524"
+    },
+    {
+      "path": "src/async_entry.rs",
+      "bytes": 9256,
+      "sha256": "90e10b6595a9c38ab92c68b3965a0606310554e176d8c46d0c1b240cc4363fa9"
+    },
+    {
+      "path": "src/credential_result.rs",
+      "bytes": 2698,
+      "sha256": "1b36533d6f03297e238bc850fd643523720bd759b40f51a34bc9bee50b691585"
+    },
+    {
+      "path": "src/entry.rs",
+      "bytes": 17748,
+      "sha256": "4a3dc94f45ca7fbd1e4582d466eb646eab8ed8b12dbb364c6a6498c3f2ea4444"
+    },
+    {
+      "path": "src/lib.rs",
+      "bytes": 141,
+      "sha256": "fc056084291aad17bdbcd48f4aa336d05d178f109a6bc60f5435bc55eeb76f5c"
+    },
+    {
+      "path": "src/linux_credential_builder.rs",
+      "bytes": 858,
+      "sha256": "e1d2741cb16c62077f8b698443fb0d2662350baae22fda1d5b061a343e84c8c8"
+    }
+  ]
+}

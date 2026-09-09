@@ -1,0 +1,665 @@
+{
+  "version": 1,
+  "id": "live-cad-step-roundtrip",
+  "purpose": "On an explicitly authorized licensed test workstation, create one native root-component 20 x 30 x 40 mm cuboid with no occurrences, verify solid topology, component-frame bounds, centroid, surface area and volume, export STEP, import that exact generated artifact into a new document, and repeat those checks. Leaves the two unsaved test documents for deliberate review/cleanup; does not save to cloud. This is a narrow smoke test, not general CAD or exchange qualification.",
+  "steps": [
+    {
+      "id": "create",
+      "action": "change",
+      "input": {
+        "operation": "documents.create",
+        "args": {
+          "name": "Codex qualification 20x30x40 mm"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        },
+        {
+          "kind": "exists",
+          "pointer": "/result/data/document_id"
+        }
+      ]
+    },
+    {
+      "id": "sketch",
+      "action": "change",
+      "input": {
+        "operation": "sketches.create",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "plane": "xy",
+          "name": "Qualification rectangle"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        }
+      ]
+    },
+    {
+      "id": "rectangle",
+      "action": "change",
+      "input": {
+        "operation": "sketches.draw",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "sketch_id": {
+            "$ref": "sketch#/result/data/entity_id"
+          },
+          "frame": "sketch",
+          "curves": [
+            {
+              "kind": "rectangle",
+              "corner1": [
+                "0 mm",
+                "0 mm"
+              ],
+              "corner2": [
+                "20 mm",
+                "30 mm"
+              ]
+            }
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/result/data/sketch/profile_count",
+          "expected": 1
+        }
+      ]
+    },
+    {
+      "id": "solid",
+      "action": "change",
+      "input": {
+        "operation": "features.extrude",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "profile_ids": [
+            {
+              "$ref": "rectangle#/result/data/profiles/0/entity_id"
+            }
+          ],
+          "distance": "40 mm",
+          "operation": "new_body",
+          "name": "Qualification solid"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        }
+      ]
+    },
+    {
+      "id": "source_occurrences",
+      "action": "read",
+      "input": {
+        "operation": "entities.find",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "kind": "occurrence",
+          "limit": 2,
+          "offset": 0
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/data/total",
+          "expected": 0
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/next_offset",
+          "expected": null
+        }
+      ]
+    },
+    {
+      "id": "source_bodies",
+      "action": "read",
+      "input": {
+        "operation": "entities.find",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "kind": "body",
+          "limit": 2,
+          "offset": 0
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/data/total",
+          "expected": 1
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/next_offset",
+          "expected": null
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/object_type",
+          "expected": "adsk::fusion::BRepBody"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/entity_context",
+          "expected": "native"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/solid",
+          "expected": true
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/face_count",
+          "expected": 6
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/edge_count",
+          "expected": 12
+        }
+      ]
+    },
+    {
+      "id": "source_bounds",
+      "action": "read",
+      "input": {
+        "operation": "geometry.measure",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "entity_ids": [
+            {
+              "$ref": "source_bodies#/data/entities/0/entity_id"
+            }
+          ],
+          "kind": "bounding_box"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/bounding_box/unit",
+          "expected": "cm"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/bounding_box/frame/kind",
+          "expected": "component"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/bounding_box/frame/qualified",
+          "expected": true
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/min/0",
+          "expected": 0,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/min/1",
+          "expected": 0,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/min/2",
+          "expected": 0,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/max/0",
+          "expected": 2,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/max/1",
+          "expected": 3,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/max/2",
+          "expected": 4,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        }
+      ]
+    },
+    {
+      "id": "volume",
+      "action": "read",
+      "input": {
+        "operation": "geometry.measure",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "entity_ids": [
+            {
+              "$ref": "source_bodies#/data/entities/0/entity_id"
+            }
+          ],
+          "kind": "physical",
+          "accuracy": "high"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/volume/value",
+          "expected": 24,
+          "absolute_tolerance": 1e-06,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/volume/unit",
+          "expected": "cm^3"
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/area/value",
+          "expected": 52,
+          "absolute_tolerance": 1e-06,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/area/unit",
+          "expected": "cm^2"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/center_of_mass/unit",
+          "expected": "cm"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/center_of_mass/frame/kind",
+          "expected": "component"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/center_of_mass/frame/qualified",
+          "expected": true
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/center_of_mass/point/0",
+          "expected": 1,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/center_of_mass/point/1",
+          "expected": 1.5,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/center_of_mass/point/2",
+          "expected": 2,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        }
+      ]
+    },
+    {
+      "id": "step_export",
+      "action": "change",
+      "input": {
+        "operation": "exports.generate",
+        "document_id": {
+          "$ref": "create#/result/data/document_id"
+        },
+        "args": {
+          "format": "step",
+          "output": {
+            "root": "artifacts",
+            "filename": "qualification-solid.step"
+          }
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        }
+      ]
+    },
+    {
+      "id": "step_artifact",
+      "action": "artifact",
+      "input": {
+        "artifact_id": {
+          "$ref": "step_export#/artifact/id"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        },
+        {
+          "kind": "length_at_least",
+          "pointer": "/files",
+          "expected": 1
+        }
+      ]
+    },
+    {
+      "id": "step_import",
+      "action": "change",
+      "input": {
+        "operation": "documents.import",
+        "args": {
+          "format": "step",
+          "source": {
+            "kind": "artifact",
+            "id": {
+              "$ref": "step_export#/artifact/id"
+            }
+          }
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/status",
+          "expected": "succeeded"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/result/data/cloud_save_requested",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "id": "import_occurrences",
+      "action": "read",
+      "input": {
+        "operation": "entities.find",
+        "document_id": {
+          "$ref": "step_import#/result/data/document/document_id"
+        },
+        "args": {
+          "kind": "occurrence",
+          "limit": 2,
+          "offset": 0
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/data/total",
+          "expected": 0
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/next_offset",
+          "expected": null
+        }
+      ]
+    },
+    {
+      "id": "import_bodies",
+      "action": "read",
+      "input": {
+        "operation": "entities.find",
+        "document_id": {
+          "$ref": "step_import#/result/data/document/document_id"
+        },
+        "args": {
+          "kind": "body",
+          "limit": 2,
+          "offset": 0
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/data/total",
+          "expected": 1
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/next_offset",
+          "expected": null
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/object_type",
+          "expected": "adsk::fusion::BRepBody"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/entity_context",
+          "expected": "native"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/solid",
+          "expected": true
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/face_count",
+          "expected": 6
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/entities/0/edge_count",
+          "expected": 12
+        }
+      ]
+    },
+    {
+      "id": "import_bounds",
+      "action": "read",
+      "input": {
+        "operation": "geometry.measure",
+        "document_id": {
+          "$ref": "step_import#/result/data/document/document_id"
+        },
+        "args": {
+          "entity_ids": [
+            {
+              "$ref": "import_bodies#/data/entities/0/entity_id"
+            }
+          ],
+          "kind": "bounding_box"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/bounding_box/unit",
+          "expected": "cm"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/bounding_box/frame/kind",
+          "expected": "component"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/bounding_box/frame/qualified",
+          "expected": true
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/min/0",
+          "expected": 0,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/min/1",
+          "expected": 0,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/min/2",
+          "expected": 0,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/max/0",
+          "expected": 2,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/max/1",
+          "expected": 3,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/bounding_box/max/2",
+          "expected": 4,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        }
+      ]
+    },
+    {
+      "id": "roundtrip_volume",
+      "action": "read",
+      "input": {
+        "operation": "geometry.measure",
+        "document_id": {
+          "$ref": "step_import#/result/data/document/document_id"
+        },
+        "args": {
+          "kind": "physical",
+          "entity_ids": [
+            {
+              "$ref": "import_bodies#/data/entities/0/entity_id"
+            }
+          ],
+          "accuracy": "high"
+        }
+      },
+      "assertions": [
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/volume/value",
+          "expected": 24,
+          "absolute_tolerance": 1e-06,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/volume/unit",
+          "expected": "cm^3"
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/area/value",
+          "expected": 52,
+          "absolute_tolerance": 1e-06,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/area/unit",
+          "expected": "cm^2"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/center_of_mass/unit",
+          "expected": "cm"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/center_of_mass/frame/kind",
+          "expected": "component"
+        },
+        {
+          "kind": "equals",
+          "pointer": "/data/measurements/0/center_of_mass/frame/qualified",
+          "expected": true
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/center_of_mass/point/0",
+          "expected": 1,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/center_of_mass/point/1",
+          "expected": 1.5,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        },
+        {
+          "kind": "approx",
+          "pointer": "/data/measurements/0/center_of_mass/point/2",
+          "expected": 2,
+          "absolute_tolerance": 1e-05,
+          "relative_tolerance": 1e-08
+        }
+      ]
+    }
+  ],
+  "cleanup": []
+}

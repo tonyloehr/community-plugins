@@ -1,0 +1,4 @@
+interface:
+  display_name: "Set Up Autodesk Fusion"
+  short_description: "Configure scoped Fusion interoperability."
+  default_prompt: "Use $setup-autodesk-fusion for the selected Autodesk Fusion workflow."

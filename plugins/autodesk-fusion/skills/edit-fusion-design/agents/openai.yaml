@@ -1,0 +1,4 @@
+interface:
+  display_name: "Edit Fusion Design"
+  short_description: "Apply state-bound, reviewed Fusion CAD changes."
+  default_prompt: "Use $edit-fusion-design for the selected Autodesk Fusion workflow."

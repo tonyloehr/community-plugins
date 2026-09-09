@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reconcile Fusion Data"
+  short_description: "Compare versioned BOMs and enterprise data."
+  default_prompt: "Use $reconcile-fusion-data for the selected Autodesk Fusion workflow."

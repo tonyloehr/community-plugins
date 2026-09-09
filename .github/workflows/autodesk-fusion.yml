@@ -1,0 +1,109 @@
+name: Autodesk Fusion
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/autodesk-fusion.yml"
+      - ".gitattributes"
+      - "AGENTS.md"
+      - ".agents/plugins/marketplace.json"
+      - "package.json"
+      - "README.md"
+      - "plugins/autodesk-fusion/**"
+      - "tests/autodesk-fusion/**"
+      - "scripts/validate-autodesk-fusion.mjs"
+      - "scripts/validate-marketplace.mjs"
+      - "scripts/run-marketplace-tests.mjs"
+      - "docs/autodesk-fusion*"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/autodesk-fusion.yml"
+      - ".gitattributes"
+      - "AGENTS.md"
+      - ".agents/plugins/marketplace.json"
+      - "package.json"
+      - "README.md"
+      - "plugins/autodesk-fusion/**"
+      - "tests/autodesk-fusion/**"
+      - "scripts/validate-autodesk-fusion.mjs"
+      - "scripts/validate-marketplace.mjs"
+      - "scripts/run-marketplace-tests.mjs"
+      - "docs/autodesk-fusion*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autodesk-fusion-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  autodesk-fusion-e2e:
+    name: Autodesk Fusion E2E
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      FUSION_TEST_PYTHON: python
+      PYTHONDONTWRITEBYTECODE: "1"
+      FUSION_BUILD_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      RUSTUP_AUTO_INSTALL: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22.19.0"
+          package-manager-cache: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Validate committed bytes and cold package before dependency installation
+        run: npm run validate:autodesk-fusion && npm run test:autodesk-fusion:package
+      - name: Install pinned development dependencies without install scripts
+        run: npm --prefix plugins/autodesk-fusion ci --ignore-scripts
+      - name: Complete root master suite / Node 22.19.0
+        run: npm run test:autodesk-fusion
+      - name: Verify regenerated package / Node 22.19.0
+        run: git diff --exit-code -- plugins/autodesk-fusion
+      - name: Audit runtime dependencies
+        run: npm audit --prefix plugins/autodesk-fusion --omit=dev
+      - name: Install the pinned Rust toolchain without changing defaults
+        run: rustup toolchain install 1.98.0 --profile minimal
+      - name: Build and load the host native module from pinned source
+        run: node plugins/autodesk-fusion/scripts/build-native.mjs --output "$RUNNER_TEMP/fusion-native-output"
+      - name: Upload host native candidate and build receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fusion-keyring-host
+          path: |
+            ${{ runner.temp }}/fusion-native-output/*.node
+            ${{ runner.temp }}/fusion-native-output/*.build.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Complete root master suite / Node 24
+        run: npm run test:autodesk-fusion
+      - name: Verify regenerated package / Node 24
+        run: git diff --exit-code -- plugins/autodesk-fusion
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "26"
+          package-manager-cache: false
+      - name: Complete root master suite / Node 26
+        run: npm run test:autodesk-fusion
+      - name: Verify regenerated package and marketplace / Node 26
+        run: git diff --exit-code -- plugins/autodesk-fusion && npm run validate:marketplace
+
+# Keep all Autodesk checks in this one master job; see /AGENTS.md.
+# Hosted tests cover the runner's platform and synthetic provider contracts.
+# Licensed Fusion, real cloud accounts and OS-vault qualification remain explicit
+# local qualification scenarios; the native step does not access credentials.

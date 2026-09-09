@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hand Off Fusion Engineering"
+  short_description: "Prepare a traceable engineering review draft."
+  default_prompt: "Use $handoff-fusion-engineering for the selected Autodesk Fusion workflow."

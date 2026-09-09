@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inspect Fusion Design"
+  short_description: "Inspect explicit models and engineering context."
+  default_prompt: "Use $inspect-fusion-design for the selected Autodesk Fusion workflow."
